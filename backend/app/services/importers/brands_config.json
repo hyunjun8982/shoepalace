@@ -1,0 +1,40 @@
+{
+  "newbalance": {
+    "name": "New Balance",
+    "description": "뉴발란스",
+    "website": "https://www.newbalance.co.kr",
+    "api_endpoint": null,
+    "scrape_config": {
+      "base_url": "https://www.newbalance.co.kr",
+      "products_path": "/shop/product_list.php",
+      "category_codes": {
+        "shoes_men": "001001",
+        "shoes_women": "001002",
+        "apparel_men": "002001",
+        "apparel_women": "002002"
+      }
+    }
+  },
+  "nike": {
+    "name": "Nike",
+    "description": "나이키",
+    "website": "https://www.nike.com/kr",
+    "api_endpoint": null,
+    "scrape_config": {
+      "base_url": "https://www.nike.com/kr",
+      "products_path": "/w/shoes",
+      "categories": ["running", "basketball", "lifestyle"]
+    }
+  },
+  "adidas": {
+    "name": "Adidas",
+    "description": "아디다스",
+    "website": "https://www.adidas.co.kr",
+    "api_endpoint": null,
+    "scrape_config": {
+      "base_url": "https://www.adidas.co.kr",
+      "products_path": "/PF020001.action",
+      "categories": ["shoes", "clothing"]
+    }
+  }
+}

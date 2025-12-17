@@ -1,0 +1,23 @@
+<svg width="600" height="400" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="600" height="400" fill="#f8f9fa"/>
+
+  <!-- KREAM Logo area -->
+  <rect x="50" y="50" width="500" height="80" rx="10" fill="#ffffff" stroke="#e0e0e0" stroke-width="2"/>
+  <text x="300" y="95" font-family="Arial, sans-serif" font-size="24" font-weight="bold" text-anchor="middle" fill="#000000">KREAM</text>
+  <text x="300" y="120" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#666666">한국 최대 리셀 플랫폼</text>
+
+  <!-- Search Icon -->
+  <circle cx="300" cy="180" r="30" fill="none" stroke="#4CAF50" stroke-width="3"/>
+  <line x1="320" y1="200" x2="340" y2="220" stroke="#4CAF50" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- Features -->
+  <text x="50" y="250" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#333333">✓ 검색어로 간편하게 상품 수집</text>
+  <text x="50" y="280" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#333333">✓ 브랜드, 품번, 이미지 자동 수집</text>
+  <text x="50" y="310" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#333333">✓ 0.5초 내 빠른 수집 속도</text>
+  <text x="50" y="340" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#333333">✓ 카테고리 자동 분류</text>
+
+  <!-- API Badge -->
+  <rect x="450" y="350" width="100" height="30" rx="15" fill="#4CAF50"/>
+  <text x="500" y="371" font-family="Arial, sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#ffffff">API 방식</text>
+</svg>

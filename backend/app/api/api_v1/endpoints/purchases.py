@@ -1,0 +1,438 @@
+from typing import List, Optional
+from datetime import date
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session, joinedload
+from app.api.deps import get_db, get_current_user
+from app.core.file_storage import file_storage
+from app.models.user import User
+from app.models.purchase import Purchase, PurchaseItem, PaymentType, PurchaseStatus
+from app.models.product import Product
+from app.models.brand import Brand
+from app.models.inventory import Inventory
+from app.models.warehouse import Warehouse
+from app.schemas.purchase import (
+    PurchaseCreate,
+    PurchaseUpdate,
+    Purchase as PurchaseSchema,
+    PurchaseList
+)
+import uuid
+
+router = APIRouter()
+
+@router.get("/next-transaction-no")
+def get_next_transaction_no(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """다음 구매번호 생성 (P 접두사)"""
+    from datetime import datetime
+
+    # 오늘 날짜로 시작하는 구매번호 개수 확인
+    today = datetime.now().strftime('%Y%m%d')
+
+    # 오늘 날짜의 가장 큰 번호 찾기 (P 접두사 포함)
+    last_purchase = db.query(Purchase).filter(
+        Purchase.transaction_no.like(f"P{today}-%")
+    ).order_by(Purchase.transaction_no.desc()).first()
+
+    if last_purchase:
+        # 마지막 번호에서 숫자 추출하여 +1
+        last_num = int(last_purchase.transaction_no.split('-')[-1])
+        next_num = last_num + 1
+    else:
+        next_num = 1
+
+    next_no = f"P{today}-{next_num:04d}"
+
+    return {"transaction_no": next_no}
+
+@router.get("/", response_model=PurchaseList)
+def get_purchases(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=10000),
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    payment_type: Optional[PaymentType] = None,
+    status: Optional[PurchaseStatus] = None,
+    brand_name: Optional[str] = None,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """구매 목록 조회"""
+    query = db.query(Purchase)
+
+    # 검색 필터링
+    if search:
+        # PurchaseItem과 Product를 조인하여 상품명 검색 가능하게 함
+        from sqlalchemy import or_
+        query = query.outerjoin(PurchaseItem).outerjoin(Product, PurchaseItem.product_id == Product.id)
+        search_filter = or_(
+            Purchase.transaction_no.ilike(f"%{search}%"),
+            Purchase.supplier.ilike(f"%{search}%"),
+            Product.product_name.ilike(f"%{search}%")
+        )
+        query = query.filter(search_filter).distinct()
+
+    # 필터링
+    if start_date:
+        query = query.filter(Purchase.purchase_date >= start_date)
+    if end_date:
+        query = query.filter(Purchase.purchase_date <= end_date)
+    if payment_type:
+        query = query.filter(Purchase.payment_type == payment_type)
+    if status:
+        query = query.filter(Purchase.status == status)
+    if brand_name:
+        query = query.join(Purchase.items).join(PurchaseItem.product).join(Product.brand).filter(Brand.name == brand_name)
+
+    # buyer 권한은 자신의 구매만 조회
+    if current_user.role.value == "buyer":
+        query = query.filter(Purchase.buyer_id == current_user.id)
+
+    total = query.count()
+    purchases = query.options(
+        joinedload(Purchase.items).joinedload(PurchaseItem.product).joinedload(Product.brand),
+        joinedload(Purchase.items).joinedload(PurchaseItem.warehouse),
+        joinedload(Purchase.buyer)
+    ).order_by(Purchase.created_at.desc()).offset(skip).limit(limit).all()
+
+    # buyer_name 및 product의 brand_name 추가
+    for purchase in purchases:
+        if purchase.buyer:
+            purchase.buyer_name = purchase.buyer.full_name
+        # 각 item의 product에 brand_name 추가
+        for item in purchase.items:
+            if item.product and item.product.brand:
+                item.product.brand_name = item.product.brand.name
+
+    return PurchaseList(total=total, items=purchases)
+
+@router.get("/{purchase_id}", response_model=PurchaseSchema)
+def get_purchase(
+    purchase_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """구매 상세 조회"""
+    purchase = db.query(Purchase).options(
+        joinedload(Purchase.items).joinedload(PurchaseItem.product).joinedload(Product.brand),
+        joinedload(Purchase.items).joinedload(PurchaseItem.warehouse),
+        joinedload(Purchase.buyer)
+    ).filter(Purchase.id == purchase_id).first()
+    if not purchase:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+
+    # 권한 체크
+    if current_user.role.value == "buyer" and str(purchase.buyer_id) != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    # buyer_name 추가
+    if purchase.buyer:
+        purchase.buyer_name = purchase.buyer.full_name
+
+    # product의 brand_name 추가
+    for item in purchase.items:
+        if item.product and item.product.brand:
+            item.product.brand_name = item.product.brand.name
+
+    return purchase
+
+@router.post("/", response_model=PurchaseSchema)
+def create_purchase(
+    purchase_data: PurchaseCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """구매 등록"""
+    import logging
+    from datetime import datetime
+    logging.info(f"Received purchase data: {purchase_data.dict()}")
+
+    # buyer나 admin만 구매 등록 가능
+    if current_user.role.value not in ["buyer", "admin"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    # 입력 데이터 검증
+    if not purchase_data.items or len(purchase_data.items) == 0:
+        raise HTTPException(status_code=400, detail="상품을 추가해주세요")
+
+    # 거래번호 자동 생성
+    if not purchase_data.transaction_no or purchase_data.transaction_no == "":
+        # 오늘 날짜로 시작하는 거래번호 개수 확인
+        today = datetime.now().strftime('%Y%m%d')
+        count = db.query(Purchase).filter(
+            Purchase.transaction_no.like(f"{today}-%")
+        ).count()
+        transaction_no = f"{today}-{count + 1:04d}"
+    else:
+        transaction_no = purchase_data.transaction_no
+
+    # 중복 거래번호 체크
+    existing = db.query(Purchase).filter(
+        Purchase.transaction_no == transaction_no
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="거래번호가 이미 존재합니다")
+
+    # 구매 생성
+    purchase = Purchase(
+        id=uuid.uuid4(),
+        transaction_no=transaction_no,
+        purchase_date=purchase_data.purchase_date,
+        buyer_id=current_user.id,
+        payment_type=purchase_data.payment_type,
+        supplier=purchase_data.supplier,
+        receipt_url=purchase_data.receipt_url,
+        notes=purchase_data.notes,
+        status=PurchaseStatus.pending,
+        total_amount=0
+    )
+
+    db.add(purchase)
+
+    # 구매 아이템 생성 및 총액 계산
+    total_amount = 0.0
+    for item_data in purchase_data.items:
+        # 상품 확인
+        try:
+            # product_id가 유효한 UUID인지 확인
+            import uuid as uuid_lib
+            uuid_lib.UUID(item_data.product_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"잘못된 상품 ID 형식: {item_data.product_id}. 상품을 다시 선택해주세요."
+            )
+
+        product = db.query(Product).filter(Product.id == item_data.product_id).first()
+        if not product:
+            raise HTTPException(
+                status_code=400,
+                detail=f"상품을 찾을 수 없습니다: {item_data.product_id}"
+            )
+
+        # 마진율 계산
+        margin_rate = None
+        if item_data.selling_price and item_data.purchase_price > 0:
+            margin_rate = ((item_data.selling_price - item_data.purchase_price) / item_data.purchase_price * 100)
+
+        item = PurchaseItem(
+            id=uuid.uuid4(),
+            purchase_id=purchase.id,
+            warehouse_id=item_data.warehouse_id if item_data.warehouse_id else None,
+            product_id=item_data.product_id,
+            size=item_data.size if item_data.size else None,
+            quantity=item_data.quantity,
+            purchase_price=item_data.purchase_price,
+            selling_price=item_data.selling_price,
+            margin_rate=margin_rate,
+            receipt_image_url=item_data.receipt_image_url,
+            product_image_url=item_data.product_image_url,
+            notes=item_data.notes
+        )
+
+        db.add(item)
+        total_amount += item_data.purchase_price * item_data.quantity
+
+        # 재고 업데이트 (사이즈별로 관리)
+        inventory = db.query(Inventory).filter(
+            Inventory.product_id == item_data.product_id,
+            Inventory.size == item_data.size
+        ).first()
+
+        if inventory:
+            inventory.quantity += item_data.quantity
+        else:
+            inventory = Inventory(
+                id=uuid.uuid4(),
+                product_id=item_data.product_id,
+                size=item_data.size,
+                quantity=item_data.quantity,
+                reserved_quantity=0
+            )
+            db.add(inventory)
+
+    # 총액 업데이트
+    purchase.total_amount = total_amount
+
+    db.commit()
+    db.refresh(purchase)
+
+    return purchase
+
+@router.put("/{purchase_id}", response_model=PurchaseSchema)
+def update_purchase(
+    purchase_id: str,
+    purchase_update: PurchaseUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """구매 정보 수정"""
+    purchase = db.query(Purchase).filter(Purchase.id == purchase_id).first()
+    if not purchase:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+
+    # 권한 체크
+    if current_user.role.value == "buyer" and str(purchase.buyer_id) != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    # 업데이트
+    update_data = purchase_update.dict(exclude_unset=True)
+
+    # items를 제외한 필드 업데이트
+    items_data = update_data.pop('items', None)
+    for field, value in update_data.items():
+        setattr(purchase, field, value)
+
+    # items가 포함된 경우 전체 교체
+    if items_data is not None:
+        # 기존 items 삭제
+        db.query(PurchaseItem).filter(PurchaseItem.purchase_id == purchase_id).delete()
+
+        # 새 items 추가
+        total_amount = 0.0
+        for item_data in items_data:
+            # 상품 확인
+            product = db.query(Product).filter(Product.id == item_data['product_id']).first()
+            if not product:
+                raise HTTPException(status_code=400, detail=f"상품을 찾을 수 없습니다: {item_data['product_id']}")
+
+            # 마진율 계산
+            margin_rate = None
+            if item_data.get('selling_price') and item_data['purchase_price'] > 0:
+                margin_rate = ((item_data['selling_price'] - item_data['purchase_price']) / item_data['purchase_price'] * 100)
+
+            item = PurchaseItem(
+                id=uuid.uuid4(),
+                purchase_id=purchase.id,
+                product_id=item_data['product_id'],
+                warehouse_id=item_data.get('warehouse_id'),
+                size=item_data.get('size'),
+                quantity=item_data['quantity'],
+                purchase_price=item_data['purchase_price'],
+                selling_price=item_data.get('selling_price'),
+                margin_rate=margin_rate,
+                receipt_image_url=item_data.get('receipt_image_url'),
+                product_image_url=item_data.get('product_image_url'),
+                notes=item_data.get('notes')
+            )
+
+            db.add(item)
+            total_amount += item_data['purchase_price'] * item_data['quantity']
+
+        # 총액 업데이트
+        purchase.total_amount = total_amount
+
+    db.commit()
+    db.refresh(purchase)
+
+    # product 정보를 포함하여 반환
+    purchase = db.query(Purchase).options(
+        joinedload(Purchase.items).joinedload(PurchaseItem.product)
+    ).filter(Purchase.id == purchase_id).first()
+
+    return purchase
+
+@router.delete("/{purchase_id}")
+def delete_purchase(
+    purchase_id: str,
+    delete_inventory: bool = Query(False, description="재고도 함께 삭제할지 여부"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """구매 삭제"""
+    # admin만 삭제 가능
+    if current_user.role.value != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    purchase = db.query(Purchase).filter(Purchase.id == purchase_id).first()
+    if not purchase:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+
+    # 재고 처리
+    if delete_inventory:
+        # 재고도 함께 삭제
+        items = db.query(PurchaseItem).filter(PurchaseItem.purchase_id == purchase_id).all()
+        for item in items:
+            inventory = db.query(Inventory).filter(
+                Inventory.product_id == item.product_id,
+                Inventory.size == item.size
+            ).first()
+            if inventory:
+                inventory.quantity -= item.quantity
+                # 재고가 0 이하가 되면 삭제
+                if inventory.quantity <= 0:
+                    db.delete(inventory)
+
+    db.delete(purchase)
+    db.commit()
+
+    return {"message": "Purchase deleted successfully"}
+
+@router.post("/{purchase_id}/upload-receipt")
+async def upload_receipt(
+    purchase_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """구매 영수증 업로드"""
+    # buyer나 admin만 가능
+    if current_user.role.value not in ["buyer", "admin"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    purchase = db.query(Purchase).filter(Purchase.id == purchase_id).first()
+    if not purchase:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+
+    # 파일 저장
+    try:
+        custom_name = f"purchase_{purchase_id}_receipt"
+        relative_path = await file_storage.save_file(
+            file=file,
+            file_type='purchase_receipt',
+            custom_name=custom_name
+        )
+
+        # DB 업데이트
+        purchase.receipt_url = relative_path
+        db.commit()
+
+        return {
+            "message": "Receipt uploaded successfully",
+            "file_path": relative_path,
+            "url": file_storage.get_file_url(relative_path, "/api/v1/files")
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
+
+@router.get("/{purchase_id}/receipt")
+def download_receipt(
+    purchase_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """구매 영수증 다운로드"""
+    purchase = db.query(Purchase).filter(Purchase.id == purchase_id).first()
+    if not purchase:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+
+    if not purchase.receipt_url:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+
+    # 파일 경로 가져오기
+    file_path = file_storage.get_full_path(purchase.receipt_url)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(
+        path=file_path,
+        filename=file_path.name,
+        media_type='application/octet-stream'
+    )

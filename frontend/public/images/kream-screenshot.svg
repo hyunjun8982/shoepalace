@@ -1,0 +1,35 @@
+<svg width="400" height="250" xmlns="http://www.w3.org/2000/svg">
+  <!-- 배경 -->
+  <rect width="400" height="250" fill="#ffffff"/>
+
+  <!-- 헤더 영역 -->
+  <rect width="400" height="40" fill="#f8f9fa"/>
+  <text x="20" y="25" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#000000">나이키</text>
+
+  <!-- 상품 그리드 -->
+  <!-- Row 1 -->
+  <rect x="10" y="50" width="90" height="90" rx="5" fill="#f0f0f0" stroke="#e0e0e0" stroke-width="1"/>
+  <rect x="110" y="50" width="90" height="90" rx="5" fill="#f0f0f0" stroke="#e0e0e0" stroke-width="1"/>
+  <rect x="210" y="50" width="90" height="90" rx="5" fill="#f0f0f0" stroke="#e0e0e0" stroke-width="1"/>
+  <rect x="310" y="50" width="90" height="90" rx="5" fill="#f0f0f0" stroke="#e0e0e0" stroke-width="1"/>
+
+  <!-- Row 2 -->
+  <rect x="10" y="150" width="90" height="90" rx="5" fill="#f0f0f0" stroke="#e0e0e0" stroke-width="1"/>
+  <rect x="110" y="150" width="90" height="90" rx="5" fill="#f0f0f0" stroke="#e0e0e0" stroke-width="1"/>
+  <rect x="210" y="150" width="90" height="90" rx="5" fill="#f0f0f0" stroke="#e0e0e0" stroke-width="1"/>
+  <rect x="310" y="150" width="90" height="90" rx="5" fill="#f0f0f0" stroke="#e0e0e0" stroke-width="1"/>
+
+  <!-- 상품 이미지 표시 (간단한 아이콘) -->
+  <circle cx="55" cy="95" r="20" fill="#d0d0d0"/>
+  <circle cx="155" cy="95" r="20" fill="#d0d0d0"/>
+  <circle cx="255" cy="95" r="20" fill="#d0d0d0"/>
+  <circle cx="355" cy="95" r="20" fill="#d0d0d0"/>
+
+  <circle cx="55" cy="195" r="20" fill="#d0d0d0"/>
+  <circle cx="155" cy="195" r="20" fill="#d0d0d0"/>
+  <circle cx="255" cy="195" r="20" fill="#d0d0d0"/>
+  <circle cx="355" cy="195" r="20" fill="#d0d0d0"/>
+
+  <!-- KREAM 워터마크 -->
+  <text x="340" y="245" font-family="Arial, sans-serif" font-size="10" fill="#999999">KREAM</text>
+</svg>

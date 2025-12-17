@@ -1,0 +1,64 @@
+# 개발 환경용 Docker Compose
+name: shoepalace-dev
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15
+    container_name: shoepalace_dev_db
+    environment:
+      POSTGRES_DB: shoepalace
+      POSTGRES_USER: shoepalace_user
+      POSTGRES_PASSWORD: shoepalace_pass
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shoepalace_user -d shoepalace"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend FastAPI (개발 모드 - 핫리로드)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: shoepalace_dev_backend
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./backend:/app
+      - ./uploads:/app/uploads
+    environment:
+      - DATABASE_URL=postgresql://shoepalace_user:shoepalace_pass@133.186.221.84:5433/shoepalace
+      - ENVIRONMENT=development
+    restart: unless-stopped
+
+  # Frontend React (개발 모드 - 핫리로드)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: shoepalace_dev_frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - REACT_APP_API_URL=http://localhost:8001
+      - CHOKIDAR_USEPOLLING=true
+      - WATCHPACK_POLLING=true
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_dev_data:
+
+networks:
+  default:
+    name: shoepalace_dev_network

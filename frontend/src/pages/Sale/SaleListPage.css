@@ -1,0 +1,49 @@
+/* 통계 카드 애니메이션 효과 */
+.statistics-card {
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.statistics-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
+}
+
+/* 그라데이션 헤더 애니메이션 */
+.card-header-gradient {
+  position: relative;
+  overflow: hidden;
+}
+
+.card-header-gradient::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.5s;
+}
+
+.statistics-card:hover .card-header-gradient::before {
+  left: 100%;
+}
+
+/* 숫자 애니메이션 */
+.statistics-value {
+  transition: color 0.3s ease;
+}
+
+.statistics-card:hover .statistics-value {
+  color: #1890ff !important;
+}
+
+/* 아이콘 회전 효과 */
+.statistics-icon {
+  transition: transform 0.3s ease;
+}
+
+.statistics-card:hover .statistics-icon {
+  transform: rotate(10deg) scale(1.1);
+}

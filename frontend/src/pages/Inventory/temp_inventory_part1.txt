@@ -1,0 +1,155 @@
+import React, { useState, useEffect } from 'react';
+import './InventoryListPage.css';
+import {
+  Card,
+  Table,
+  Button,
+  Space,
+  Tag,
+  Input,
+  Select,
+  Row,
+  Col,
+  Badge,
+  App,
+  Modal,
+  Form,
+  InputNumber,
+  Tooltip,
+} from 'antd';
+import {
+  SearchOutlined,
+  EditOutlined,
+  SwapOutlined,
+  AlertOutlined,
+  DownloadOutlined,
+  PlusCircleOutlined,
+  MinusCircleOutlined,
+  InboxOutlined,
+  AppstoreOutlined,
+  WarningOutlined,
+  CloseCircleOutlined,
+  ShopOutlined,
+  TagsOutlined,
+} from '@ant-design/icons';
+import type { ColumnsType } from 'antd/es/table';
+import { InventoryDetail, AdjustmentType, InventoryAdjustmentCreate } from '../../types/inventory';
+import { inventoryService } from '../../services/inventory';
+import { useAuth } from '../../contexts/AuthContext';
+import { brandService, Brand } from '../../services/brand';
+
+const { Search } = Input;
+const { Option } = Select;
+const { TextArea } = Input;
+
+const InventoryListPage: React.FC = () => {
+  const { message } = App.useApp();
+  const { user } = useAuth();
+  const [inventory, setInventory] = useState<InventoryDetail[]>([]);
+  const [allInventory, setAllInventory] = useState<InventoryDetail[]>([]); // 통계용 전체 재고
+  const [brands, setBrands] = useState<Brand[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [pagination, setPagination] = useState({
+    current: 1,
+    pageSize: 10,
+  });
+  const [filters, setFilters] = useState({
+    search: '',
+    category: undefined as string | undefined,
+    low_stock_only: false,
+  });
+  const [adjustModalVisible, setAdjustModalVisible] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<InventoryDetail | null>(null);
+  const [adjustForm] = Form.useForm();
+
+  const fetchBrands = async () => {
+    try {
+      const response = await brandService.getBrands();
+      setBrands(response.items);
+    } catch (error) {
+      console.error('브랜드 목록 조회 실패:', error);
+    }
+  };
+
+  useEffect(() => {
+    fetchBrands();
+    fetchAllInventoryForStats(); // 통계용 전체 재고 조회
+  }, []);
+
+  useEffect(() => {
+    fetchInventory();
+  }, [pagination.current, pagination.pageSize, filters]);
+
+  const fetchAllInventoryForStats = async () => {
+    try {
+      // 통계용으로 전체 재고 조회 (최대 10000개)
+      const response = await inventoryService.getInventoryList({
+        skip: 0,
+        limit: 10000,
+      });
+      setAllInventory(response.items);
+    } catch (error) {
+      console.error('전체 재고 조회 실패:', error);
+    }
+  };
+
+  const fetchInventory = async () => {
+    try {
+      setLoading(true);
+      const response = await inventoryService.getInventoryList({
+        skip: (pagination.current - 1) * pagination.pageSize,
+        limit: pagination.pageSize,
+        ...filters,
+      });
+      setInventory(response.items);
+      setTotal(response.total);
+    } catch (error) {
+      message.error('재고 목록 조회에 실패했습니다.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAdjustment = (record: InventoryDetail) => {
+    setSelectedProduct(record);
+    adjustForm.resetFields();
+    adjustForm.setFieldsValue({
+      product_id: record.product_id,
+      quantity: 0,
+    });
+    setAdjustModalVisible(true);
+  };
+
+  const handleAdjustmentSubmit = async (values: any) => {
+    try {
+      const adjustmentData: InventoryAdjustmentCreate = {
+        product_id: values.product_id,
+        adjustment_type: values.adjustment_type,
+        quantity: values.adjustment_type === AdjustmentType.SALE ||
+                  values.adjustment_type === AdjustmentType.DAMAGE ?
+                  -Math.abs(values.quantity) : Math.abs(values.quantity),
+        notes: values.notes,
+      };
+
+      await inventoryService.createAdjustment(adjustmentData);
+      message.success('재고 조정이 완료되었습니다.');
+      setAdjustModalVisible(false);
+      fetchInventory();
+      fetchAllInventoryForStats();
+    } catch (error) {
+      message.error('재고 조정에 실패했습니다.');
+    }
+  };
+
+  const getStockStatus = (available: number, minLevel: number) => {
+    if (available <= 0) {
+      return <Tag color="error">품절</Tag>;
+    } else if (available <= minLevel) {
+      return <Tag color="warning">재고 부족</Tag>;
+    } else if (available <= minLevel * 2) {
+      return <Tag color="orange">재고 주의</Tag>;
+    }
+    return <Tag color="success">정상</Tag>;
+  };
+

@@ -1,0 +1,756 @@
+import React, { useState, useMemo, useEffect } from 'react';
+import { Layout, Menu, Avatar, Dropdown, Badge, Button, Space, Breadcrumb, Drawer, List, Typography, Tag, Empty, Image } from 'antd';
+import {
+  DashboardOutlined,
+  ShoppingCartOutlined,
+  DollarOutlined,
+  InboxOutlined,
+  HomeOutlined,
+  TeamOutlined,
+  CalculatorOutlined,
+  BellOutlined,
+  LogoutOutlined,
+  UserOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+  DeleteOutlined,
+  CheckOutlined,
+  QuestionCircleOutlined,
+  CloudDownloadOutlined,
+  SearchOutlined,
+  GiftOutlined,
+} from '@ant-design/icons';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthContext';
+import { notificationService } from '../../services/notification';
+import { Notification, NotificationType } from '../../types/notification';
+import ChatDropdown from '../Chat/ChatDropdown';
+import dayjs from 'dayjs';
+import relativeTime from 'dayjs/plugin/relativeTime';
+import utc from 'dayjs/plugin/utc';
+import 'dayjs/locale/ko';
+
+dayjs.extend(relativeTime);
+dayjs.extend(utc);
+dayjs.locale('ko');
+
+const { Text } = Typography;
+
+const { Header, Sider, Content } = Layout;
+
+interface MainLayoutProps {
+  children: React.ReactNode;
+}
+
+const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
+  const [collapsed, setCollapsed] = useState(false);
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [notificationDrawerVisible, setNotificationDrawerVisible] = useState(false);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [loadingNotifications, setLoadingNotifications] = useState(false);
+  const [sessionTimeRemaining, setSessionTimeRemaining] = useState<number | null>(null);
+
+  // 페이지 제목 매핑
+  const pageTitles: { [key: string]: string } = {
+    '/dashboard': '대시보드',
+    '/products': '상품 관리',
+    '/products/new': '상품 등록',
+    '/purchases': '구매 관리',
+    '/purchases/new': '구매 등록',
+    '/sales': '판매 관리',
+    '/sales/new': '판매 등록',
+    '/inventory': '재고 관리',
+    '/warehouses': '창고 관리',
+    '/settlements': '정산 관리',
+    '/users': '사용자 관리',
+    '/trending-products': '인기상품 관리',
+    '/product-importer': '상품 자동 수집',
+    '/adidas': '아디다스 쿠폰',
+    '/users/new': '사용자 등록',
+    '/reports': '보고서',
+    '/settings': '설정',
+    '/profile': '프로필',
+  };
+
+  // 브레드크럼 아이템 생성
+  const breadcrumbItems = useMemo(() => {
+    const pathSegments = location.pathname.split('/').filter(segment => segment);
+    const items: Array<{ href?: string; title: JSX.Element }> = [];
+
+    if (pathSegments.length === 0) {
+      return items;
+    }
+
+    // 첫 번째 세그먼트 (메인 메뉴)
+    const mainPath = `/${pathSegments[0]}`;
+    const mainTitle = pageTitles[mainPath];
+
+    if (mainTitle) {
+      // 서브 페이지가 없으면 진하게, 있으면 연하게
+      const isLastItem = pathSegments.length === 1;
+      items.push({
+        href: mainPath,
+        title: <span style={{ fontWeight: isLastItem ? 600 : 400, color: isLastItem ? '#262626' : '#8c8c8c' }}>{mainTitle}</span>,
+      });
+    }
+
+    // 두 번째 세그먼트 (서브 메뉴)
+    if (pathSegments.length > 1) {
+      const subPath = `/${pathSegments[0]}/${pathSegments[1]}`;
+      let subTitle = pageTitles[subPath];
+
+      // 동적 경로 처리
+      if (!subTitle) {
+        if (pathSegments[0] === 'products' && pathSegments[1] === 'edit') {
+          subTitle = '상품 수정';
+        } else if (pathSegments[0] === 'purchases' && pathSegments[1] !== 'new') {
+          subTitle = '구매 정보';
+        } else if (pathSegments[0] === 'sales' && pathSegments[1] !== 'new') {
+          subTitle = '판매 정보';
+        } else if (pathSegments[0] === 'users' && pathSegments[1] !== 'new') {
+          subTitle = '사용자 수정';
+        }
+      }
+
+      if (subTitle) {
+        items.push({
+          title: <span style={{ fontWeight: 600, color: '#262626' }}>{subTitle}</span>,
+        });
+      }
+    }
+
+    return items;
+  }, [location.pathname, pageTitles]);
+
+  // 알림 데이터 가져오기
+  const fetchNotifications = async () => {
+    try {
+      setLoadingNotifications(true);
+      const response = await notificationService.getNotifications({ limit: 20 });
+      console.log('🔔 Notification response:', response);
+      console.log('🔔 Items:', response.items);
+      console.log('🔔 Items length:', response.items?.length);
+      console.log('🔔 Unread count:', response.unread_count);
+      setNotifications(response.items);
+      setUnreadCount(response.unread_count);
+    } catch (error) {
+      console.error('알림 조회 실패:', error);
+    } finally {
+      setLoadingNotifications(false);
+    }
+  };
+
+  // 세션 타이머 계산
+  useEffect(() => {
+    const calculateTimeRemaining = () => {
+      const token = localStorage.getItem('access_token');
+
+      if (!token) {
+        setSessionTimeRemaining(null);
+        return;
+      }
+
+      try {
+        // JWT 디코딩 (payload 부분만)
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        const expirationTime = payload.exp * 1000; // ms로 변환
+        const now = Date.now();
+        const remaining = Math.max(0, expirationTime - now);
+
+        setSessionTimeRemaining(remaining);
+
+        if (remaining === 0) {
+          logout();
+        }
+      } catch (error) {
+        console.error('토큰 파싱 오류:', error);
+        setSessionTimeRemaining(null);
+      }
+    };
+
+    calculateTimeRemaining();
+    const interval = setInterval(calculateTimeRemaining, 1000);
+
+    return () => clearInterval(interval);
+  }, [logout]);
+
+  // 세션 연장
+  const handleExtendSession = async () => {
+    try {
+      const token = localStorage.getItem('access_token');
+      if (!token) return;
+
+      // 현재 토큰으로 API 호출하여 새 토큰 발급
+      const response = await fetch('/api/v1/auth/refresh', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        localStorage.setItem('access_token', data.access_token);
+        window.location.reload(); // 새 토큰으로 페이지 리로드
+      }
+    } catch (error) {
+      console.error('세션 연장 실패:', error);
+    }
+  };
+
+  // 세션 시간 포맷팅
+  const formatSessionTime = (ms: number | null) => {
+    if (ms === null) return '';
+    const minutes = Math.floor(ms / 60000);
+    const seconds = Math.floor((ms % 60000) / 1000);
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
+  // 주기적으로 읽지 않은 알림 개수 업데이트
+  useEffect(() => {
+    fetchNotifications();
+    const interval = setInterval(async () => {
+      try {
+        const count = await notificationService.getUnreadCount();
+        setUnreadCount(count);
+      } catch (error) {
+        console.error('알림 개수 조회 실패:', error);
+      }
+    }, 30000); // 30초마다
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // 알림 읽음 처리
+  const handleMarkAsRead = async (notificationId: string) => {
+    try {
+      await notificationService.markAsRead(notificationId);
+      fetchNotifications();
+    } catch (error) {
+      console.error('알림 읽음 처리 실패:', error);
+    }
+  };
+
+  // 모든 알림 읽음 처리
+  const handleMarkAllAsRead = async () => {
+    try {
+      await notificationService.markAllAsRead();
+      fetchNotifications();
+    } catch (error) {
+      console.error('모든 알림 읽음 처리 실패:', error);
+    }
+  };
+
+  // 알림 삭제
+  const handleDeleteNotification = async (notificationId: string) => {
+    try {
+      await notificationService.deleteNotification(notificationId);
+      fetchNotifications();
+    } catch (error) {
+      console.error('알림 삭제 실패:', error);
+    }
+  };
+
+  // 모든 알림 삭제
+  const handleDeleteAllNotifications = async () => {
+    try {
+      // 모든 알림을 하나씩 삭제
+      await Promise.all(notifications.map(n => notificationService.deleteNotification(n.id)));
+      fetchNotifications();
+    } catch (error) {
+      console.error('모든 알림 삭제 실패:', error);
+    }
+  };
+
+  interface MenuItem {
+    key: string;
+    icon: React.ReactElement;
+    label: string;
+    roles?: string[];
+    children?: MenuItem[];
+  }
+
+  const menuItems: MenuItem[] = [
+    {
+      key: '/dashboard',
+      icon: <DashboardOutlined />,
+      label: '대시보드',
+    },
+    {
+      key: '/purchases',
+      icon: <ShoppingCartOutlined />,
+      label: '구매 관리',
+      roles: ['admin', 'buyer'],
+    },
+    {
+      key: '/sales',
+      icon: <DollarOutlined />,
+      label: '판매 관리',
+      roles: ['admin', 'seller'],
+    },
+    {
+      key: '/inventory',
+      icon: <InboxOutlined />,
+      label: '재고 관리',
+    },
+    {
+      key: '/warehouses',
+      icon: <HomeOutlined />,
+      label: '창고 관리',
+    },
+    {
+      key: '/products',
+      icon: <TeamOutlined />,
+      label: '상품 관리',
+    },
+    {
+      key: '/trending-products',
+      icon: <TeamOutlined />,
+      label: '인기상품 관리',
+      roles: ['admin'],
+    },
+    {
+      key: '/product-importer',
+      icon: <CloudDownloadOutlined />,
+      label: '상품 자동 수집',
+      roles: ['admin'],
+    },
+    {
+      key: '/adidas',
+      icon: <GiftOutlined />,
+      label: '아디다스 쿠폰',
+      roles: ['admin'],
+    },
+    // {
+    //   key: '/settlements',
+    //   icon: <CalculatorOutlined />,
+    //   label: '정산 관리',
+    // },
+    {
+      key: '/users',
+      icon: <UserOutlined />,
+      label: '사용자 관리',
+      roles: ['admin'],
+    },
+  ];
+
+  // 사용자 권한에 따른 메뉴 필터링
+  const filteredMenuItems = menuItems.filter(item => {
+    if (!item.roles) return true;
+    return item.roles.includes(user?.role || '');
+  });
+
+  const handleMenuClick = ({ key }: { key: string }) => {
+    // '/' 로 시작하는 경로만 네비게이션 (서브메뉴 부모는 무시)
+    if (key && key.startsWith('/')) {
+      navigate(key);
+    }
+  };
+
+  // 현재 경로의 첫 번째 세그먼트를 기준으로 선택된 메뉴 키 결정
+  const selectedMenuKey = useMemo(() => {
+    const pathSegments = location.pathname.split('/').filter(segment => segment);
+    if (pathSegments.length === 0) return '/dashboard';
+
+    return `/${pathSegments[0]}`;
+  }, [location.pathname]);
+
+  const userMenuItems = [
+    {
+      key: 'profile',
+      icon: <UserOutlined />,
+      label: '프로필',
+      onClick: () => navigate('/profile'),
+    },
+    {
+      key: 'help',
+      icon: <QuestionCircleOutlined />,
+      label: '도움말',
+      onClick: () => navigate('/help'),
+    },
+    {
+      type: 'divider' as const,
+    },
+    {
+      key: 'logout',
+      icon: <LogoutOutlined />,
+      label: '로그아웃',
+      onClick: logout,
+    },
+  ];
+
+  return (
+    <Layout style={{ minHeight: '100vh' }}>
+      <Sider
+        trigger={null}
+        collapsible
+        collapsed={collapsed}
+        width={240}
+        style={{
+          background: '#1a1d2e',
+          boxShadow: '2px 0 8px 0 rgba(0,0,0,.15)',
+          position: 'relative',
+        }}
+      >
+        <div
+          style={{
+            height: 64,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: collapsed ? 'center' : 'flex-start',
+            padding: collapsed ? '0' : '0 20px',
+          }}
+        >
+          {!collapsed ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%' }}>
+              <img
+                src="/images/logo.png"
+                alt="로고"
+                style={{
+                  height: 40,
+                  filter: 'brightness(0) invert(1)', // 로고를 흰색으로 변환
+                  flexShrink: 0,
+                }}
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                }}
+              />
+              <div style={{ color: '#94a3b8', fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap' }}>
+                재고관리시스템
+              </div>
+            </div>
+          ) : (
+            <img
+              src="/images/logo.png"
+              alt="로고"
+              style={{
+                height: 32,
+                filter: 'brightness(0) invert(1)', // 로고를 흰색으로 변환
+              }}
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none';
+              }}
+            />
+          )}
+        </div>
+        <Menu
+          mode="inline"
+          selectedKeys={[selectedMenuKey]}
+          onClick={handleMenuClick}
+          style={{
+            border: 'none',
+            height: 'calc(100vh - 64px - 48px)',
+            overflowY: 'auto',
+            background: 'transparent',
+            padding: '8px',
+          }}
+          theme="dark"
+          items={filteredMenuItems.map(item => ({
+            key: item.key,
+            icon: item.icon,
+            label: item.label,
+            ...(item.children ? { children: item.children } : {}),
+            style: {
+              borderRadius: 8,
+              margin: '4px 0',
+            },
+          }))}
+        />
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            width: '100%',
+            height: 48,
+            borderTop: '1px solid rgba(255,255,255,0.1)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'transparent',
+            cursor: 'pointer',
+            transition: 'all 0.3s',
+          }}
+          onClick={() => setCollapsed(!collapsed)}
+        >
+          <Button
+            type="text"
+            style={{
+              fontSize: 18,
+              color: '#94a3b8',
+              width: '100%',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+          />
+        </div>
+      </Sider>
+
+      <Layout>
+        <Header
+          style={{
+            padding: '0 24px',
+            background: '#fff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            boxShadow: '0 1px 4px rgba(0,21,41,.08)',
+            height: 64,
+          }}
+        >
+          <Space size="large" style={{ flex: 1, height: '100%', alignItems: 'center' }}>
+            <Breadcrumb
+              items={breadcrumbItems}
+              style={{ fontSize: 16, fontWeight: 600, color: '#262626' }}
+            />
+          </Space>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, height: '100%' }}>
+            {sessionTimeRemaining !== null && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '5px 10px',
+                background: sessionTimeRemaining < 300000 ? '#fff2e8' : '#e6f7ff',
+                borderRadius: 4,
+                height: 32,
+              }}>
+                <span style={{
+                  fontSize: 14,
+                  color: sessionTimeRemaining < 300000 ? '#fa541c' : '#1890ff',
+                  fontWeight: 500,
+                  fontFamily: 'monospace',
+                  lineHeight: '22px',
+                }}>
+                  {formatSessionTime(sessionTimeRemaining)}
+                </span>
+                <div style={{
+                  width: 1,
+                  height: 16,
+                  background: sessionTimeRemaining < 300000 ? '#ffd8bf' : '#bae7ff',
+                  margin: '0 2px',
+                }} />
+                <span
+                  onClick={handleExtendSession}
+                  style={{
+                    fontSize: 13,
+                    color: '#8c8c8c',
+                    cursor: 'pointer',
+                    lineHeight: '22px',
+                    padding: '0 4px',
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.color = '#262626'}
+                  onMouseLeave={(e) => e.currentTarget.style.color = '#8c8c8c'}
+                >
+                  연장
+                </span>
+              </div>
+            )}
+
+            <ChatDropdown />
+
+            <Badge
+              count={unreadCount}
+              offset={[-2, 2]}
+              style={{
+                backgroundColor: '#ff4d4f',
+                fontSize: 10,
+                height: 18,
+                minWidth: 18,
+                lineHeight: '18px',
+                padding: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <div
+                onClick={() => {
+                  setNotificationDrawerVisible(true);
+                  fetchNotifications();
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 36,
+                  height: 36,
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  transition: 'background 0.2s',
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+              >
+                <BellOutlined style={{ fontSize: 18, color: '#595959' }} />
+              </div>
+            </Badge>
+
+            <Dropdown
+              menu={{ items: userMenuItems }}
+              placement="bottomRight"
+              arrow
+            >
+              <div style={{
+                cursor: 'pointer',
+                padding: '4px 10px',
+                borderRadius: 4,
+                transition: 'background 0.2s',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                height: 40,
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+              >
+                <Avatar size={28} style={{ backgroundColor: '#1890ff', fontSize: 14 }}>
+                  {user?.full_name?.charAt(0)}
+                </Avatar>
+                <span style={{ fontSize: 14, color: '#262626', lineHeight: '22px' }}>{user?.full_name}</span>
+              </div>
+            </Dropdown>
+          </div>
+        </Header>
+
+        <Content
+          style={{
+            background: '#f0f2f5',
+            minHeight: 'calc(100vh - 64px)',
+            overflow: 'auto',
+          }}
+        >
+          {children}
+        </Content>
+      </Layout>
+
+      {/* 알림 Drawer */}
+      <Drawer
+        title={
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>알림</span>
+            <Space>
+              {unreadCount > 0 && (
+                <Button size="small" type="link" onClick={handleMarkAllAsRead}>
+                  모두 읽음
+                </Button>
+              )}
+              {notifications.length > 0 && (
+                <Button size="small" type="link" danger onClick={handleDeleteAllNotifications}>
+                  전체 삭제
+                </Button>
+              )}
+            </Space>
+          </div>
+        }
+        placement="right"
+        width={400}
+        onClose={() => setNotificationDrawerVisible(false)}
+        open={notificationDrawerVisible}
+      >
+        {notifications.length === 0 ? (
+          <Empty description="알림이 없습니다" />
+        ) : (
+          <List
+            dataSource={notifications}
+            renderItem={(item) => (
+              <List.Item
+                style={{
+                  backgroundColor: item.is_read ? '#fff' : '#e6f7ff',
+                  padding: '12px',
+                  marginBottom: '8px',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  border: '1px solid #f0f0f0',
+                  position: 'relative',
+                }}
+                onClick={() => {
+                  if (!item.is_read) {
+                    handleMarkAsRead(item.id);
+                  }
+                  if (item.product_id) {
+                    setNotificationDrawerVisible(false);
+                    navigate(`/inventory`);
+                  }
+                }}
+              >
+                <div style={{ display: 'flex', width: '100%', gap: 12 }}>
+                  {/* 상품 이미지 */}
+                  {item.product_image_url && (
+                    <div style={{ flexShrink: 0 }}>
+                      <Image
+                        src={item.product_image_url}
+                        alt={item.product_name || '상품'}
+                        width={60}
+                        height={60}
+                        style={{ borderRadius: 8, objectFit: 'cover' }}
+                        preview={false}
+                        fallback="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Crect width='60' height='60' fill='%23f0f0f0'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='Arial' font-size='12' fill='%23bfbfbf'%3E이미지%3C/text%3E%3C/svg%3E"
+                      />
+                    </div>
+                  )}
+
+                  {/* 알림 내용 */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                      <Tag color={item.type === NotificationType.STOCK_OUT ? 'red' : 'orange'} style={{ margin: 0 }}>
+                        {item.type === NotificationType.STOCK_OUT ? '품절' : '재고 부족'}
+                      </Tag>
+                      <Text style={{ fontSize: 13, fontWeight: 500, color: '#595959' }}>
+                        {item.product_code}
+                      </Text>
+                    </div>
+                    <div style={{ fontSize: 13, marginBottom: 6, lineHeight: '1.5', paddingRight: 45 }}>
+                      <span style={{ fontWeight: 600, color: '#262626' }}>{item.product_name}</span>
+                      <span style={{ color: '#595959' }}> </span>
+                      <span style={{ color: '#0050b3', fontWeight: 600 }}>[{item.size}]</span>
+                      <span style={{ color: '#595959' }}> 사이즈가 {item.type === NotificationType.STOCK_OUT ? '품절' : '재고 부족'}되었습니다.</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#8c8c8c' }}>
+                      {dayjs.utc(item.created_at).local().fromNow()}
+                    </div>
+                  </div>
+
+                  {/* 버튼 영역 - 우측 가운데에 세로로 배치 */}
+                  <div style={{ position: 'absolute', top: '50%', right: 8, transform: 'translateY(-50%)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {!item.is_read && (
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<CheckOutlined style={{ fontSize: 14 }} />}
+                        style={{ padding: '4px', width: 24, height: 24 }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleMarkAsRead(item.id);
+                        }}
+                      />
+                    )}
+                    <Button
+                      type="text"
+                      size="small"
+                      danger
+                      icon={<DeleteOutlined style={{ fontSize: 14 }} />}
+                      style={{ padding: '4px', width: 24, height: 24 }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteNotification(item.id);
+                      }}
+                    />
+                  </div>
+                </div>
+              </List.Item>
+            )}
+          />
+        )}
+      </Drawer>
+    </Layout>
+  );
+};
+
+export default MainLayout;

@@ -1,0 +1,7 @@
+.inventory-low-stock-row {
+  background-color: #fff7e6;
+}
+
+.inventory-low-stock-row:hover td {
+  background-color: #ffe7ba !important;
+}

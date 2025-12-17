@@ -1,0 +1,11 @@
+  const getBrandInfo = (brandName: string) => {
+    // 브랜드 테이블에서 아이콘 찾기
+    const brand = brands.find(b =>
+      b.name.toLowerCase() === brandName.toLowerCase()
+    );
+
+    return {
+      count: getBrandInventory(brandName),
+      iconUrl: brand?.icon_url || null
+    };
+  };

@@ -1,0 +1,159 @@
+
+      {/* 재고 상세 모달 (구매/판매 이력 포함) */}
+      <Modal
+        title="재고 상세 정보"
+        open={detailModalVisible}
+        onCancel={() => setDetailModalVisible(false)}
+        footer={[
+          <Button key="close" onClick={() => setDetailModalVisible(false)}>
+            닫기
+          </Button>
+        ]}
+        width={900}
+      >
+        {selectedInventoryDetail && (
+          <div>
+            {/* 상품 기본 정보 */}
+            <div style={{ marginBottom: 24, padding: 16, backgroundColor: '#f0f2f5', borderRadius: 8 }}>
+              <Row gutter={16}>
+                <Col span={12}>
+                  <div style={{ marginBottom: 8 }}>
+                    <strong>상품명:</strong> {selectedInventoryDetail.product_name}
+                  </div>
+                  <div style={{ marginBottom: 8 }}>
+                    <strong>브랜드:</strong> {selectedInventoryDetail.brand}
+                  </div>
+                  <div style={{ marginBottom: 8 }}>
+                    <strong>카테고리:</strong> {selectedInventoryDetail.category}
+                  </div>
+                </Col>
+                <Col span={12}>
+                  <div style={{ marginBottom: 8 }}>
+                    <strong>사이즈:</strong> {selectedInventoryDetail.size}
+                  </div>
+                  <div style={{ marginBottom: 8 }}>
+                    <strong>현재 재고:</strong> <Tag color="green">{selectedInventoryDetail.quantity}개</Tag>
+                  </div>
+                  <div style={{ marginBottom: 8 }}>
+                    <strong>창고 위치:</strong> {selectedInventoryDetail.location || '-'}
+                  </div>
+                </Col>
+              </Row>
+            </div>
+
+            {/* 구매 이력 */}
+            <div style={{ marginBottom: 24 }}>
+              <h3 style={{ marginBottom: 12 }}>
+                <ShopOutlined style={{ marginRight: 8, color: '#52c41a' }} />
+                구매 이력 ({selectedInventoryDetail.purchase_history?.length || 0}건)
+              </h3>
+              <Table
+                dataSource={selectedInventoryDetail.purchase_history || []}
+                pagination={false}
+                size="small"
+                scroll={{ y: 200 }}
+                columns={[
+                  {
+                    title: '구매일',
+                    dataIndex: 'purchase_date',
+                    key: 'purchase_date',
+                    width: 120,
+                    render: (date: string) => new Date(date).toLocaleDateString('ko-KR')
+                  },
+                  {
+                    title: '거래번호',
+                    dataIndex: 'transaction_no',
+                    key: 'transaction_no',
+                    width: 150
+                  },
+                  {
+                    title: '수량',
+                    dataIndex: 'quantity',
+                    key: 'quantity',
+                    width: 80,
+                    align: 'center' as 'center',
+                    render: (qty: number) => <Tag color="blue">{qty}개</Tag>
+                  },
+                  {
+                    title: '구매가',
+                    dataIndex: 'purchase_price',
+                    key: 'purchase_price',
+                    width: 120,
+                    align: 'right' as 'right',
+                    render: (price: number) => `₩${price.toLocaleString()}`
+                  },
+                  {
+                    title: '공급처',
+                    dataIndex: 'supplier',
+                    key: 'supplier',
+                    width: 150
+                  },
+                  {
+                    title: '구매자',
+                    dataIndex: 'buyer_name',
+                    key: 'buyer_name',
+                    width: 100
+                  }
+                ]}
+              />
+            </div>
+
+            {/* 판매 이력 */}
+            <div>
+              <h3 style={{ marginBottom: 12 }}>
+                <TagsOutlined style={{ marginRight: 8, color: '#1890ff' }} />
+                판매 이력 ({selectedInventoryDetail.sale_history?.length || 0}건)
+              </h3>
+              <Table
+                dataSource={selectedInventoryDetail.sale_history || []}
+                pagination={false}
+                size="small"
+                scroll={{ y: 200 }}
+                columns={[
+                  {
+                    title: '판매일',
+                    dataIndex: 'sale_date',
+                    key: 'sale_date',
+                    width: 120,
+                    render: (date: string) => new Date(date).toLocaleDateString('ko-KR')
+                  },
+                  {
+                    title: '판매번호',
+                    dataIndex: 'sale_number',
+                    key: 'sale_number',
+                    width: 150
+                  },
+                  {
+                    title: '수량',
+                    dataIndex: 'quantity',
+                    key: 'quantity',
+                    width: 80,
+                    align: 'center' as 'center',
+                    render: (qty: number) => <Tag color="orange">{qty}개</Tag>
+                  },
+                  {
+                    title: '판매가',
+                    dataIndex: 'sale_price',
+                    key: 'sale_price',
+                    width: 120,
+                    align: 'right' as 'right',
+                    render: (price: number) => `₩${price.toLocaleString()}`
+                  },
+                  {
+                    title: '고객',
+                    dataIndex: 'customer_name',
+                    key: 'customer_name',
+                    width: 150
+                  },
+                  {
+                    title: '판매자',
+                    dataIndex: 'seller_name',
+                    key: 'seller_name',
+                    width: 100
+                  }
+                ]}
+              />
+            </div>
+          </div>
+        )}
+      </Modal>

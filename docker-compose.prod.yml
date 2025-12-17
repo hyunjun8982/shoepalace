@@ -1,0 +1,71 @@
+# 운영 환경용 Docker Compose
+name: shoepalace-prod
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15
+    container_name: shoepalace_db
+    environment:
+      POSTGRES_DB: shoepalace
+      POSTGRES_USER: shoepalace_user
+      POSTGRES_PASSWORD: shoepalace_pass
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shoepalace_user -d shoepalace"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend FastAPI
+  backend:
+    image: shoepalace-backend:latest
+    container_name: shoepalace_backend
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./uploads:/app/uploads
+    environment:
+      - DATABASE_URL=postgresql://shoepalace_user:shoepalace_pass@db:5432/shoepalace
+      - ENVIRONMENT=production
+        #  - APPIUM_URL=http://host.docker.internal:4723
+      - APPIUM_URL=https://9c6ae1ba8c79.ngrok-free.app
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Frontend React (Nginx with static build)
+  frontend:
+    image: shoepalace-frontend:latest
+    container_name: shoepalace_frontend
+    ports:
+      - "3002:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: shoepalace_nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - ./uploads:/app/uploads
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  default:
+    name: shoepalace_network

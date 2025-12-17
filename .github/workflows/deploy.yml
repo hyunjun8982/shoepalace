@@ -1,0 +1,78 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  DOCKER_BACKEND_IMAGE: shoepalace-backend
+  DOCKER_FRONTEND_IMAGE: shoepalace-frontend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to NHN Cloud Server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            set -e
+
+            echo "=========================================="
+            echo "  Shoepalace 운영 배포 시작"
+            echo "  시간: $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "=========================================="
+
+            # 프로젝트 디렉토리로 이동
+            cd ${{ secrets.DEPLOY_PATH }}
+
+            # 최신 코드 가져오기
+            echo "[1/5] 최신 코드 가져오는 중..."
+            git fetch origin main
+            git reset --hard origin/main
+
+            # Docker 이미지 빌드
+            echo "[2/5] Backend 이미지 빌드 중..."
+            docker build -t ${{ env.DOCKER_BACKEND_IMAGE }}:latest -f backend/Dockerfile backend/
+
+            echo "[3/5] Frontend 이미지 빌드 중..."
+            docker build -t ${{ env.DOCKER_FRONTEND_IMAGE }}:latest -f frontend/Dockerfile frontend/
+
+            # 기존 컨테이너 중지 및 제거
+            echo "[4/5] 기존 컨테이너 정리 중..."
+            docker-compose -f docker-compose.prod.yml down || true
+
+            # 새 컨테이너 시작
+            echo "[5/5] 새 컨테이너 시작 중..."
+            docker-compose -f docker-compose.prod.yml up -d
+
+            # 오래된 이미지 정리
+            echo "사용하지 않는 이미지 정리 중..."
+            docker image prune -f
+
+            echo ""
+            echo "=========================================="
+            echo "  배포 완료!"
+            echo "  시간: $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "=========================================="
+
+            # 컨테이너 상태 확인
+            docker-compose -f docker-compose.prod.yml ps
+
+      - name: Deployment Status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "::notice::배포가 성공적으로 완료되었습니다!"
+          else
+            echo "::error::배포 중 오류가 발생했습니다."
+          fi

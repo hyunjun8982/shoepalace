@@ -1,0 +1,235 @@
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { ConfigProvider, App as AntdApp } from 'antd';
+import koKR from 'antd/locale/ko_KR';
+import { AuthProvider } from './contexts/AuthContext';
+import ProtectedRoute from './components/ProtectedRoute';
+import MainLayout from './components/Layout/MainLayout';
+import LoginPage from './pages/Login/LoginPage';
+import RegisterPage from './pages/Register/RegisterPage';
+import DashboardPage from './pages/Dashboard/DashboardPage';
+import PurchaseListPage from './pages/Purchase/PurchaseListPage';
+import PurchaseFormPage from './pages/Purchase/PurchaseFormPage';
+import PurchaseDetailPage from './pages/Purchase/PurchaseDetailPage';
+import SaleListPage from './pages/Sale/SaleListPage';
+import SaleFormPage from './pages/Sale/SaleFormPage';
+import SaleDetailPage from './pages/Sale/SaleDetailPage';
+import SaleManagementPage from './pages/Sale/SaleManagementPage';
+import InventoryListPage from './pages/Inventory/InventoryListPage';
+import ProductListPage from './pages/Product/ProductListPage';
+import ProductFormPage from './pages/Product/ProductFormPage';
+import SettlementListPage from './pages/Settlement/SettlementListPage';
+import UserListPage from './pages/User/UserListPage';
+import UserFormPage from './pages/User/UserFormPage';
+import TrendingProductManagePage from './pages/TrendingProducts/TrendingProductManagePage';
+import WarehouseListPage from './pages/Warehouse/WarehouseListPage';
+import HelpPage from './pages/Help/HelpPage';
+import ProductImporterPage from './pages/Admin/ProductImporterPage';
+import KreamScraperPage from './pages/Admin/KreamScraperPage';
+import ChatListPage from './pages/Chat/ChatListPage';
+import ChatRoomPage from './pages/Chat/ChatRoomPage';
+import ChatWindowPage from './pages/Chat/ChatWindowPage';
+import AdidasAccountListPage from './pages/Adidas/AdidasAccountListPage';
+import AdidasCouponPage from './pages/Adidas/AdidasCouponPage';
+
+// Ant Design 한국어 설정
+const antdConfig = {
+  locale: koKR,
+  theme: {
+    token: {
+      colorPrimary: '#1890ff',
+      borderRadius: 6,
+    },
+  },
+};
+
+const App: React.FC = () => {
+  return (
+    <ConfigProvider {...antdConfig}>
+      <AntdApp>
+        <AuthProvider>
+          <Router>
+          <Routes>
+            {/* 로그인 페이지 */}
+            <Route path="/login" element={<LoginPage />} />
+
+            {/* 회원가입 페이지 */}
+            <Route path="/register" element={<RegisterPage />} />
+
+            {/* 채팅 창 (팝업 전용 - 레이아웃 없음) */}
+            <Route
+              path="/chat-window/:roomId"
+              element={
+                <ProtectedRoute>
+                  <ChatWindowPage />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* 보호된 라우트들 */}
+            <Route
+              path="/*"
+              element={
+                <ProtectedRoute>
+                  <MainLayout>
+                    <Routes>
+                      {/* 대시보드 */}
+                      <Route path="/dashboard" element={<DashboardPage />} />
+
+                      {/* 상품 관리 */}
+                      <Route path="/products" element={<ProductListPage />} />
+                      <Route path="/products/new" element={<ProductFormPage />} />
+                      <Route path="/products/edit/:productId" element={<ProductFormPage />} />
+
+                      {/* 구매 관리 */}
+                      <Route
+                        path="/purchases"
+                        element={
+                          <ProtectedRoute requiredRole="buyer">
+                            <PurchaseListPage />
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/purchases/new"
+                        element={
+                          <ProtectedRoute requiredRole="buyer">
+                            <PurchaseFormPage />
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/purchases/:id"
+                        element={
+                          <ProtectedRoute requiredRole="buyer">
+                            <PurchaseDetailPage />
+                          </ProtectedRoute>
+                        }
+                      />
+
+                      {/* 판매 관리 */}
+                      <Route
+                        path="/sales"
+                        element={
+                          <ProtectedRoute requiredRole="seller">
+                            <SaleListPage />
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/sales/new"
+                        element={
+                          <ProtectedRoute requiredRole="seller">
+                            <SaleFormPage />
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/sales/:id"
+                        element={
+                          <ProtectedRoute requiredRole="seller">
+                            <SaleDetailPage />
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/sales/edit/:saleId"
+                        element={
+                          <ProtectedRoute requiredRole="seller">
+                            <SaleFormPage />
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/sales/manage/:saleId"
+                        element={
+                          <ProtectedRoute requiredRole="admin">
+                            <SaleManagementPage />
+                          </ProtectedRoute>
+                        }
+                      />
+
+                      {/* 재고 관리 */}
+                      <Route path="/inventory" element={<InventoryListPage />} />
+
+                      {/* 창고 관리 */}
+                      <Route path="/warehouses" element={<WarehouseListPage />} />
+
+                      {/* 인기상품 관리 */}
+                      <Route path="/trending-products" element={<TrendingProductManagePage />} />
+
+                      {/* 상품 자동 수집 */}
+                      <Route path="/product-importer" element={<KreamScraperPage />} />
+
+                      {/* 아디다스 쿠폰 */}
+                      <Route path="/adidas" element={<AdidasAccountListPage />} />
+
+                      {/* 채팅 */}
+                      <Route path="/chat" element={<ChatListPage />} />
+                      <Route path="/chat/:roomId" element={<ChatRoomPage />} />
+
+                      {/* 정산 관리 */}
+                      <Route path="/settlements" element={<SettlementListPage />} />
+
+                      {/* 사용자 관리 */}
+                      <Route
+                        path="/users"
+                        element={
+                          <ProtectedRoute requiredRole="admin">
+                            <UserListPage />
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/users/new"
+                        element={
+                          <ProtectedRoute requiredRole="admin">
+                            <UserFormPage />
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/users/:id"
+                        element={
+                          <ProtectedRoute requiredRole="admin">
+                            <UserFormPage />
+                          </ProtectedRoute>
+                        }
+                      />
+
+                      {/* 보고서 */}
+                      <Route path="/reports" element={<div>보고서 페이지 (개발 예정)</div>} />
+
+                      {/* 설정 */}
+                      <Route
+                        path="/settings"
+                        element={
+                          <ProtectedRoute requiredRole="admin">
+                            <div>설정 페이지 (개발 예정)</div>
+                          </ProtectedRoute>
+                        }
+                      />
+
+                      {/* 프로필 */}
+                      <Route path="/profile" element={<div>프로필 페이지 (개발 예정)</div>} />
+
+                      {/* 도움말 */}
+                      <Route path="/help" element={<HelpPage />} />
+
+                      {/* 기본 리다이렉트 */}
+                      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                    </Routes>
+                  </MainLayout>
+                </ProtectedRoute>
+              }
+            />
+          </Routes>
+          </Router>
+        </AuthProvider>
+      </AntdApp>
+    </ConfigProvider>
+  );
+};
+
+export default App;

@@ -1,0 +1,171 @@
+  const columns: ColumnsType<InventoryDetail> = [
+    {
+      title: '카테고리',
+      dataIndex: 'category',
+      key: 'category',
+      width: 100,
+      render: (category: string) => {
+        const categoryMap: Record<string, string> = {
+          'clothing': '👕 의류',
+          'shoes': '👟 신발',
+          'hats': '🧢 모자',
+          'socks': '🧦 양말',
+          'bags': '🎒 가방',
+          'accessories': '🛍️ 잡화',
+          'etc': '📦 기타'
+        };
+        return categoryMap[category] || category || '-';
+      },
+    },
+    {
+      title: '브랜드',
+      dataIndex: 'brand',
+      key: 'brand',
+      width: 140,
+      render: (brandName: string, record) => {
+        if (!brandName) return '-';
+        const brand = brands.find(b => b.name === brandName);
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {brand?.icon_url && (
+              <img
+                src={brand.icon_url}
+                alt={brandName}
+                style={{ width: 32, height: 32, objectFit: 'contain' }}
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                }}
+              />
+            )}
+            <span style={{ fontSize: '14px' }}>{brandName}</span>
+          </div>
+        );
+      },
+    },
+    {
+      title: '상품 이미지',
+      key: 'image',
+      width: 90,
+      render: (_, record) => {
+        const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8001';
+        const imagePath = record.brand && record.sku_code
+          ? `${apiUrl}/uploads/products/${record.brand}/${record.sku_code}.png`
+          : null;
+
+        if (imagePath) {
+          return (
+            <img
+              src={imagePath}
+              alt={record.product_name}
+              style={{
+                width: 60,
+                height: 60,
+                objectFit: 'cover',
+                borderRadius: '4px',
+                border: '1px solid #f0f0f0',
+                cursor: 'pointer'
+              }}
+              onClick={() => {
+                const modal = document.createElement('div');
+                modal.style.cssText = `
+                  position: fixed;
+                  top: 0;
+                  left: 0;
+                  width: 100%;
+                  height: 100%;
+                  background: rgba(0,0,0,0.8);
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  z-index: 9999;
+                  cursor: pointer;
+                `;
+                modal.onclick = () => modal.remove();
+
+                const img = document.createElement('img');
+                img.src = imagePath;
+                img.style.cssText = `
+                  max-width: 90%;
+                  max-height: 90%;
+                  object-fit: contain;
+                  border-radius: 8px;
+                `;
+
+                modal.appendChild(img);
+                document.body.appendChild(modal);
+              }}
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none';
+              }}
+            />
+          );
+        }
+        return <span style={{ color: '#ccc' }}>-</span>;
+      },
+    },
+    {
+      title: '상품코드',
+      dataIndex: 'sku_code',
+      key: 'sku_code',
+      width: 120,
+      render: (code: string) => <Tag color="geekblue" style={{ fontSize: '13px' }}>{code || '-'}</Tag>,
+    },
+    {
+      title: '상품명',
+      dataIndex: 'product_name',
+      key: 'product_name',
+      width: 200,
+      render: (name: string) => (
+        <span style={{ fontWeight: 500, fontSize: '14px' }}>{name}</span>
+      ),
+    },
+    {
+      title: '재고 (사이즈별)',
+      key: 'inventory',
+      width: 150,
+      render: (_, record) => (
+        <Tag color={record.quantity > 0 ? 'green' : 'red'} style={{ margin: 0, fontSize: '13px' }}>
+          {record.size}: {record.quantity}개
+        </Tag>
+      ),
+    },
+    {
+      title: '창고 위치',
+      dataIndex: 'location',
+      key: 'location',
+      width: 120,
+      render: (loc: string) => loc || '-',
+    },
+    {
+      title: '작업',
+      key: 'action',
+      width: 180,
+      fixed: 'right' as 'right',
+      render: (_, record) => (
+        <Space size="small">
+          <Tooltip title="상세/이력">
+            <Button
+              type="link"
+              size="small"
+              icon={<SearchOutlined />}
+              onClick={() => handleViewDetail(record)}
+            >
+              상세
+            </Button>
+          </Tooltip>
+          {(user?.role === 'admin' || user?.role === 'buyer') && (
+            <Tooltip title="재고 조정">
+              <Button
+                type="link"
+                size="small"
+                icon={<SwapOutlined />}
+                onClick={() => handleAdjustment(record)}
+              >
+                조정
+              </Button>
+            </Tooltip>
+          )}
+        </Space>
+      ),
+    },
+  ];

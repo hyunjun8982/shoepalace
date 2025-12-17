@@ -1,0 +1,10 @@
+
+  const loadWarehouses = async () => {
+    try {
+      const response = await warehouseService.getWarehouses({ limit: 1000, is_active: true });
+      setWarehouses(response.items || []);
+    } catch (error) {
+      console.error('Failed to load warehouses:', error);
+      message.error('창고 목록 조회 실패');
+    }
+  };

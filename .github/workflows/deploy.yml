@@ -49,11 +49,11 @@ jobs:
 
             # 기존 컨테이너 중지 및 제거
             echo "[4/5] 기존 컨테이너 정리 중..."
-            docker-compose -f docker-compose.prod.yml down || true
+            docker compose -f docker-compose.prod.yml down || true
 
             # 새 컨테이너 시작
             echo "[5/5] 새 컨테이너 시작 중..."
-            docker-compose -f docker-compose.prod.yml up -d
+            docker compose -f docker-compose.prod.yml up -d
 
             # 오래된 이미지 정리
             echo "사용하지 않는 이미지 정리 중..."
@@ -66,7 +66,7 @@ jobs:
             echo "=========================================="
 
             # 컨테이너 상태 확인
-            docker-compose -f docker-compose.prod.yml ps
+            docker compose -f docker-compose.prod.yml ps
 
       - name: Deployment Status
         if: always()

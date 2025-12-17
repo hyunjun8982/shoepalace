@@ -30,10 +30,12 @@ services:
     volumes:
       - ./uploads:/app/uploads
     environment:
-      - DATABASE_URL=postgresql://shoepalace_user:shoepalace_pass@133.186.221.84:5433/shoepalace
+      - DATABASE_URL=postgresql://shoepalace_user:shoepalace_pass@db:5432/shoepalace
       - ENVIRONMENT=production
-        #  - APPIUM_URL=http://host.docker.internal:4723
       - APPIUM_URL=https://9c6ae1ba8c79.ngrok-free.app
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
   # Frontend React (Nginx with static build)
@@ -62,6 +64,8 @@ services:
 
 volumes:
   postgres_data:
+    external: true
+    name: shoepalace_postgres_data
 
 networks:
   default:

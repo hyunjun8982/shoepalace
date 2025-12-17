@@ -48,6 +48,14 @@ const AdidasAccountListPage: React.FC = () => {
   const [editingAccount, setEditingAccount] = useState<AdidasAccount | null>(null);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [bulkPasteText, setBulkPasteText] = useState('');
+  const [parsedAccounts, setParsedAccounts] = useState<{
+    name: string;
+    email: string;
+    password: string;
+    phone: string;
+    birthday: string;
+    isExisting: boolean;
+  }[]>([]);
   const [form] = Form.useForm();
 
   // 필터링 상태
@@ -61,6 +69,16 @@ const AdidasAccountListPage: React.FC = () => {
   // 바코드 모달 상태
   const [barcodeModalVisible, setBarcodeModalVisible] = useState(false);
   const [selectedBarcode, setSelectedBarcode] = useState<{url: string, email: string} | null>(null);
+
+  // 쿠폰 판매 모달 상태
+  const [voucherSaleModalVisible, setVoucherSaleModalVisible] = useState(false);
+  const [selectedVoucherInfo, setSelectedVoucherInfo] = useState<{
+    accountId: string;
+    voucherIndex: number;
+    voucher: any;
+    isSold: boolean;
+  } | null>(null);
+  const [voucherSoldTo, setVoucherSoldTo] = useState('');
 
   // 필터 변경 시 1페이지로 리셋
   useEffect(() => {
@@ -160,6 +178,39 @@ const AdidasAccountListPage: React.FC = () => {
       const errorMsg = error.response?.data?.detail || '정보 조회에 실패했습니다';
       message.error({ content: errorMsg, key: 'fetch' });
     }
+  };
+
+  // 쿠폰 판매 상태 업데이트
+  const handleVoucherSaleUpdate = async (sold: boolean) => {
+    if (!selectedVoucherInfo) return;
+
+    try {
+      await api.post(`/adidas-accounts/${selectedVoucherInfo.accountId}/voucher-sale`, {
+        voucher_index: selectedVoucherInfo.voucherIndex,
+        sold: sold,
+        sold_to: sold ? voucherSoldTo : '',
+      });
+
+      message.success(sold ? '판매완료로 표시되었습니다' : '판매 취소되었습니다');
+      setVoucherSaleModalVisible(false);
+      setSelectedVoucherInfo(null);
+      setVoucherSoldTo('');
+      loadAccounts();
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '업데이트에 실패했습니다');
+    }
+  };
+
+  // 쿠폰 클릭 핸들러
+  const handleVoucherClick = (accountId: string, voucherIndex: number, voucher: any) => {
+    setSelectedVoucherInfo({
+      accountId,
+      voucherIndex,
+      voucher,
+      isSold: voucher.sold || false,
+    });
+    setVoucherSoldTo(voucher.sold_to || '');
+    setVoucherSaleModalVisible(true);
   };
 
   // 바코드 이미지 생성 (단일)
@@ -524,52 +575,110 @@ const AdidasAccountListPage: React.FC = () => {
     }, 100);
   };
 
+  // 텍스트 파싱 함수
+  const parseBulkText = (text: string) => {
+    if (!text.trim()) {
+      setParsedAccounts([]);
+      return;
+    }
+
+    const lines = text.trim().split('\n');
+    const parsed: typeof parsedAccounts = [];
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+
+      // (기존) 표시 확인
+      const isExisting = line.includes('(기존)');
+      // (기존) 제거 후 처리
+      const cleanLine = line.replace(/\(기존\)/g, '').trim();
+
+      // 탭 또는 여러 공백으로 분리
+      const parts = cleanLine.split(/\t+|\s{2,}/).map(p => p.trim()).filter(p => p);
+
+      if (parts.length >= 5) {
+        // 새 형식: 이름 이메일 비밀번호 전화번호 생일
+        const name = parts[0];
+        const email = parts[1];
+        const password = parts[2];
+        // 전화번호: 공백 제거하고 하이픈 추가
+        const phoneRaw = parts[3].replace(/\s+/g, '');
+        const phone = phoneRaw.replace(/(\d{3})(\d{4})(\d{4})/, '$1-$2-$3');
+        // 생일: 공백으로 분리된 년 월 일을 YYYY-MM-DD로 변환
+        const birthdayParts = parts.slice(4).join(' ').trim().split(/\s+/);
+        let birthday = '';
+        if (birthdayParts.length >= 3) {
+          const year = birthdayParts[0].padStart(4, '0');
+          const month = birthdayParts[1].padStart(2, '0');
+          const day = birthdayParts[2].padStart(2, '0');
+          birthday = `${year}-${month}-${day}`;
+        }
+
+        parsed.push({ name, email, password, phone, birthday, isExisting });
+      } else if (parts.length >= 2) {
+        // 기존 형식: 이메일 비밀번호
+        parsed.push({
+          name: '',
+          email: parts[0],
+          password: parts[1],
+          phone: '',
+          birthday: '',
+          isExisting,
+        });
+      }
+    }
+
+    setParsedAccounts(parsed);
+  };
+
+  // 텍스트 변경 시 자동 파싱
+  const handleBulkTextChange = (text: string) => {
+    setBulkPasteText(text);
+    parseBulkText(text);
+  };
+
   // 텍스트 붙여넣기 일괄 등록
   const handleBulkPaste = async () => {
-    if (!bulkPasteText.trim()) {
+    if (parsedAccounts.length === 0) {
       message.warning('데이터를 입력하세요');
       return;
     }
 
     try {
-      const lines = bulkPasteText.trim().split('\n');
-      const accountsData: AdidasAccountCreate[] = [];
+      // API 호출용 데이터 변환
+      const accountsData = parsedAccounts.map(acc => ({
+        email: acc.email,
+        password: acc.password,
+        name: acc.name || undefined,
+        phone: acc.phone || undefined,
+        birthday: acc.birthday || undefined,
+        is_active: true,
+        is_existing: acc.isExisting, // 기존 계정 여부 전달
+      }));
 
-      for (const line of lines) {
-        if (!line.trim()) continue;
+      // 일괄 등록/수정 API 호출
+      const response = await api.post('/adidas-accounts/bulk-upsert', accountsData);
+      const { created, updated, skipped, errors, total } = response.data;
 
-        // 탭 또는 여러 공백으로 분리
-        const parts = line.split(/\t+|\s{2,}/).map(p => p.trim()).filter(p => p);
+      let resultMsg = `총 ${total}개`;
+      const parts = [];
+      if (created > 0) parts.push(`${created}개 등록`);
+      if (updated > 0) parts.push(`${updated}개 수정`);
+      if (skipped > 0) parts.push(`${skipped}개 중복`);
+      if (errors?.length > 0) parts.push(`${errors.length}개 오류`);
 
-        if (parts.length >= 2) {
-          accountsData.push({
-            email: parts[0],
-            password: parts[1],
-            is_active: true,
-          });
-        }
-      }
+      resultMsg += ` 중 ${parts.join(', ')}`;
 
-      if (accountsData.length === 0) {
-        message.warning('올바른 형식의 데이터가 없습니다');
-        return;
-      }
-
-      // 일괄 등록 API 호출
-      const response = await api.post('/adidas-accounts/bulk', accountsData);
-      const { created, skipped, errors, total } = response.data;
-
-      if (errors.length > 0) {
-        message.warning(
-          `총 ${total}개 중 ${created}개 등록, ${skipped}개 중복, ${errors.length}개 오류`
-        );
+      if (errors?.length > 0) {
+        message.warning(resultMsg);
         console.error('등록 실패 항목:', errors);
       } else {
-        message.success(`총 ${total}개 중 ${created}개 등록, ${skipped}개 중복`);
+        message.success(resultMsg);
       }
 
       setBulkPasteModalVisible(false);
       setBulkPasteText('');
+      setParsedAccounts([]);
       loadAccounts();
     } catch (error) {
       message.error('일괄 등록 중 오류가 발생했습니다');
@@ -899,16 +1008,17 @@ const AdidasAccountListPage: React.FC = () => {
       title: '보유 쿠폰',
       dataIndex: 'owned_vouchers',
       key: 'owned_vouchers',
-      width: 150,
-      render: (vouchers: string) => {
+      width: 180,
+      render: (vouchers: string, record: AdidasAccount) => {
         if (!vouchers) return <span style={{ color: '#999' }}>없음</span>;
         try {
           const voucherList = JSON.parse(vouchers);
           if (voucherList.length === 0) {
             return <span style={{ color: '#999' }}>없음</span>;
           }
-          // 할인율 내림차순 정렬
-          const sortedVouchers = voucherList.sort((a: any, b: any) => {
+          // 할인율 내림차순 정렬 (원본 인덱스 유지)
+          const indexedVouchers = voucherList.map((v: any, idx: number) => ({ ...v, originalIndex: idx }));
+          const sortedVouchers = indexedVouchers.sort((a: any, b: any) => {
             const getPercent = (desc: string) => {
               const match = desc.match(/(\d+)%/);
               return match ? parseInt(match[1]) : 0;
@@ -918,22 +1028,35 @@ const AdidasAccountListPage: React.FC = () => {
 
           return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              {sortedVouchers.map((v: any, idx: number) => (
-                <Tag
-                  key={idx}
-                  color="volcano"
-                  style={{
-                    borderRadius: '8px',
-                    padding: '2px 8px',
-                    fontWeight: '500',
-                    fontSize: '12px',
-                    border: '1px solid #ff7875',
-                    margin: 0,
-                    width: 'fit-content'
-                  }}
+              {sortedVouchers.map((v: any) => (
+                <div
+                  key={v.originalIndex}
+                  onClick={() => handleVoucherClick(record.id, v.originalIndex, v)}
+                  style={{ cursor: 'pointer', position: 'relative' }}
                 >
-                  🎫 {v.description}
-                </Tag>
+                  <Tag
+                    color={v.sold ? 'default' : 'volcano'}
+                    style={{
+                      borderRadius: '8px',
+                      padding: '2px 8px',
+                      fontWeight: '500',
+                      fontSize: '12px',
+                      border: v.sold ? '1px solid #d9d9d9' : '1px solid #ff7875',
+                      margin: 0,
+                      width: 'fit-content',
+                      opacity: v.sold ? 0.7 : 1,
+                      textDecoration: v.sold ? 'line-through' : 'none',
+                    }}
+                  >
+                    {v.sold && <span style={{ color: '#52c41a', marginRight: 4 }}>✓</span>}
+                    🎫 {v.description}
+                  </Tag>
+                  {v.sold && v.sold_to && (
+                    <div style={{ fontSize: '10px', color: '#52c41a', marginTop: 1 }}>
+                      판매: {v.sold_to}
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
           );
@@ -1447,36 +1570,189 @@ const AdidasAccountListPage: React.FC = () => {
       </Modal>
 
       <Modal
+        title={selectedVoucherInfo?.isSold ? "쿠폰 판매 관리" : "쿠폰 판매 등록"}
+        open={voucherSaleModalVisible}
+        onCancel={() => {
+          setVoucherSaleModalVisible(false);
+          setSelectedVoucherInfo(null);
+          setVoucherSoldTo('');
+        }}
+        footer={[
+          <Button
+            key="cancel"
+            onClick={() => {
+              setVoucherSaleModalVisible(false);
+              setSelectedVoucherInfo(null);
+              setVoucherSoldTo('');
+            }}
+          >
+            닫기
+          </Button>,
+          selectedVoucherInfo?.isSold ? (
+            <>
+              <Button
+                key="edit"
+                type="primary"
+                onClick={() => handleVoucherSaleUpdate(true)}
+              >
+                수정
+              </Button>
+              <Button
+                key="unsell"
+                danger
+                onClick={() => handleVoucherSaleUpdate(false)}
+              >
+                판매 취소
+              </Button>
+            </>
+          ) : (
+            <Button
+              key="sell"
+              type="primary"
+              style={{ backgroundColor: '#52c41a', borderColor: '#52c41a' }}
+              onClick={() => handleVoucherSaleUpdate(true)}
+            >
+              판매완료
+            </Button>
+          ),
+        ]}
+        width={400}
+      >
+        {selectedVoucherInfo && (
+          <div>
+            <div style={{ marginBottom: 16, padding: 12, backgroundColor: '#f5f5f5', borderRadius: 8 }}>
+              <Tag
+                color={selectedVoucherInfo.isSold ? 'default' : 'volcano'}
+                style={{
+                  borderRadius: '8px',
+                  padding: '4px 12px',
+                  fontWeight: '500',
+                  fontSize: '14px',
+                }}
+              >
+                {selectedVoucherInfo.isSold && <span style={{ color: '#52c41a', marginRight: 4 }}>✓</span>}
+                🎫 {selectedVoucherInfo.voucher.description}
+              </Tag>
+            </div>
+
+            <div>
+              <p style={{ marginBottom: 8, fontWeight: 500 }}>
+                판매 정보 {!selectedVoucherInfo.isSold && '(선택사항)'}
+              </p>
+              <Input
+                placeholder="예: 12/16 백호"
+                value={voucherSoldTo}
+                onChange={(e) => setVoucherSoldTo(e.target.value)}
+                size="large"
+              />
+              <p style={{ marginTop: 8, color: '#999', fontSize: '12px' }}>
+                언제, 누구에게 판매했는지 메모할 수 있습니다.
+              </p>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
         title="일괄 등록 (붙여넣기)"
         open={bulkPasteModalVisible}
         onOk={handleBulkPaste}
         onCancel={() => {
           setBulkPasteModalVisible(false);
           setBulkPasteText('');
+          setParsedAccounts([]);
         }}
-        width={700}
-        okText="등록"
+        width="90vw"
+        style={{ top: 20 }}
+        styles={{ body: { height: 'calc(90vh - 110px)', overflow: 'hidden' } }}
+        okText={`${parsedAccounts.length}개 등록/수정`}
         cancelText="취소"
+        okButtonProps={{ disabled: parsedAccounts.length === 0 }}
       >
-        <div style={{ marginBottom: 16 }}>
-          <p style={{ marginBottom: 8 }}>
-            이메일과 비밀번호를 탭(Tab) 또는 공백으로 구분하여 붙여넣으세요.
-          </p>
-          <p style={{ color: '#999', fontSize: '12px', margin: 0 }}>
-            예시:<br />
-            younggmm21@naver.com&nbsp;&nbsp;&nbsp;&nbsp;1q2w3e4r5t!A<br />
-            jiimmmnn33@naver.com&nbsp;&nbsp;&nbsp;&nbsp;1q2w3e4r5t!A
-          </p>
-        </div>
-        <Input.TextArea
-          value={bulkPasteText}
-          onChange={(e) => setBulkPasteText(e.target.value)}
-          placeholder="이메일    비밀번호 형식으로 입력하세요"
-          rows={15}
-          style={{ fontFamily: 'monospace' }}
-        />
-        <div style={{ marginTop: 8, color: '#666', fontSize: '12px' }}>
-          {bulkPasteText.trim() && `${bulkPasteText.trim().split('\n').length}줄 입력됨`}
+        <div style={{ display: 'flex', gap: 20, height: '100%' }}>
+          {/* 왼쪽: 텍스트 입력 */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ marginBottom: 12 }}>
+              <p style={{ marginBottom: 8, fontWeight: 500 }}>
+                데이터를 붙여넣으세요
+              </p>
+              <p style={{ color: '#999', fontSize: '12px', margin: 0 }}>
+                형식: 이름 &nbsp; 이메일 &nbsp; 비밀번호 &nbsp; 전화번호 &nbsp; 생일<br />
+                (기존) 표시가 있으면 기존 계정 정보를 업데이트합니다.
+              </p>
+            </div>
+            <Input.TextArea
+              value={bulkPasteText}
+              onChange={(e) => handleBulkTextChange(e.target.value)}
+              placeholder="김명진   example@naver.com   Password1!   010 1234 5678   1997 10 26 (기존)"
+              style={{ fontFamily: 'monospace', fontSize: '12px', flex: 1, resize: 'none' }}
+            />
+            <div style={{ marginTop: 8, color: '#666', fontSize: '12px' }}>
+              {bulkPasteText.trim() && `${bulkPasteText.trim().split('\n').filter(l => l.trim()).length}줄 입력됨`}
+            </div>
+          </div>
+
+          {/* 오른쪽: 미리보기 테이블 */}
+          <div style={{ flex: 1.3, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ marginBottom: 12 }}>
+              <p style={{ marginBottom: 8, fontWeight: 500 }}>
+                미리보기 ({parsedAccounts.length}개)
+              </p>
+              <Space size="small">
+                <Tag color="blue">{parsedAccounts.filter(a => !a.isExisting).length}개 신규</Tag>
+                <Tag color="orange">{parsedAccounts.filter(a => a.isExisting).length}개 수정</Tag>
+              </Space>
+            </div>
+            <div style={{ flex: 1, overflow: 'auto', border: '1px solid #d9d9d9', borderRadius: 6 }}>
+              <Table
+                dataSource={parsedAccounts}
+                rowKey={(_, index) => index?.toString() || '0'}
+                size="small"
+                pagination={false}
+                columns={[
+                  {
+                    title: '상태',
+                    key: 'status',
+                    width: 60,
+                    align: 'center' as 'center',
+                    render: (_, record) => (
+                      <Tag color={record.isExisting ? 'orange' : 'blue'} style={{ margin: 0 }}>
+                        {record.isExisting ? '수정' : '신규'}
+                      </Tag>
+                    ),
+                  },
+                  {
+                    title: '이름',
+                    dataIndex: 'name',
+                    width: 70,
+                    ellipsis: true,
+                  },
+                  {
+                    title: '이메일',
+                    dataIndex: 'email',
+                    width: 160,
+                    ellipsis: true,
+                  },
+                  {
+                    title: '비밀번호',
+                    dataIndex: 'password',
+                    width: 100,
+                    ellipsis: true,
+                  },
+                  {
+                    title: '전화번호',
+                    dataIndex: 'phone',
+                    width: 110,
+                  },
+                  {
+                    title: '생일',
+                    dataIndex: 'birthday',
+                    width: 95,
+                  },
+                ]}
+              />
+            </div>
+          </div>
         </div>
       </Modal>
     </div>

@@ -110,6 +110,86 @@ def create_bulk_adidas_accounts(
     }
 
 
+@router.post("/bulk-upsert", response_model=dict)
+def bulk_upsert_adidas_accounts(
+    accounts_in: List[dict],
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+):
+    """아디다스 계정 일괄 등록/수정 (Upsert)
+
+    - is_existing: True인 경우 기존 계정 업데이트
+    - is_existing: False인 경우 새 계정 생성 (중복 시 스킵)
+    """
+    created = 0
+    updated = 0
+    skipped = 0
+    errors = []
+
+    # 입력 데이터에서 중복 이메일 제거 (마지막 것 유지 - 수정 우선)
+    email_to_account = {}
+    for account_data in accounts_in:
+        email = account_data.get("email")
+        if email:
+            email_to_account[email] = account_data
+
+    unique_accounts = list(email_to_account.values())
+
+    # 기존 DB의 계정 조회 (이메일 기준)
+    existing_accounts = {
+        acc.email: acc for acc in db.query(AdidasAccount).all()
+    }
+
+    for account_data in unique_accounts:
+        try:
+            email = account_data.get("email")
+            is_existing = account_data.get("is_existing", False)
+
+            if email in existing_accounts:
+                if is_existing:
+                    # 기존 계정 업데이트
+                    existing = existing_accounts[email]
+                    update_fields = ["password", "name", "phone", "birthday"]
+                    for field in update_fields:
+                        value = account_data.get(field)
+                        if value:
+                            setattr(existing, field, value)
+                    existing.updated_at = datetime.utcnow()
+                    updated += 1
+                else:
+                    # 신규로 표시되었지만 이미 존재 -> 스킵
+                    skipped += 1
+            else:
+                # 새 계정 생성
+                new_account = AdidasAccount(
+                    email=email,
+                    password=account_data.get("password", ""),
+                    name=account_data.get("name"),
+                    phone=account_data.get("phone"),
+                    birthday=account_data.get("birthday"),
+                    is_active=account_data.get("is_active", True),
+                )
+                db.add(new_account)
+                created += 1
+
+        except Exception as e:
+            errors.append(f"{account_data.get('email', 'unknown')}: {str(e)}")
+
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"일괄 등록/수정 실패: {str(e)}")
+
+    return {
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "errors": errors,
+        "total": len(accounts_in),
+    }
+
+
 @router.get("/{account_id}", response_model=AdidasAccountInDB)
 def get_adidas_account(
     account_id: UUID,
@@ -158,6 +238,59 @@ def delete_adidas_account(
     db.delete(account)
     db.commit()
     return {"message": "계정이 삭제되었습니다"}
+
+
+@router.post("/{account_id}/voucher-sale")
+def update_voucher_sale(
+    account_id: UUID,
+    request_data: dict = Body(...),
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+):
+    """쿠폰 판매 상태 업데이트
+
+    request_data:
+    - voucher_index: 쿠폰 인덱스 (0부터 시작)
+    - sold: 판매 여부 (true/false)
+    - sold_to: 판매 정보 (예: "12/16 백호") - 선택사항
+    """
+    import json
+
+    account = db.query(AdidasAccount).filter(AdidasAccount.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다")
+
+    voucher_index = request_data.get("voucher_index")
+    sold = request_data.get("sold", False)
+    sold_to = request_data.get("sold_to", "")
+
+    if voucher_index is None:
+        raise HTTPException(status_code=400, detail="쿠폰 인덱스가 필요합니다")
+
+    # 기존 쿠폰 목록 파싱
+    try:
+        vouchers = json.loads(account.owned_vouchers) if account.owned_vouchers else []
+    except json.JSONDecodeError:
+        vouchers = []
+
+    if voucher_index < 0 or voucher_index >= len(vouchers):
+        raise HTTPException(status_code=400, detail="유효하지 않은 쿠폰 인덱스입니다")
+
+    # 쿠폰 판매 정보 업데이트
+    vouchers[voucher_index]["sold"] = sold
+    vouchers[voucher_index]["sold_to"] = sold_to if sold else ""
+
+    # DB 업데이트
+    account.owned_vouchers = json.dumps(vouchers, ensure_ascii=False)
+    account.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(account)
+
+    return {
+        "success": True,
+        "message": "쿠폰 판매 상태가 업데이트되었습니다",
+        "vouchers": vouchers,
+    }
 
 
 @router.post("/bulk-toggle-active")

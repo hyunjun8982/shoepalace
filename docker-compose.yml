@@ -1,4 +1,18 @@
 # 개발 환경용 Docker Compose
+#
+# 웹 크롤링 모드:
+# 1. 로컬 GUI 모드: 로컬 Windows에서 local_web_server.py 실행 필요
+#    - cd backend && python local_web_server.py
+#    - 봇 차단 우회 가능
+#
+# 2. 컨테이너 Headless 모드: Docker 내에서 headless Chrome 실행
+#    - 별도 설정 불필요
+#    - 봇 차단될 수 있음
+#
+# 3. Host 네트워크 모드 (Linux만 지원):
+#    - docker-compose -f docker-compose.yml -f docker-compose.host.yml up
+#    - 컨테이너가 호스트 IP 사용
+#
 name: shoepalace-dev
 
 services:
@@ -35,6 +49,13 @@ services:
     environment:
       - DATABASE_URL=postgresql://shoepalace_user:shoepalace_pass@133.186.221.84:5433/shoepalace
       - ENVIRONMENT=development
+      - APPIUM_URL=http://host.docker.internal:4723/wd/hub
+      # 로컬 웹 서버 URL (로컬 GUI 모드용)
+      - LOCAL_WEB_SERVER_URL=http://host.docker.internal:8002
+      # DEVICE_UDID는 자동 감지됨. 수동 지정 필요시 아래 주석 해제
+      # - DEVICE_UDID=ce081718b5285b27017e
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
   # Frontend React (개발 모드 - 핫리로드)
@@ -53,6 +74,21 @@ services:
       - CHOKIDAR_USEPOLLING=true
       - WATCHPACK_POLLING=true
     depends_on:
+      - backend
+    restart: unless-stopped
+
+  # Nginx Reverse Proxy (다운로드 파일 서빙용)
+  nginx:
+    image: nginx:alpine
+    container_name: shoepalace_dev_nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/dev.conf:/etc/nginx/conf.d/default.conf
+      - ./uploads:/app/uploads
+      - ./downloads:/app/downloads
+    depends_on:
+      - frontend
       - backend
     restart: unless-stopped
 

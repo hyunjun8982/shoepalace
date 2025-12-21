@@ -19,6 +19,7 @@ import {
   CloudDownloadOutlined,
   SearchOutlined,
   GiftOutlined,
+  DownloadOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -318,12 +319,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       label: '상품 자동 수집',
       roles: ['admin'],
     },
-    {
-      key: '/adidas',
-      icon: <GiftOutlined />,
-      label: '아디다스 쿠폰',
-      roles: ['admin'],
-    },
+    // {
+    //   key: '/adidas',
+    //   icon: <GiftOutlined />,
+    //   label: '아디다스 쿠폰',
+    //   roles: ['admin'],
+    // },
     // {
     //   key: '/settlements',
     //   icon: <CalculatorOutlined />,
@@ -511,6 +512,36 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           </Space>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, height: '100%' }}>
+            {/* 아디다스 쿠폰 프로그램 다운로드 버튼 */}
+            {user?.role === 'admin' && (
+              <Button
+                type="primary"
+                icon={<DownloadOutlined />}
+                size="small"
+                style={{
+                  background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+                  border: 'none',
+                  borderRadius: 6,
+                  height: 32,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+                onClick={() => {
+                  // 다운로드 링크 생성
+                  const link = document.createElement('a');
+                  link.href = '/downloads/아디다스쿠폰발급프로그램_데이터.exe';
+                  link.download = '아디다스쿠폰발급프로그램_데이터.exe';
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                }}
+              >
+                <GiftOutlined style={{ fontSize: 14 }} />
+                <span style={{ fontSize: 13 }}>아디다스 쿠폰 프로그램</span>
+              </Button>
+            )}
+
             {sessionTimeRemaining !== null && (
               <div style={{
                 display: 'flex',

@@ -319,12 +319,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       label: '상품 자동 수집',
       roles: ['admin'],
     },
-    // {
-    //   key: '/adidas',
-    //   icon: <GiftOutlined />,
-    //   label: '아디다스 쿠폰',
-    //   roles: ['admin'],
-    // },
+    {
+      key: '/adidas',
+      icon: <GiftOutlined />,
+      label: '아디다스 쿠폰',
+      roles: ['admin'],
+    },
     // {
     //   key: '/settlements',
     //   icon: <CalculatorOutlined />,

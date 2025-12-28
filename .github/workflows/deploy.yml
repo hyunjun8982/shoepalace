@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'docker-compose*.yml'
+      - '.github/workflows/**'
 
 env:
   DOCKER_BACKEND_IMAGE: shoepalace-backend

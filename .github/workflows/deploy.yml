@@ -15,13 +15,39 @@ env:
   DOCKER_FRONTEND_IMAGE: shoepalace-frontend
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # GitHub Actions에서 Docker 이미지 빌드
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Backend Image
+        run: |
+          docker build -t ${{ env.DOCKER_BACKEND_IMAGE }}:latest -f backend/Dockerfile backend/
+          docker save ${{ env.DOCKER_BACKEND_IMAGE }}:latest | gzip > backend-image.tar.gz
+
+      - name: Build Frontend Image
+        run: |
+          docker build -t ${{ env.DOCKER_FRONTEND_IMAGE }}:latest -f frontend/Dockerfile frontend/
+          docker save ${{ env.DOCKER_FRONTEND_IMAGE }}:latest | gzip > frontend-image.tar.gz
+
+      # 빌드된 이미지를 서버로 전송
+      - name: Copy images to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          source: "backend-image.tar.gz,frontend-image.tar.gz"
+          target: "/tmp/shoepalace-deploy"
+
+      # 서버에서 이미지 로드 및 배포
       - name: Deploy to NHN Cloud Server
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -29,7 +55,7 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT || 22 }}
-          command_timeout: 20m
+          command_timeout: 10m
           script: |
             set -e
 
@@ -41,22 +67,24 @@ jobs:
             # 프로젝트 디렉토리로 이동
             cd ${{ secrets.DEPLOY_PATH }}
 
-            # 최신 코드 가져오기
+            # 최신 코드 가져오기 (docker-compose.yml 등 설정 파일용)
             echo "[1/5] 최신 코드 가져오는 중..."
             git fetch origin main
             git reset --hard origin/main
 
-            # Docker 이미지 빌드
-            echo "[2/5] Backend 이미지 빌드 중..."
-            docker build -t ${{ env.DOCKER_BACKEND_IMAGE }}:latest -f backend/Dockerfile backend/
+            # Docker 이미지 로드
+            echo "[2/5] Backend 이미지 로드 중..."
+            gunzip -c /tmp/shoepalace-deploy/backend-image.tar.gz | docker load
 
-            echo "[3/5] Frontend 이미지 빌드 중..."
-            docker build -t ${{ env.DOCKER_FRONTEND_IMAGE }}:latest -f frontend/Dockerfile frontend/
+            echo "[3/5] Frontend 이미지 로드 중..."
+            gunzip -c /tmp/shoepalace-deploy/frontend-image.tar.gz | docker load
+
+            # 전송된 파일 정리
+            rm -rf /tmp/shoepalace-deploy
 
             # 기존 컨테이너 중지 및 제거
             echo "[4/5] 기존 컨테이너 정리 중..."
             docker compose -f docker-compose.prod.yml down --remove-orphans || true
-            docker rm -f shoepalace_db shoepalace_backend shoepalace_frontend shoepalace_nginx 2>/dev/null || true
 
             # 새 컨테이너 시작
             echo "[5/5] 새 컨테이너 시작 중..."

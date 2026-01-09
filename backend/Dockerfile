@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y \
     # Chrome 추가 의존성
     fonts-liberation \
     libappindicator3-1 \
-    libgdk-pixbuf2.0-0 \
+    libgdk-pixbuf-2.0-0 \
     libgtk-3-0 \
     libx11-xcb1 \
     libxcb-dri3-0 \

@@ -43,9 +43,10 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          port: ${{ secrets.SERVER_PORT || 22 }}
+          port: ${{ secrets.SERVER_PORT }}
           source: "backend-image.tar.gz,frontend-image.tar.gz"
           target: "/tmp/shoepalace-deploy"
+          timeout: 120s
 
       # 서버에서 이미지 로드 및 배포
       - name: Deploy to NHN Cloud Server
@@ -54,7 +55,7 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          port: ${{ secrets.SERVER_PORT || 22 }}
+          port: ${{ secrets.SERVER_PORT }}
           command_timeout: 10m
           script: |
             set -e

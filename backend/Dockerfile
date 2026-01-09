@@ -54,6 +54,9 @@ COPY . .
 # Chrome을 위한 임시 디렉토리 생성
 RUN mkdir -p /tmp/chrome-user-data && chmod 777 /tmp/chrome-user-data
 
+# uploads 디렉토리 생성 및 권한 설정 (볼륨 마운트 전에 생성)
+RUN mkdir -p /app/uploads/receipts /app/uploads/products /app/uploads/sales && chmod -R 777 /app/uploads
+
 # 비루트 사용자 생성 및 권한 설정
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 RUN chown -R appuser:appuser /app
@@ -67,5 +70,5 @@ USER appuser
 # 포트 노출
 EXPOSE 8000
 
-# 프로덕션 모드 실행
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# 프로덕션 모드 실행 (workers=1: 메모리 기반 토큰 공유를 위해 단일 워커 사용)
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

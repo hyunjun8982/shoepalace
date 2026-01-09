@@ -232,6 +232,7 @@ const UserFormPage: React.FC = () => {
               htmlType="submit"
               loading={loading}
               icon={<SaveOutlined />}
+              style={{ backgroundColor: '#0d1117', borderColor: '#0d1117' }}
             >
               {isEdit ? '수정' : '등록'}
             </Button>

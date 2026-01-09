@@ -82,4 +82,49 @@ export const inventoryService = {
     });
     return response.data;
   },
+
+  // 불량 물품 목록 조회
+  async getDefectiveInventoryList(params?: {
+    skip?: number;
+    limit?: number;
+    search?: string;
+  }): Promise<InventoryList> {
+    const response = await api.get('/inventory/defective/list', { params });
+    return response.data;
+  },
+
+  // 불량 등록/해제 (수량 단위)
+  async markDefective(inventoryId: string, action: 'add' | 'remove', defectReason?: string, defectImageUrl?: string, quantity: number = 1): Promise<any> {
+    const response = await api.post(`/inventory/${inventoryId}/mark-defective`, {
+      action,
+      quantity,
+      defect_reason: defectReason,
+      defect_image_url: defectImageUrl
+    });
+    return response.data;
+  },
+
+  // 불량 이미지 업로드
+  async uploadDefectImage(inventoryId: string, file: File): Promise<{ message: string; file_path: string; url: string }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post(`/inventory/${inventoryId}/upload-defect-image`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
+
+  // QR 코드용 업로드 토큰 생성
+  async generateUploadToken(inventoryId: string): Promise<{ token: string; expires_at: string; inventory_id: string }> {
+    const response = await api.post(`/inventory/upload-token/generate?inventory_id=${inventoryId}`);
+    return response.data;
+  },
+
+  // 업로드 상태 확인 (폴링용)
+  async checkUploadStatus(token: string): Promise<{ valid: boolean; uploaded: boolean; image_url?: string }> {
+    const response = await api.get(`/inventory/upload-token/${token}/status`);
+    return response.data;
+  },
 };

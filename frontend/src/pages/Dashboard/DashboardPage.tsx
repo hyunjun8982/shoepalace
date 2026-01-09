@@ -575,12 +575,24 @@ const DashboardPage: React.FC = () => {
       title: '유형',
       dataIndex: 'type',
       key: 'type',
-      width: 70,
+      width: 50,
       align: 'center',
       render: (type: string) => (
-        <Tag color={type === 'purchase' ? 'blue' : 'green'} style={{ fontSize: 11 }}>
+        <span style={{ fontSize: 11, color: type === 'purchase' ? '#1890ff' : '#52c41a', fontWeight: 500 }}>
           {type === 'purchase' ? '구매' : '판매'}
-        </Tag>
+        </span>
+      ),
+    },
+    {
+      title: '날짜',
+      dataIndex: 'date',
+      key: 'date',
+      width: 120,
+      align: 'center',
+      render: (date: string, record) => (
+        <div style={{ fontSize: 11, color: '#595959' }}>
+          {dayjs(record.updated_at || date).format('MM/DD HH:mm')}
+        </div>
       ),
     },
     {
@@ -598,18 +610,19 @@ const DashboardPage: React.FC = () => {
     {
       title: '상품',
       key: 'product',
-      width: 350,
+      width: 320,
       align: 'center',
       render: (_, record) => {
         // 상품코드와 사이즈 정보 분리
         const productCodeParts = record.product_code?.split(' ') || [];
         const productCode = productCodeParts[0] || '';
         const sizeInfo = productCodeParts.slice(1).join(' ');
-        const sizes = sizeInfo.split(', ').filter(s => s.trim());
-
-        // 사이즈 태그가 5개 이상이면 앞 5개만 보여주고 +N 처리
-        const displaySizes = sizes.slice(0, 5);
-        const hasMore = sizes.length > 5;
+        // 사이즈(수량) 형식 파싱: "270(1개), 275(2개)" -> [{size: '270', qty: '1'}, ...]
+        const sizeMatches = sizeInfo.match(/([^,\s]+)\((\d+)개\)/g) || [];
+        const sizes = sizeMatches.map(s => {
+          const match = s.match(/([^(]+)\((\d+)개\)/);
+          return match ? { size: match[1], qty: match[2] } : { size: s, qty: '1' };
+        });
 
         return (
           <div
@@ -638,21 +651,18 @@ const DashboardPage: React.FC = () => {
               )}
             </div>
             <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
-              <div style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 2 }} title={record.product_name}>
-                {record.product_name}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#262626' }}>{productCode}</span>
+                <span style={{ fontSize: 11, color: '#595959', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={record.product_name}>
+                  {record.product_name}
+                </span>
               </div>
-              <div style={{ fontSize: 10, color: '#8c8c8c', marginBottom: 3 }}>
-                {productCode}
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'nowrap', gap: 3, overflow: 'hidden' }}>
-                {displaySizes.map((size, idx) => (
-                  <Tag key={idx} style={{ margin: 0, fontSize: 9, padding: '0 4px' }}>
-                    {size}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {sizes.map((item, idx) => (
+                  <Tag key={idx} style={{ margin: 0, fontSize: 10, padding: '1px 6px', background: '#f0f5ff', border: '1px solid #adc6ff', color: '#1d39c4' }}>
+                    {item.size} <span style={{ color: '#ff4d4f', fontWeight: 600 }}>×{item.qty}</span>
                   </Tag>
                 ))}
-                {hasMore && (
-                  <span style={{ fontSize: 9, color: '#999', alignSelf: 'center' }}>+{sizes.length - 5}</span>
-                )}
               </div>
             </div>
           </div>
@@ -707,27 +717,21 @@ const DashboardPage: React.FC = () => {
             title="🛒 구매"
             style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}
           >
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'space-between', marginBottom: 16 }}>
-              <div style={{ flex: 1, padding: '12px', background: '#e6f7ff', borderRadius: '8px', textAlign: 'center' }}>
-                <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 4 }}>오늘</div>
-                <div style={{ fontSize: 16, fontWeight: 'bold', color: '#1890ff' }}>
-                  ₩{stats?.today_purchase_amount.toLocaleString()}
-                </div>
-                <div style={{ fontSize: 10, color: '#595959' }}>{stats?.today_purchase_count}개</div>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'space-between', marginBottom: 12 }}>
+              <div style={{ flex: 1, padding: '6px 8px', background: '#e6f7ff', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 11, color: '#8c8c8c' }}>오늘</span>
+                <span style={{ fontSize: 13, fontWeight: 'bold', color: '#1890ff' }}>₩{stats?.today_purchase_amount.toLocaleString()}</span>
+                <span style={{ fontSize: 10, color: '#595959' }}>{stats?.today_purchase_count}개</span>
               </div>
-              <div style={{ flex: 1, padding: '12px', background: '#f5f5f5', borderRadius: '8px', textAlign: 'center' }}>
-                <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 4 }}>이번주</div>
-                <div style={{ fontSize: 16, fontWeight: 'bold', color: '#1890ff' }}>
-                  ₩{stats?.week_purchase_amount.toLocaleString()}
-                </div>
-                <div style={{ fontSize: 10, color: '#595959' }}>{stats?.week_purchase_count}개</div>
+              <div style={{ flex: 1, padding: '6px 8px', background: '#f5f5f5', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 11, color: '#8c8c8c' }}>이번주</span>
+                <span style={{ fontSize: 13, fontWeight: 'bold', color: '#1890ff' }}>₩{stats?.week_purchase_amount.toLocaleString()}</span>
+                <span style={{ fontSize: 10, color: '#595959' }}>{stats?.week_purchase_count}개</span>
               </div>
-              <div style={{ flex: 1, padding: '12px', background: '#f5f5f5', borderRadius: '8px', textAlign: 'center' }}>
-                <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 4 }}>이번달</div>
-                <div style={{ fontSize: 16, fontWeight: 'bold', color: '#1890ff' }}>
-                  ₩{stats?.month_purchase_amount.toLocaleString()}
-                </div>
-                <div style={{ fontSize: 10, color: '#595959' }}>{stats?.month_purchase_count}개</div>
+              <div style={{ flex: 1, padding: '6px 8px', background: '#f5f5f5', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 11, color: '#8c8c8c' }}>이번달</span>
+                <span style={{ fontSize: 13, fontWeight: 'bold', color: '#1890ff' }}>₩{stats?.month_purchase_amount.toLocaleString()}</span>
+                <span style={{ fontSize: 10, color: '#595959' }}>{stats?.month_purchase_count}개</span>
               </div>
             </div>
             <ResponsiveContainer width="100%" height={200}>
@@ -773,27 +777,21 @@ const DashboardPage: React.FC = () => {
             title="💰 판매"
             style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}
           >
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'space-between', marginBottom: 16 }}>
-              <div style={{ flex: 1, padding: '12px', background: '#f6ffed', borderRadius: '8px', textAlign: 'center' }}>
-                <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 4 }}>오늘</div>
-                <div style={{ fontSize: 16, fontWeight: 'bold', color: '#52c41a' }}>
-                  ₩{stats?.today_sale_amount.toLocaleString()}
-                </div>
-                <div style={{ fontSize: 10, color: '#595959' }}>{stats?.today_sale_count}건</div>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'space-between', marginBottom: 12 }}>
+              <div style={{ flex: 1, padding: '6px 8px', background: '#f6ffed', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 11, color: '#8c8c8c' }}>오늘</span>
+                <span style={{ fontSize: 13, fontWeight: 'bold', color: '#52c41a' }}>₩{stats?.today_sale_amount.toLocaleString()}</span>
+                <span style={{ fontSize: 10, color: '#595959' }}>{stats?.today_sale_count}건</span>
               </div>
-              <div style={{ flex: 1, padding: '12px', background: '#f5f5f5', borderRadius: '8px', textAlign: 'center' }}>
-                <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 4 }}>이번주</div>
-                <div style={{ fontSize: 16, fontWeight: 'bold', color: '#52c41a' }}>
-                  ₩{stats?.week_sale_amount.toLocaleString()}
-                </div>
-                <div style={{ fontSize: 10, color: '#595959' }}>{stats?.week_sale_count}건</div>
+              <div style={{ flex: 1, padding: '6px 8px', background: '#f5f5f5', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 11, color: '#8c8c8c' }}>이번주</span>
+                <span style={{ fontSize: 13, fontWeight: 'bold', color: '#52c41a' }}>₩{stats?.week_sale_amount.toLocaleString()}</span>
+                <span style={{ fontSize: 10, color: '#595959' }}>{stats?.week_sale_count}건</span>
               </div>
-              <div style={{ flex: 1, padding: '12px', background: '#f5f5f5', borderRadius: '8px', textAlign: 'center' }}>
-                <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 4 }}>이번달</div>
-                <div style={{ fontSize: 16, fontWeight: 'bold', color: '#52c41a' }}>
-                  ₩{stats?.month_sale_amount.toLocaleString()}
-                </div>
-                <div style={{ fontSize: 10, color: '#595959' }}>{stats?.month_sale_count}건</div>
+              <div style={{ flex: 1, padding: '6px 8px', background: '#f5f5f5', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 11, color: '#8c8c8c' }}>이번달</span>
+                <span style={{ fontSize: 13, fontWeight: 'bold', color: '#52c41a' }}>₩{stats?.month_sale_amount.toLocaleString()}</span>
+                <span style={{ fontSize: 10, color: '#595959' }}>{stats?.month_sale_count}건</span>
               </div>
             </div>
             <ResponsiveContainer width="100%" height={200}>
@@ -848,27 +846,21 @@ const DashboardPage: React.FC = () => {
             }
             style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}
           >
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'space-between', marginBottom: 16 }}>
-              <div style={{ flex: 1, padding: '12px', background: stats?.today_profit && stats.today_profit < 0 ? '#fff1f0' : '#fff7e6', borderRadius: '8px', textAlign: 'center' }}>
-                <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 4 }}>오늘</div>
-                <div style={{ fontSize: 16, fontWeight: 'bold', color: stats?.today_profit && stats.today_profit < 0 ? '#cf1322' : '#faad14' }}>
-                  ₩{stats?.today_profit.toLocaleString()}
-                </div>
-                <div style={{ fontSize: 10, color: '#595959' }}>마진 {stats?.today_profit_rate.toFixed(1)}%</div>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'space-between', marginBottom: 12 }}>
+              <div style={{ flex: 1, padding: '6px 8px', background: stats?.today_profit && stats.today_profit < 0 ? '#fff1f0' : '#fff7e6', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 11, color: '#8c8c8c' }}>오늘</span>
+                <span style={{ fontSize: 13, fontWeight: 'bold', color: stats?.today_profit && stats.today_profit < 0 ? '#cf1322' : '#faad14' }}>₩{stats?.today_profit.toLocaleString()}</span>
+                <span style={{ fontSize: 10, color: '#595959' }}>{stats?.today_profit_rate.toFixed(1)}%</span>
               </div>
-              <div style={{ flex: 1, padding: '12px', background: stats?.week_profit && stats.week_profit < 0 ? '#fff1f0' : '#f5f5f5', borderRadius: '8px', textAlign: 'center' }}>
-                <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 4 }}>이번주</div>
-                <div style={{ fontSize: 16, fontWeight: 'bold', color: stats?.week_profit && stats.week_profit < 0 ? '#cf1322' : '#faad14' }}>
-                  ₩{stats?.week_profit.toLocaleString()}
-                </div>
-                <div style={{ fontSize: 10, color: '#595959' }}>마진 {stats?.week_profit_rate.toFixed(1)}%</div>
+              <div style={{ flex: 1, padding: '6px 8px', background: stats?.week_profit && stats.week_profit < 0 ? '#fff1f0' : '#f5f5f5', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 11, color: '#8c8c8c' }}>이번주</span>
+                <span style={{ fontSize: 13, fontWeight: 'bold', color: stats?.week_profit && stats.week_profit < 0 ? '#cf1322' : '#faad14' }}>₩{stats?.week_profit.toLocaleString()}</span>
+                <span style={{ fontSize: 10, color: '#595959' }}>{stats?.week_profit_rate.toFixed(1)}%</span>
               </div>
-              <div style={{ flex: 1, padding: '12px', background: stats?.month_profit && stats.month_profit < 0 ? '#fff1f0' : '#f5f5f5', borderRadius: '8px', textAlign: 'center' }}>
-                <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 4 }}>이번달</div>
-                <div style={{ fontSize: 16, fontWeight: 'bold', color: stats?.month_profit && stats.month_profit < 0 ? '#cf1322' : '#faad14' }}>
-                  ₩{stats?.month_profit.toLocaleString()}
-                </div>
-                <div style={{ fontSize: 10, color: '#595959' }}>마진 {stats?.month_profit_rate.toFixed(1)}%</div>
+              <div style={{ flex: 1, padding: '6px 8px', background: stats?.month_profit && stats.month_profit < 0 ? '#fff1f0' : '#f5f5f5', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 11, color: '#8c8c8c' }}>이번달</span>
+                <span style={{ fontSize: 13, fontWeight: 'bold', color: stats?.month_profit && stats.month_profit < 0 ? '#cf1322' : '#faad14' }}>₩{stats?.month_profit.toLocaleString()}</span>
+                <span style={{ fontSize: 10, color: '#595959' }}>{stats?.month_profit_rate.toFixed(1)}%</span>
               </div>
             </div>
             <ResponsiveContainer width="100%" height={200}>
@@ -914,10 +906,16 @@ const DashboardPage: React.FC = () => {
         </Col>
       </Row>
 
-      {/* 최근 활동 내역 및 KREAM 위젯 */}
-      <Row gutter={16} style={{ alignItems: 'stretch' }}>
-        {/* 최근 활동 내역 */}
-        <Col xs={24} lg={12} style={{ display: 'flex' }}>
+      {/* KREAM 인기 상품 */}
+      <Row gutter={16} style={{ marginBottom: 16 }}>
+        <Col xs={24}>
+          <TrendingProductWidget />
+        </Col>
+      </Row>
+
+      {/* 최근 활동 내역 */}
+      <Row gutter={16}>
+        <Col xs={24}>
           <Card
             title="📋 최근 활동 내역"
             style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', width: '100%' }}
@@ -941,15 +939,20 @@ const DashboardPage: React.FC = () => {
               rowKey="id"
               pagination={{ pageSize: 10, showSizeChanger: false, showTotal: (total) => `총 ${total}건` }}
               locale={{ emptyText: '최근 활동 내역이 없습니다' }}
+              style={{
+                // 행 구분선 스타일
+              }}
+              className="activity-table-with-dividers"
             />
+            <style>{`
+              .activity-table-with-dividers .ant-table-tbody > tr > td {
+                border-bottom: 1px solid #f0f0f0 !important;
+              }
+              .activity-table-with-dividers .ant-table-tbody > tr:hover > td {
+                background: #fafafa !important;
+              }
+            `}</style>
           </Card>
-        </Col>
-
-        {/* KREAM 인기 상품 */}
-        <Col xs={24} lg={12} style={{ display: 'flex' }}>
-          <div style={{ width: '100%' }}>
-            <TrendingProductWidget />
-          </div>
         </Col>
       </Row>
     </div>

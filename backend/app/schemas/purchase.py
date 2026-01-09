@@ -96,6 +96,7 @@ class PurchaseBase(BaseModel):
     payment_type: PaymentType
     supplier: Optional[str] = None
     receipt_url: Optional[str] = None
+    receipt_urls: Optional[List[str]] = []  # 영수증 이미지 URL 목록 (다중)
     notes: Optional[str] = None
 
 class PurchaseCreate(BaseModel):
@@ -104,7 +105,10 @@ class PurchaseCreate(BaseModel):
     payment_type: PaymentType
     supplier: Optional[str] = None
     receipt_url: Optional[str] = None
+    receipt_urls: Optional[List[str]] = []  # 영수증 이미지 URL 목록 (다중)
     notes: Optional[str] = None
+    buyer_id: Optional[str] = None  # 구매자 ID (admin이 지정 가능)
+    receiver_id: Optional[str] = None  # 입고확인자 ID
     items: List[PurchaseItemCreate]
 
 class PurchaseUpdate(BaseModel):
@@ -113,6 +117,7 @@ class PurchaseUpdate(BaseModel):
     payment_type: Optional[PaymentType] = None
     supplier: Optional[str] = None
     receipt_url: Optional[str] = None
+    receipt_urls: Optional[List[str]] = None  # 영수증 이미지 URL 목록 (다중)
     status: Optional[PurchaseStatus] = None
     notes: Optional[str] = None
     items: Optional[List[PurchaseItemCreate]] = None
@@ -120,14 +125,18 @@ class PurchaseUpdate(BaseModel):
 class Purchase(PurchaseBase):
     id: str
     buyer_id: str
-    buyer_name: Optional[str] = None  # 구매자 이름 추가
+    buyer_name: Optional[str] = None  # 구매자 이름
+    receiver_id: Optional[str] = None  # 입고확인자 ID
+    receiver_name: Optional[str] = None  # 입고확인자 이름
+    is_confirmed: bool = False  # 입고확인 여부
+    confirmed_at: Optional[datetime] = None  # 입고확인 일시
     total_amount: float  # Decimal에서 float로 변경하여 JSON 직렬화 문제 해결
     status: PurchaseStatus
     created_at: datetime
     updated_at: datetime
     items: List[PurchaseItem] = []
 
-    @field_validator('id', 'buyer_id', mode='before')
+    @field_validator('id', 'buyer_id', 'receiver_id', mode='before')
     @classmethod
     def convert_uuid_to_str(cls, v):
         if isinstance(v, UUID):

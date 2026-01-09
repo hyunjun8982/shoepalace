@@ -16,6 +16,7 @@ import {
   Modal,
   Radio,
   Image,
+  Tooltip,
 } from 'antd';
 import {
   PlusOutlined,
@@ -23,6 +24,7 @@ import {
   SearchOutlined,
   CalculatorOutlined,
   DollarOutlined,
+  RollbackOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useNavigate } from 'react-router-dom';
@@ -195,13 +197,26 @@ const SaleListPage: React.FC = () => {
 
   const getStatusTag = (status: SaleStatus) => {
     const statusConfig = {
-      [SaleStatus.PENDING]: { color: 'orange', text: '대기중' },
+      [SaleStatus.PENDING]: { color: 'orange', text: '마진 입력 대기중' },
       [SaleStatus.COMPLETED]: { color: 'green', text: '완료' },
       [SaleStatus.CANCELLED]: { color: 'red', text: '취소' },
+      [SaleStatus.RETURNED]: { color: 'purple', text: '반품' },
     };
 
-    const config = statusConfig[status];
+    const config = statusConfig[status] || { color: 'default', text: status };
     return <Tag color={config.color}>{config.text}</Tag>;
+  };
+
+  // 반품 처리
+  const handleReturnSale = async (saleId: string) => {
+    try {
+      await saleService.processReturn(saleId);
+      message.success('반품 처리되었습니다.');
+      fetchSales();
+      fetchAllSales();
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '반품 처리에 실패했습니다.');
+    }
   };
 
   // 마진 비율로 회사 판매가 계산
@@ -275,12 +290,7 @@ const SaleListPage: React.FC = () => {
 
   const columns: ColumnsType<Sale> = [
     {
-      title: (
-        <div>
-          <div>판매번호</div>
-          <div style={{ fontSize: '11px', fontWeight: 'normal', color: '#999' }}>(판매일)</div>
-        </div>
-      ),
+      title: '판매번호',
       key: 'sale_info',
       width: 130,
       render: (_, record) => (
@@ -288,8 +298,8 @@ const SaleListPage: React.FC = () => {
           <div style={{ fontWeight: 500, fontSize: '13px' }}>
             {record.sale_number || '-'}
           </div>
-          <div style={{ fontSize: '12px', color: '#666' }}>
-            ({dayjs(record.sale_date).format('YYYY-MM-DD')})
+          <div style={{ fontSize: '11px', color: '#888' }}>
+            {dayjs(record.sale_date).format('YYYY-MM-DD')}
           </div>
         </div>
       ),
@@ -297,11 +307,11 @@ const SaleListPage: React.FC = () => {
     {
       title: '고객 정보',
       key: 'customer_info',
-      width: 130,
+      width: 120,
       render: (_, record) => (
         <div style={{ lineHeight: '1.4' }}>
-          <div style={{ fontWeight: 500 }}>{record.customer_name || '-'}</div>
-          <div style={{ fontSize: '12px', color: '#666' }}>{formatPhoneNumber(record.customer_contact || '')}</div>
+          <div style={{ fontWeight: 500, fontSize: '13px' }}>{record.customer_name || '-'}</div>
+          <div style={{ fontSize: '11px', color: '#888' }}>{formatPhoneNumber(record.customer_contact || '')}</div>
         </div>
       ),
     },
@@ -321,7 +331,7 @@ const SaleListPage: React.FC = () => {
               <img
                 src={iconUrl}
                 alt={brandName}
-                style={{ width: 24, height: 24, objectFit: 'contain' }}
+                style={{ width: 20, height: 20, objectFit: 'contain' }}
                 onError={(e) => {
                   (e.target as HTMLImageElement).style.display = 'none';
                 }}
@@ -333,21 +343,22 @@ const SaleListPage: React.FC = () => {
       },
     },
     {
-      title: '상품사진',
+      title: '상품',
       key: 'product_image',
-      width: 80,
+      width: 60,
       render: (_, record) => {
         if (!record.items || record.items.length === 0) {
           return (
             <div style={{
-              width: 50,
-              height: 50,
-              backgroundColor: '#f0f0f0',
+              width: 44,
+              height: 44,
+              backgroundColor: '#f5f5f5',
+              borderRadius: 4,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: 10,
-              color: '#999'
+              fontSize: 9,
+              color: '#bbb'
             }}>
               No Image
             </div>
@@ -355,19 +366,16 @@ const SaleListPage: React.FC = () => {
         }
         const firstItem = record.items[0];
         if (firstItem.product_image_url) {
-          // 상대 경로를 절대 경로로 변환
           const imageUrl = getFileUrl(firstItem.product_image_url) || undefined;
 
           return (
             <div onClick={(e) => e.stopPropagation()}>
               <Image
                 src={imageUrl}
-                width={50}
-                height={50}
-                style={{ objectFit: 'cover', cursor: 'pointer' }}
-                preview={{
-                  mask: '크게보기'
-                }}
+                width={44}
+                height={44}
+                style={{ objectFit: 'cover', borderRadius: 4 }}
+                preview={{ mask: '확대' }}
                 fallback="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUH5QkbBQEfH0J0gAAAAB1pVFh0Q29tbWVudAAAAAAAQ3JlYXRlZCB3aXRoIEdJTVBkLmUHAAACNUlEQVRo3u2ZT0gUURjAf++dmZ3d3V1X13+5mrqmYhYdCqKDRX+gQ0QHRQ8FQUFBh4IOQdChCLoERUGHoEMQFEUQBEUQBR0iKII0TcvM1DL/rbq77szs7MybDgaytjO7s+4W9L7TvO+9N9/3vu+9N/MGhBBCCCGEEEIIIYQQQgghhBBCCOEVSk4N7D9wEIDW1lYAmpqaANi5cycAnZ2dAKiqCkBfXx8Aw8PD3hZq27YUGBkZkQKDg4NSYGpqSgpMTEzI/unpaSng8/mkgNfrBaCoqAiA8vJyACorKwEoLS0FIC8vD4Dbt2/PvoC1a9cCcOTIEQAKCgoAmJiY4M2bNwDcu3ePeDyeEdi7dy8A586dA2DRokUAPHjwgGvXrgFgGMacF7B//34ALl++DEBZWRkAHz584MKFC1y9ejEjfW/fvgXg5MmTANTW1gLw6NEjzp49y9jYmLcCFhY27qqqSvv27aNQT4/kdDqd5cuXUygQCEihqqoqKRQKhaRQTU2NFKqpqZFCVVVVUigYDEqhsrIyKeT3+6VQIBCQ444ePSqNnzhxAoDCwkIA4vE4T58+5e7duwBEo1FvBUSjUS5evMjz588B0HXdk/4jkQg3b97k+vXrjI6OArMooKGhgc7OTlauXJm13kajUW7dusXVq1eJRCLeCti0aRN79uyhvr7e0046nc6HDx+4c+cOr1+/9lZAbW0t69evZ+3atYRCIdLF6XRy//59Hjx4wOjoqBS4cuUKFy9elGshT548kcGRI0eGzp8/f0YIIYQQ4n/iN5kkr0OZF2IAAAAAAElFTkSuQmCC"
               />
             </div>
@@ -375,14 +383,15 @@ const SaleListPage: React.FC = () => {
         }
         return (
           <div style={{
-            width: 50,
-            height: 50,
-            backgroundColor: '#f0f0f0',
+            width: 44,
+            height: 44,
+            backgroundColor: '#f5f5f5',
+            borderRadius: 4,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: 10,
-            color: '#999'
+            fontSize: 9,
+            color: '#bbb'
           }}>
             No Image
           </div>
@@ -392,27 +401,27 @@ const SaleListPage: React.FC = () => {
     {
       title: '상품번호',
       key: 'product_codes',
-      width: 150,
+      width: 120,
       render: (_, record) => {
         if (!record.items || record.items.length === 0) return '-';
         const code = record.items[0]?.product?.product_code || record.items[0]?.product_code || '-';
-        return <span style={{ fontWeight: 600, whiteSpace: 'normal', wordBreak: 'break-all' }}>{code}</span>;
+        return <span style={{ fontWeight: 500, fontSize: '12px', whiteSpace: 'normal', wordBreak: 'break-all' }}>{code}</span>;
       },
     },
     {
       title: '상품명',
       key: 'product_names',
-      width: 300,
+      width: 180,
       render: (_, record) => {
         if (!record.items || record.items.length === 0) return '-';
         const name = record.items[0]?.product?.product_name || record.items[0]?.product_name || '-';
-        return <span style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>{name}</span>;
+        return <span style={{ fontSize: '12px', whiteSpace: 'normal', wordBreak: 'break-word', color: '#333' }}>{name}</span>;
       },
     },
     {
-      title: '사이즈별 수량',
+      title: '수량',
       key: 'sizes_quantity',
-      width: 150,
+      width: 60,
       render: (_, record) => {
         if (!record.items || record.items.length === 0) return '-';
         const sizeMap = new Map<string, number>();
@@ -433,38 +442,24 @@ const SaleListPage: React.FC = () => {
 
         const total = record.items.reduce((sum, item) => sum + (item.quantity || 0), 0);
 
-        return (
-          <div style={{
-            width: '100%',
-            fontSize: '12px',
-            margin: '-8px -16px',
-          }}>
-            <table style={{
-              borderCollapse: 'collapse',
-              width: '100%',
-            }}>
-              <tbody>
-                {sortedEntries.map(([size, qty], idx) => (
-                  <tr key={idx} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                    <td style={{ padding: '4px 8px', textAlign: 'left', fontWeight: 500, color: '#666' }}>{size}</td>
-                    <td style={{ padding: '4px 8px', textAlign: 'right' }}>{qty}개</td>
-                  </tr>
-                ))}
-                <tr style={{ backgroundColor: '#f0f7ff' }}>
-                  <td colSpan={2} style={{
-                    padding: '6px 8px',
-                    fontWeight: 700,
-                    fontSize: '13px',
-                    color: '#1890ff',
-                    textAlign: 'right',
-                    borderTop: '2px solid #1890ff'
-                  }}>
-                    총 {total}개
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+        const tooltipContent = (
+          <div style={{ minWidth: 100 }}>
+            <div style={{ fontWeight: 600, marginBottom: 6, paddingBottom: 4, borderBottom: '1px solid rgba(255,255,255,0.2)' }}>사이즈별 수량</div>
+            {sortedEntries.map(([size, qty], idx) => (
+              <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}>
+                <span style={{ color: 'rgba(255,255,255,0.85)' }}>{size}</span>
+                <span style={{ fontWeight: 500 }}>{qty}개</span>
+              </div>
+            ))}
           </div>
+        );
+
+        return (
+          <Tooltip title={tooltipContent} placement="left">
+            <span style={{ cursor: 'pointer', fontWeight: 600, fontSize: '13px', color: '#1890ff' }}>
+              {total}개
+            </span>
+          </Tooltip>
         );
       },
     },
@@ -514,13 +509,59 @@ const SaleListPage: React.FC = () => {
     {
       title: '상태',
       key: 'margin_status',
-      width: 70,
+      width: 110,
       render: (_, record) => {
+        // 반품 상태인 경우 반품 태그 표시
+        if (record.status === SaleStatus.RETURNED) {
+          return <Tag color="purple">반품</Tag>;
+        }
+        // 취소 상태인 경우 취소 태그 표시
+        if (record.status === SaleStatus.CANCELLED) {
+          return <Tag color="red">취소</Tag>;
+        }
+        // 그 외에는 회사 판매가 입력 여부로 표시
         const hasMargin = record.total_company_amount && Number(record.total_company_amount) > 0;
         return hasMargin ? (
           <Tag color="green">완료</Tag>
         ) : (
-          <Tag color="orange">대기중</Tag>
+          <Tag color="orange">마진 입력 대기중</Tag>
+        );
+      },
+    },
+    {
+      title: '작업',
+      key: 'action',
+      width: 80,
+      align: 'center' as 'center',
+      render: (_, record) => {
+        // 이미 반품 또는 취소된 경우 버튼 숨김
+        if (record.status === SaleStatus.RETURNED || record.status === SaleStatus.CANCELLED) {
+          return null;
+        }
+        return (
+          <Button
+            size="small"
+            icon={<RollbackOutlined />}
+            onClick={(e) => {
+              e.stopPropagation();
+              Modal.confirm({
+                title: '반품 처리',
+                icon: <RollbackOutlined style={{ color: '#0d1117' }} />,
+                content: '해당 판매를 반품 처리하시겠습니까?',
+                okText: '반품',
+                cancelText: '취소',
+                okButtonProps: { style: { backgroundColor: '#0d1117', borderColor: '#0d1117' } },
+                onOk: () => handleReturnSale(record.id!),
+              });
+            }}
+            style={{
+              backgroundColor: '#0d1117',
+              borderColor: '#0d1117',
+              color: '#fff',
+            }}
+          >
+            반품
+          </Button>
         );
       },
     },
@@ -754,7 +795,7 @@ const SaleListPage: React.FC = () => {
       <Card>
         {/* 필터 영역 */}
         <Row gutter={16} style={{ marginBottom: 16 }}>
-          <Col span={6}>
+          <Col span={5}>
             <Input
               placeholder="거래처, 상품번호 등 검색"
               prefix={<SearchOutlined />}
@@ -773,15 +814,18 @@ const SaleListPage: React.FC = () => {
           </Col>
           <Col span={3}>
             <Select
+              mode="multiple"
               style={{ width: '100%' }}
               placeholder="브랜드"
               allowClear
-              value={filters.brand_name}
-              onChange={(value) => handleFilterChange('brand_name', value)}
+              value={filters.brand_name as string[] | undefined}
+              onChange={(value) => handleFilterChange('brand_name', value.length > 0 ? value : undefined)}
               showSearch
               filterOption={(input, option) =>
                 String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
               }
+              maxTagCount={0}
+              maxTagPlaceholder={(omittedValues) => `브랜드 ${omittedValues.length}개`}
             >
               {brands.map(brand => (
                 <Option key={brand.id} value={brand.name}>{brand.name}</Option>
@@ -790,18 +834,22 @@ const SaleListPage: React.FC = () => {
           </Col>
           <Col span={3}>
             <Select
+              mode="multiple"
               style={{ width: '100%' }}
               placeholder="상태"
               allowClear
-              value={filters.status}
-              onChange={(value) => handleFilterChange('status', value)}
+              value={filters.status as string[] | undefined}
+              onChange={(value) => handleFilterChange('status', value.length > 0 ? value : undefined)}
+              maxTagCount={0}
+              maxTagPlaceholder={(omittedValues) => `상태 ${omittedValues.length}개`}
             >
-              <Option value="pending">대기중</Option>
+              <Option value="pending">마진 입력 대기중</Option>
               <Option value="completed">완료</Option>
               <Option value="cancelled">취소</Option>
+              <Option value="returned">반품</Option>
             </Select>
           </Col>
-          <Col span={7} style={{ textAlign: 'right' }}>
+          <Col span={8} style={{ textAlign: 'right' }}>
             <Space>
               {selectedRowKeys.length > 0 && user?.role === 'admin' && (
                 <Popconfirm
@@ -839,7 +887,12 @@ const SaleListPage: React.FC = () => {
                   type="primary"
                   icon={<DollarOutlined />}
                   onClick={() => {
-                    const pending = sales.filter(sale => !sale.total_company_amount || Number(sale.total_company_amount) === 0);
+                    // 반품/취소 상태를 제외하고 회사 판매가가 없는 항목만 필터링
+                    const pending = sales.filter(sale =>
+                      (!sale.total_company_amount || Number(sale.total_company_amount) === 0) &&
+                      sale.status !== SaleStatus.RETURNED &&
+                      sale.status !== SaleStatus.CANCELLED
+                    );
                     if (pending.length === 0) {
                       message.info('입력할 회사 판매가가 없습니다.');
                       return;
@@ -852,7 +905,7 @@ const SaleListPage: React.FC = () => {
                     setBulkPrices(initialPrices);
                     setBulkPriceModalVisible(true);
                   }}
-                  style={{ marginRight: 8 }}
+                  style={{ marginRight: 8, backgroundColor: '#0d1117', borderColor: '#0d1117' }}
                 >
                   회사 판매가(마진) 입력
                 </Button>
@@ -862,6 +915,7 @@ const SaleListPage: React.FC = () => {
                   type="primary"
                   icon={<PlusOutlined />}
                   onClick={() => navigate('/sales/new')}
+                  style={{ backgroundColor: '#0d1117', borderColor: '#0d1117' }}
                 >
                   판매 등록
                 </Button>
@@ -879,7 +933,12 @@ const SaleListPage: React.FC = () => {
           rowSelection={rowSelection}
           onRow={(record) => ({
             onClick: () => navigate(`/sales/${record.id}`),
-            style: { cursor: 'pointer' }
+            style: { cursor: 'pointer' },
+            className: record.status === SaleStatus.RETURNED
+              ? 'sale-row-returned'
+              : record.status === SaleStatus.CANCELLED
+                ? 'sale-row-cancelled'
+                : '',
           })}
           pagination={{
             current: pagination.current,
@@ -941,6 +1000,7 @@ const SaleListPage: React.FC = () => {
                   size="small"
                   onClick={handleApplyBulkMargin}
                   disabled={filteredPendingSales.length === 0}
+                  style={{ backgroundColor: '#0d1117', borderColor: '#0d1117' }}
                 >
                   현재 목록 일괄 적용
                 </Button>

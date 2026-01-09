@@ -361,6 +361,7 @@ const SaleManagementPage: React.FC = () => {
               icon={<SaveOutlined />}
               onClick={handleSaveAll}
               loading={saving}
+              style={{ backgroundColor: '#0d1117', borderColor: '#0d1117' }}
             >
               모든 가격 저장
             </Button>

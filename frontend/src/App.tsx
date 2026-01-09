@@ -16,6 +16,7 @@ import SaleFormPage from './pages/Sale/SaleFormPage';
 import SaleDetailPage from './pages/Sale/SaleDetailPage';
 import SaleManagementPage from './pages/Sale/SaleManagementPage';
 import InventoryListPage from './pages/Inventory/InventoryListPage';
+import DefectiveItemsPage from './pages/Inventory/DefectiveItemsPage';
 import ProductListPage from './pages/Product/ProductListPage';
 import ProductFormPage from './pages/Product/ProductFormPage';
 import SettlementListPage from './pages/Settlement/SettlementListPage';
@@ -31,6 +32,9 @@ import ChatRoomPage from './pages/Chat/ChatRoomPage';
 import ChatWindowPage from './pages/Chat/ChatWindowPage';
 import AdidasAccountListPage from './pages/Adidas/AdidasAccountListPage';
 import AdidasCouponPage from './pages/Adidas/AdidasCouponPage';
+import FeatureRequestPage from './pages/FeatureRequest/FeatureRequestPage';
+import MobilePhotoCapturePage from './pages/Mobile/MobilePhotoCapturePage';
+import MobileReceiptCapturePage from './pages/Mobile/MobileReceiptCapturePage';
 
 // Ant Design 한국어 설정
 const antdConfig = {
@@ -55,6 +59,12 @@ const App: React.FC = () => {
 
             {/* 회원가입 페이지 */}
             <Route path="/register" element={<RegisterPage />} />
+
+            {/* 모바일 사진 촬영 페이지 (로그인 불필요 - 토큰 기반 인증) */}
+            <Route path="/mobile/photo/:token" element={<MobilePhotoCapturePage />} />
+
+            {/* 모바일 영수증 촬영 페이지 (로그인 불필요 - 토큰 기반 인증) */}
+            <Route path="/mobile/receipt/:token" element={<MobileReceiptCapturePage />} />
 
             {/* 채팅 창 (팝업 전용 - 레이아웃 없음) */}
             <Route
@@ -151,6 +161,7 @@ const App: React.FC = () => {
 
                       {/* 재고 관리 */}
                       <Route path="/inventory" element={<InventoryListPage />} />
+                      <Route path="/inventory/defective" element={<DefectiveItemsPage />} />
 
                       {/* 창고 관리 */}
                       <Route path="/warehouses" element={<WarehouseListPage />} />
@@ -215,6 +226,9 @@ const App: React.FC = () => {
 
                       {/* 도움말 */}
                       <Route path="/help" element={<HelpPage />} />
+
+                      {/* 요청사항 */}
+                      <Route path="/feature-requests" element={<FeatureRequestPage />} />
 
                       {/* 기본 리다이렉트 */}
                       <Route path="/" element={<Navigate to="/dashboard" replace />} />

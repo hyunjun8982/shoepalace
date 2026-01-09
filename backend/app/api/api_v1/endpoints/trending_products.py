@@ -4,6 +4,8 @@ from sqlalchemy import func, and_
 from typing import Optional
 import pandas as pd
 import io
+import httpx
+import uuid
 from datetime import datetime
 
 from app.api import deps
@@ -13,6 +15,89 @@ from app.models.brand import Brand
 from app.schemas import trending_product as schemas
 
 router = APIRouter()
+
+@router.get("/kream-ranking/")
+async def get_kream_ranking(
+    category_id: str = Query("281", description="KREAM 카테고리 ID (예: 281=패딩, 38=상의)"),
+    date_range: Optional[str] = Query(None, description="기간 필터 (weekly, monthly) - 없으면 실시간"),
+):
+    """
+    KREAM 실시간 인기상품(급상승) 랭킹 API 프록시
+    - category_id: KREAM 카테고리 ID (직접 지정)
+    - date_range: 기간 필터 (weekly, monthly) - 없으면 실시간
+    """
+    category_filter = category_id
+    request_key = str(uuid.uuid4())
+    now = datetime.now()
+    client_datetime = now.strftime("%Y%m%d%H%M%S") + "+0900"
+
+    url = f"https://api.kream.co.kr/api/h/tabs/ranking/?category_filter={category_filter}&request_key={request_key}"
+
+    if date_range:
+        url += f"&date_range_filter={date_range}"
+
+    headers = {
+        "accept": "*/*",
+        "accept-language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        "origin": "https://kream.co.kr",
+        "referer": f"https://kream.co.kr/?tab=home_ranking_v2&category_filter={category_filter}",
+        "sec-ch-ua": '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+        "x-kream-api-version": "52",
+        "x-kream-client-datetime": client_datetime,
+        "x-kream-device-id": f"web;{str(uuid.uuid4())}",
+        "x-kream-web-build-version": "25.15.7",
+        "x-kream-web-request-secret": "kream-djscjsghdkd",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"KREAM API 오류: {str(e)}")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=500, detail=f"KREAM API 요청 실패: {str(e)}")
+
+
+@router.get("/kream-image-proxy/")
+async def proxy_kream_image(
+    url: str = Query(..., description="KREAM 이미지 URL"),
+):
+    """
+    KREAM 이미지 프록시 - CORS 우회용
+    """
+    from fastapi.responses import Response
+
+    if not url.startswith("https://kream-phinf.pstatic.net/"):
+        raise HTTPException(status_code=400, detail="허용되지 않은 이미지 URL입니다.")
+
+    headers = {
+        "referer": "https://kream.co.kr/",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+
+            content_type = response.headers.get("content-type", "image/png")
+            return Response(
+                content=response.content,
+                media_type=content_type,
+                headers={
+                    "Cache-Control": "public, max-age=86400",
+                }
+            )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"이미지 로드 실패: {str(e)}")
 
 
 @router.post("/upload/", response_model=dict)

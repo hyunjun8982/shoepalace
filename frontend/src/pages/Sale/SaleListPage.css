@@ -47,3 +47,22 @@
 .statistics-card:hover .statistics-icon {
   transform: rotate(10deg) scale(1.1);
 }
+
+/* 반품/취소된 행 스타일 */
+.sale-row-returned td,
+.sale-row-cancelled td {
+  background-color: #fafafa !important;
+  color: #999 !important;
+}
+
+.sale-row-returned td span,
+.sale-row-returned td div,
+.sale-row-cancelled td span,
+.sale-row-cancelled td div {
+  color: #999 !important;
+}
+
+.sale-row-returned td .ant-tag,
+.sale-row-cancelled td .ant-tag {
+  opacity: 0.8;
+}

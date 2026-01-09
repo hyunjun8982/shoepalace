@@ -25,6 +25,9 @@ class Inventory(InventoryBase):
     id: str
     available_quantity: int
     is_low_stock: bool
+    defect_quantity: int = 0  # 불량 수량
+    defect_reason: Optional[str] = None  # 불량 사유
+    defect_marked_at: Optional[datetime] = None  # 불량 마킹 일시
     last_updated: datetime
     created_at: datetime
     updated_at: datetime
@@ -93,6 +96,9 @@ class InventoryDetail(Inventory):
     warehouse_name: Optional[str] = None
     warehouse_location: Optional[str] = None
     warehouse_image_url: Optional[str] = None
+    defect_quantity: int = 0  # 불량 수량
+    defect_reason: Optional[str] = None  # 불량 사유
+    defect_image_url: Optional[str] = None  # 불량 이미지 URL
 
 class InventoryDetailList(BaseModel):
     total: int
@@ -116,16 +122,21 @@ class SaleHistoryItem(BaseModel):
     sale_price: float
     customer_name: Optional[str] = None
     seller_name: Optional[str] = None
+    status: Optional[str] = None  # pending, completed, cancelled, returned
 
 # 사이즈별 재고 정보
 class SizeInventory(BaseModel):
     id: str
     size: str
-    quantity: int
+    quantity: int  # 정상 수량
+    defect_quantity: int = 0  # 불량 수량
     location: Optional[str] = None
     warehouse_name: Optional[str] = None
     warehouse_location: Optional[str] = None
     warehouse_image_url: Optional[str] = None
+    defect_reason: Optional[str] = None  # 불량 사유
+    defect_marked_at: Optional[datetime] = None  # 불량 마킹 일시
+    defect_image_url: Optional[str] = None  # 불량 이미지 URL
 
     @field_validator('id', mode='before')
     @classmethod
@@ -136,6 +147,13 @@ class SizeInventory(BaseModel):
 
     class Config:
         from_attributes = True
+
+# 불량 등록 스키마
+class DefectMarkRequest(BaseModel):
+    action: str = "add"  # "add" (불량 등록) or "remove" (불량 해제)
+    quantity: int = 1  # 불량 처리할 수량 (기본 1개)
+    defect_reason: Optional[str] = None
+    defect_image_url: Optional[str] = None
 
 # 재고 상세 (구매/판매 이력 포함)
 class InventoryDetailWithHistory(InventoryDetail):

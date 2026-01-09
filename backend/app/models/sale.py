@@ -8,6 +8,7 @@ class SaleStatus(str, enum.Enum):
     pending = "pending"
     completed = "completed"
     cancelled = "cancelled"
+    returned = "returned"
 
 class Sale(BaseModel):
     __tablename__ = "sales"

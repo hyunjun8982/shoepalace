@@ -10,7 +10,7 @@ export const getApiBaseUrl = (): string => {
 /**
  * 이미지나 파일 URL을 생성
  * - 절대 URL(http/https)이면 그대로 반환
- * - 상대 경로면 현재 origin + 경로 반환
+ * - 상대 경로면 API 서버 origin + 경로 반환
  */
 export const getFileUrl = (path?: string | null): string | null => {
   if (!path) return null;
@@ -20,10 +20,22 @@ export const getFileUrl = (path?: string | null): string | null => {
     return path;
   }
 
-  // 상대 경로면 현재 origin 추가
-  // window.location.origin은 브라우저가 접속한 도메인 (ngrok URL 포함)
-  const origin = window.location.origin;
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  
+
+  // 환경변수에 API URL이 설정되어 있으면 사용 (개발 모드)
+  const apiUrl = process.env.REACT_APP_API_URL;
+  if (apiUrl) {
+    return `${apiUrl}${normalizedPath}`;
+  }
+
+  // 프로덕션 또는 nginx 프록시 환경: 현재 origin 사용
+  // 개발 환경에서 포트가 3000/3001이면 8000으로 변경 (백엔드 포트)
+  let origin = window.location.origin;
+  if (origin.includes(':3000')) {
+    origin = origin.replace(':3000', ':8000');
+  } else if (origin.includes(':3001')) {
+    origin = origin.replace(':3001', ':8000');
+  }
+
   return `${origin}${normalizedPath}`;
 };

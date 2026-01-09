@@ -52,9 +52,14 @@ export interface Purchase {
   purchase_date: string;
   buyer_id: string;
   buyer_name?: string;
+  receiver_id?: string;
+  receiver_name?: string;
+  is_confirmed: boolean;
+  confirmed_at?: string;
   payment_type: PaymentType;
   supplier?: string;
   receipt_url?: string;
+  receipt_urls?: string[];  // 다중 영수증 URL
   total_amount: number;
   status: PurchaseStatus;
   notes?: string;
@@ -69,7 +74,10 @@ export interface PurchaseCreate {
   payment_type: PaymentType;
   supplier?: string;
   receipt_url?: string;
+  receipt_urls?: string[];  // 다중 영수증 URL
   notes?: string;
+  buyer_id?: string;
+  receiver_id?: string;
   items: PurchaseItem[];
 }
 

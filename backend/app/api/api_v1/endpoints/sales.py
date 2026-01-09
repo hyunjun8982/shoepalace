@@ -33,13 +33,14 @@ def get_sales(
     limit: int = Query(100, ge=1, le=10000),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
-    status: Optional[SaleStatus] = None,
-    brand_name: Optional[str] = None,
+    status: Optional[List[str]] = Query(None),
+    brand_name: Optional[List[str]] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """판매 목록 조회"""
     from sqlalchemy.orm import selectinload
+    from sqlalchemy import desc, func
     from app.models.brand import Brand
 
     # Sale을 조회하면서 관련 데이터를 미리 로드
@@ -56,16 +57,25 @@ def get_sales(
     if end_date:
         query = query.filter(Sale.sale_date <= end_date)
     if status:
-        query = query.filter(Sale.status == status)
+        # 다중 선택 지원
+        status_enums = [SaleStatus(s) for s in status]
+        query = query.filter(Sale.status.in_(status_enums))
     if brand_name:
-        query = query.join(Sale.items).join(SaleItem.product).join(Product.brand).filter(Brand.name == brand_name)
+        # 다중 선택 지원 - subquery 사용하여 DISTINCT/ORDER BY 충돌 방지
+        brand_sale_ids = db.query(Sale.id)\
+            .join(Sale.items)\
+            .join(SaleItem.product)\
+            .join(Product.brand)\
+            .filter(Brand.name.in_(brand_name))\
+            .distinct()\
+            .subquery()
+        query = query.filter(Sale.id.in_(brand_sale_ids))
 
     # seller 권한은 자신의 판매만 조회
     if current_user.role.value == "seller":
         query = query.filter(Sale.seller_id == current_user.id)
 
     # 최신순 정렬 (updated_at 우선, 없으면 created_at)
-    from sqlalchemy import desc, func
     query = query.order_by(desc(func.coalesce(Sale.updated_at, Sale.created_at)))
 
     total = query.count()
@@ -630,6 +640,123 @@ def preview_transaction_statement(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read file: {str(e)}")
+
+@router.post("/{sale_id}/return")
+def process_return(
+    sale_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """반품 처리 - 재고 원복 후 상태 변경"""
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # seller 또는 admin만 반품 처리 가능
+    if current_user.role.value not in ["seller", "admin"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    sale = db.query(Sale).filter(Sale.id == sale_id).first()
+    if not sale:
+        raise HTTPException(status_code=404, detail="Sale not found")
+
+    # 권한 체크 (seller는 자신의 판매만)
+    if current_user.role.value == "seller" and str(sale.seller_id) != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    # 이미 반품 처리된 경우
+    if sale.status == SaleStatus.returned:
+        raise HTTPException(status_code=400, detail="이미 반품 처리된 판매건입니다.")
+
+    # 재고 원복
+    items = db.query(SaleItem).filter(SaleItem.sale_id == sale_id).all()
+    for item in items:
+        inventory = db.query(Inventory).filter(
+            Inventory.product_id == item.product_id,
+            Inventory.size == item.size
+        ).first()
+
+        if inventory:
+            logger.info(f"Restoring inventory for product {item.product_id}, size {item.size}: {inventory.quantity} + {item.quantity}")
+            inventory.quantity += item.quantity
+        else:
+            # 재고 레코드가 없으면 새로 생성
+            logger.info(f"Creating new inventory for product {item.product_id}, size {item.size}: {item.quantity}")
+            new_inventory = Inventory(
+                id=uuid.uuid4(),
+                product_id=item.product_id,
+                size=item.size,
+                quantity=item.quantity
+            )
+            db.add(new_inventory)
+
+    # 상태 변경
+    sale.status = SaleStatus.returned
+
+    db.commit()
+    db.refresh(sale)
+
+    logger.info(f"Sale {sale_id} returned successfully. Items restored to inventory.")
+
+    return {"message": "반품 처리가 완료되었습니다. 재고가 원복되었습니다."}
+
+
+@router.post("/{sale_id}/cancel-return")
+def cancel_return(
+    sale_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """반품 취소 처리 - 재고 다시 차감 후 상태 복원"""
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # admin만 반품 취소 가능
+    if current_user.role.value != "admin":
+        raise HTTPException(status_code=403, detail="관리자만 반품 취소가 가능합니다.")
+
+    sale = db.query(Sale).filter(Sale.id == sale_id).first()
+    if not sale:
+        raise HTTPException(status_code=404, detail="Sale not found")
+
+    # 반품 상태가 아닌 경우
+    if sale.status != SaleStatus.returned:
+        raise HTTPException(status_code=400, detail="반품 상태인 판매건만 취소할 수 있습니다.")
+
+    # 재고 다시 차감
+    items = db.query(SaleItem).filter(SaleItem.sale_id == sale_id).all()
+    for item in items:
+        inventory = db.query(Inventory).filter(
+            Inventory.product_id == item.product_id,
+            Inventory.size == item.size
+        ).first()
+
+        if inventory:
+            if inventory.quantity < item.quantity:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"재고가 부족하여 반품 취소가 불가합니다. (상품: {item.product_name}, 사이즈: {item.size})"
+                )
+            logger.info(f"Deducting inventory for product {item.product_id}, size {item.size}: {inventory.quantity} - {item.quantity}")
+            inventory.quantity -= item.quantity
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"재고 정보가 없어 반품 취소가 불가합니다. (상품: {item.product_name}, 사이즈: {item.size})"
+            )
+
+    # 상태 복원 (회사 판매가가 있으면 completed, 없으면 pending)
+    if sale.total_company_amount and sale.total_company_amount > 0:
+        sale.status = SaleStatus.completed
+    else:
+        sale.status = SaleStatus.pending
+
+    db.commit()
+    db.refresh(sale)
+
+    logger.info(f"Sale {sale_id} return cancelled. Items deducted from inventory.")
+
+    return {"message": "반품 취소가 완료되었습니다. 재고가 다시 차감되었습니다."}
+
 
 @router.get("/{sale_id}/tax-invoice")
 def download_tax_invoice(

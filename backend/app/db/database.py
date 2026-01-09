@@ -7,7 +7,7 @@ from app.core.config import settings
 engine = create_engine(
     settings.DATABASE_URL,
     pool_pre_ping=True,
-    echo=settings.DEBUG
+    echo=settings.SQL_ECHO  # SQL_ECHO=true 환경변수로 활성화 가능
 )
 
 # 세션 팩토리 생성

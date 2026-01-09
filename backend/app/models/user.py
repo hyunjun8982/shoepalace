@@ -19,5 +19,5 @@ class User(BaseModel):
     is_active = Column(Boolean, default=True)
 
     # 관계 설정
-    purchases = relationship("Purchase", back_populates="buyer")
+    purchases = relationship("Purchase", back_populates="buyer", foreign_keys="[Purchase.buyer_id]")
     sales = relationship("Sale", back_populates="seller")

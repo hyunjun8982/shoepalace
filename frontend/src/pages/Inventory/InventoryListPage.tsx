@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './InventoryListPage.css';
 import {
   Card,
@@ -17,7 +17,13 @@ import {
   InputNumber,
   Tooltip,
   Popconfirm,
+  Upload,
+  Image,
+  Divider,
+  Spin,
 } from 'antd';
+import { QRCodeSVG } from 'qrcode.react';
+import type { UploadFile } from 'antd/es/upload/interface';
 import {
   SearchOutlined,
   EditOutlined,
@@ -33,6 +39,14 @@ import {
   ShopOutlined,
   TagsOutlined,
   DeleteOutlined,
+  ExclamationCircleOutlined,
+  CheckCircleOutlined,
+  UploadOutlined,
+  PictureOutlined,
+  QrcodeOutlined,
+  MobileOutlined,
+  SyncOutlined,
+  CameraOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { InventoryDetail, AdjustmentType, InventoryAdjustmentCreate } from '../../types/inventory';
@@ -55,12 +69,15 @@ interface GroupedInventory {
   warehouse_image_url?: string;
   sizes: Array<{
     size: string;
-    quantity: number;
+    quantity: number;  // 정상 재고
+    defect_quantity: number;  // 불량 재고
     inventory_id: string;
     location?: string;
     warehouse_name?: string;
     warehouse_location?: string;
     warehouse_image_url?: string;
+    defect_reason?: string;
+    defect_image_url?: string;
   }>;
 }
 
@@ -95,6 +112,19 @@ const InventoryListPage: React.FC = () => {
   const [stockAlertType, setStockAlertType] = useState<'low' | 'out'>('low');
   const [detailEditMode, setDetailEditMode] = useState(false);
   const [detailForm] = Form.useForm();
+  const [defectModalVisible, setDefectModalVisible] = useState(false);
+  const [selectedDefectItem, setSelectedDefectItem] = useState<{ inventoryId: string; size: string; productName: string; defectQuantity: number; defectReason?: string; defectImageUrl?: string; sizesWithStock?: Array<{ size: string; quantity: number; defect_quantity: number; inventory_id: string; defect_reason?: string; defect_image_url?: string }> } | null>(null);
+  const [defectForm] = Form.useForm();
+  const [defectFileList, setDefectFileList] = useState<UploadFile[]>([]);
+  const [defectImageUrl, setDefectImageUrl] = useState<string | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+
+  // QR 코드 관련 state
+  const [qrCodeToken, setQrCodeToken] = useState<string | null>(null);
+  const [qrCodeLoading, setQrCodeLoading] = useState(false);
+  const [qrCodePolling, setQrCodePolling] = useState(false);
+  const [mobileUploadedUrl, setMobileUploadedUrl] = useState<string | null>(null);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const fetchBrands = async () => {
     try {
@@ -145,11 +175,14 @@ const InventoryListPage: React.FC = () => {
           existing.sizes.push({
             size: item.size,
             quantity: item.quantity,
+            defect_quantity: item.defect_quantity || 0,
             inventory_id: item.id,
             location: item.location,
             warehouse_name: item.warehouse_name,
             warehouse_location: item.warehouse_location,
-            warehouse_image_url: item.warehouse_image_url
+            warehouse_image_url: item.warehouse_image_url,
+            defect_reason: item.defect_reason,
+            defect_image_url: item.defect_image_url
           });
           // warehouse_name이 있으면 업데이트 (null이 아닌 값 우선)
           if (item.warehouse_name && !existing.warehouse_name) {
@@ -170,11 +203,14 @@ const InventoryListPage: React.FC = () => {
             sizes: [{
               size: item.size,
               quantity: item.quantity,
+              defect_quantity: item.defect_quantity || 0,
               inventory_id: item.id,
               location: item.location,
               warehouse_name: item.warehouse_name,
               warehouse_location: item.warehouse_location,
-              warehouse_image_url: item.warehouse_image_url
+              warehouse_image_url: item.warehouse_image_url,
+              defect_reason: item.defect_reason,
+              defect_image_url: item.defect_image_url
             }]
           });
         }
@@ -268,6 +304,184 @@ const InventoryListPage: React.FC = () => {
     }
   };
 
+  const handleDefectMark = (inventoryId: string, size: string, productName: string, defectQuantity: number, defectReason?: string, defectImageUrl?: string, sizesWithStock?: Array<{ size: string; quantity: number; defect_quantity: number; inventory_id: string; defect_reason?: string; defect_image_url?: string }>) => {
+    // 사이즈 정렬하여 최소 사이즈를 초기값으로 설정
+    const sortedSizes = [...(sizesWithStock || [])].sort((a, b) => {
+      const aNum = parseFloat(a.size);
+      const bNum = parseFloat(b.size);
+      if (!isNaN(aNum) && !isNaN(bNum)) {
+        return aNum - bNum;
+      }
+      return (a.size || '').localeCompare(b.size || '');
+    });
+    const firstSize = sortedSizes[0];
+    const initialSize = firstSize?.size || size;
+    const initialInventoryId = firstSize?.inventory_id || inventoryId;
+    const initialDefectQuantity = firstSize?.defect_quantity || defectQuantity;
+    const initialDefectReason = firstSize?.defect_reason || defectReason;
+    const initialDefectImageUrl = firstSize?.defect_image_url || defectImageUrl;
+
+    setSelectedDefectItem({ inventoryId: initialInventoryId, size: initialSize, productName, defectQuantity: initialDefectQuantity, defectReason: initialDefectReason, defectImageUrl: initialDefectImageUrl, sizesWithStock });
+    defectForm.resetFields();
+    defectForm.setFieldsValue({ selected_size: initialSize });
+    setDefectFileList([]);
+    setDefectImageUrl(null);
+    setQrCodeToken(null);
+    setMobileUploadedUrl(null);
+    setDefectModalVisible(true);
+  };
+
+  // QR 코드 생성
+  const handleGenerateQrCode = async () => {
+    if (!selectedDefectItem) return;
+
+    try {
+      setQrCodeLoading(true);
+      const selectedSize = defectForm.getFieldValue('selected_size') || selectedDefectItem.size;
+      const sizeInfo = selectedDefectItem.sizesWithStock?.find(s => s.size === selectedSize);
+      const inventoryId = sizeInfo?.inventory_id || selectedDefectItem.inventoryId;
+
+      const response = await inventoryService.generateUploadToken(inventoryId);
+      setQrCodeToken(response.token);
+      setMobileUploadedUrl(null);
+
+      // 폴링 시작
+      startPolling(response.token);
+    } catch (error) {
+      message.error('QR 코드 생성에 실패했습니다.');
+    } finally {
+      setQrCodeLoading(false);
+    }
+  };
+
+  // 업로드 상태 폴링
+  const startPolling = useCallback((token: string) => {
+    setQrCodePolling(true);
+
+    // 기존 폴링 종료
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+    }
+
+    pollingIntervalRef.current = setInterval(async () => {
+      try {
+        const status = await inventoryService.checkUploadStatus(token);
+        if (status.uploaded && status.image_url) {
+          setMobileUploadedUrl(status.image_url);
+          setQrCodePolling(false);
+          if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current);
+            pollingIntervalRef.current = null;
+          }
+          message.success('모바일에서 사진이 업로드되었습니다!');
+        }
+        if (!status.valid) {
+          // 토큰 만료
+          setQrCodeToken(null);
+          setQrCodePolling(false);
+          if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current);
+            pollingIntervalRef.current = null;
+          }
+        }
+      } catch (error) {
+        console.error('Polling error:', error);
+      }
+    }, 2000); // 2초마다 확인
+  }, [message]);
+
+  // 폴링 정리 (모달 닫을 때)
+  const cleanupPolling = useCallback(() => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    setQrCodePolling(false);
+  }, []);
+
+  // 컴포넌트 언마운트 시 폴링 정리
+  useEffect(() => {
+    return () => {
+      cleanupPolling();
+    };
+  }, [cleanupPolling]);
+
+  // QR 코드 URL 생성
+  const getQrCodeUrl = () => {
+    if (!qrCodeToken) return '';
+    const baseUrl = window.location.origin;
+    return `${baseUrl}/mobile/photo/${qrCodeToken}`;
+  };
+
+  const handleDefectImageUpload = async (file: File): Promise<string | null> => {
+    if (!selectedDefectItem) return null;
+
+    try {
+      setUploadingImage(true);
+      const result = await inventoryService.uploadDefectImage(selectedDefectItem.inventoryId, file);
+      return result.url;
+    } catch (error) {
+      message.error('이미지 업로드에 실패했습니다.');
+      return null;
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const handleDefectSubmit = async (values: any) => {
+    try {
+      if (!selectedDefectItem) return;
+
+      // 선택된 사이즈에 해당하는 inventory_id 찾기
+      const selectedSize = values.selected_size || selectedDefectItem.size;
+      const sizeInfo = selectedDefectItem.sizesWithStock?.find(s => s.size === selectedSize);
+      const inventoryId = sizeInfo?.inventory_id || selectedDefectItem.inventoryId;
+      const hasDefects = (sizeInfo?.defect_quantity || 0) > 0;
+
+      // action 결정: 불량이 있으면 해제, 없으면 등록
+      const action = values.action || (hasDefects ? 'remove' : 'add');
+
+      // 이미지 업로드 (등록 시에만)
+      let imageUrl = defectImageUrl;
+
+      // 모바일에서 업로드된 이미지 우선 사용
+      if (mobileUploadedUrl) {
+        imageUrl = mobileUploadedUrl;
+      } else if (action === 'add' && defectFileList.length > 0 && defectFileList[0].originFileObj) {
+        setUploadingImage(true);
+        try {
+          const result = await inventoryService.uploadDefectImage(inventoryId, defectFileList[0].originFileObj);
+          imageUrl = result.url;
+        } catch (error) {
+          message.error('이미지 업로드에 실패했습니다.');
+          setUploadingImage(false);
+          return;
+        }
+        setUploadingImage(false);
+      }
+
+      await inventoryService.markDefective(
+        inventoryId,
+        action,
+        values.defect_reason,
+        imageUrl || undefined,
+        1  // 항상 1개씩 처리
+      );
+
+      message.success(action === 'remove' ? '불량 1개가 해제되었습니다.' : '불량 1개가 등록되었습니다.');
+      setDefectModalVisible(false);
+      setDefectFileList([]);
+      setDefectImageUrl(null);
+      setQrCodeToken(null);
+      setMobileUploadedUrl(null);
+      cleanupPolling();
+      fetchInventory();
+      fetchAllInventoryForStats();
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '불량 처리에 실패했습니다.');
+    }
+  };
+
   const getStockStatus = (available: number, minLevel: number) => {
     if (available <= 0) {
       return <Tag color="error">품절</Tag>;
@@ -297,13 +511,13 @@ const InventoryListPage: React.FC = () => {
       width: 100,
       render: (category: string) => {
         const categoryMap: Record<string, string> = {
-          'clothing': '👕 의류',
-          'shoes': '👟 신발',
-          'hats': '🧢 모자',
-          'socks': '🧦 양말',
-          'bags': '🎒 가방',
-          'accessories': '🛍️ 잡화',
-          'etc': '📦 기타'
+          'clothing': '의류',
+          'shoes': '신발',
+          'hats': '모자',
+          'socks': '양말',
+          'bags': '가방',
+          'accessories': '잡화',
+          'etc': '기타'
         };
         return categoryMap[category] || category || '-';
       },
@@ -414,124 +628,102 @@ const InventoryListPage: React.FC = () => {
       ),
     },
     {
-      title: '사이즈별 재고 수량',
-      key: 'inventory',
-      width: 500,
+      title: '수량',
+      key: 'total_quantity',
+      width: 80,
+      align: 'center' as 'center',
       render: (_, record) => {
-        // 카테고리별 고정 사이즈 정의
-        const fixedSizes = record.category === 'shoes'
-          ? ['220', '225', '230', '235', '240', '245', '250', '255', '260', '265', '270', '275', '280', '285', '290', '295', '300', '305', '310', '315']
-          : ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
+        const totalQty = record.sizes?.reduce((sum: number, s: any) => sum + (s.quantity || 0), 0) || 0;
 
-        // 사이즈별 수량 맵 생성
-        const sizeMap = new Map();
-        record.sizes?.forEach((sizeInfo: any) => {
-          sizeMap.set(sizeInfo.size, sizeInfo.quantity);
+        // 사이즈별 수량 정렬
+        const sortedSizes = [...(record.sizes || [])].sort((a: any, b: any) => {
+          const aNum = parseFloat(a.size);
+          const bNum = parseFloat(b.size);
+          if (!isNaN(aNum) && !isNaN(bNum)) {
+            return aNum - bNum;
+          }
+          return (a.size || '').localeCompare(b.size || '');
         });
 
-        // 신발은 10개씩 2행, 의류는 모두 1행
-        const firstRow = record.category === 'shoes' ? fixedSizes.slice(0, 10) : fixedSizes;
-        const secondRow = record.category === 'shoes' ? fixedSizes.slice(10) : [];
-
-        const renderRow = (sizes: string[]) => (
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '4px' }}>
-            <tbody>
-              <tr>
-                {sizes.map((size: string, index: number) => (
-                  <td key={`size-${index}`} style={{
-                    border: '1px solid #f0f0f0',
-                    padding: '2px 4px',
-                    textAlign: 'center',
-                    fontSize: '11px',
-                    backgroundColor: '#fafafa',
-                    fontWeight: 500,
-                    width: `${100 / sizes.length}%`
-                  }}>
-                    {size}
-                  </td>
-                ))}
-              </tr>
-              <tr>
-                {sizes.map((size: string, index: number) => {
-                  const qty = sizeMap.get(size) || 0;
-                  return (
-                    <td key={`qty-${index}`} style={{
-                      border: '1px solid #f0f0f0',
-                      padding: '2px 4px',
-                      textAlign: 'center',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      color: qty > 0 ? '#1890ff' : '#d9d9d9',
-                      width: `${100 / sizes.length}%`
-                    }}>
-                      {qty.toLocaleString()}개
-                    </td>
-                  );
-                })}
-              </tr>
-            </tbody>
-          </table>
+        const tooltipContent = (
+          <div style={{ minWidth: 140 }}>
+            {sortedSizes.filter((s: any) => s.quantity > 0 || s.defect_quantity > 0).map((s: any, idx: number, arr: any[]) => (
+              <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: idx < arr.length - 1 ? '1px solid rgba(255,255,255,0.2)' : 'none' }}>
+                <span>{s.size || 'FREE'}</span>
+                <span style={{ fontWeight: 600 }}>
+                  {s.defect_quantity > 0 && <span style={{ color: '#ff7875', marginRight: 4 }}>(불량 {s.defect_quantity}개)</span>}
+                  {s.quantity}개
+                </span>
+              </div>
+            ))}
+          </div>
         );
 
         return (
-          <div>
-            {renderRow(firstRow)}
-            {secondRow.length > 0 && renderRow(secondRow)}
-          </div>
+          <Tooltip title={tooltipContent} placement="left">
+            <span style={{ cursor: 'pointer', fontSize: 14, fontWeight: 600, color: '#0d1b2a' }}>
+              {totalQty.toLocaleString()}개
+            </span>
+          </Tooltip>
         );
       },
     },
     {
-      title: '창고',
-      key: 'warehouse',
-      width: 130,
-      render: (_, record) => {
-        const warehouseName = record.warehouse_name || record.sizes?.[0]?.warehouse_name;
-        const warehouseLocation = record.warehouse_location || record.sizes?.[0]?.warehouse_location;
-        const warehouseImageUrl = record.warehouse_image_url || record.sizes?.[0]?.warehouse_image_url;
-
-        if (!warehouseName) {
-          return '-';
-        }
-
-        const imageUrl = warehouseImageUrl ? getFileUrl(warehouseImageUrl) : null;
-
-        return (
-          <div style={{ textAlign: 'center', padding: '2px' }}>
-            <div style={{ marginBottom: '4px', fontSize: '12px', lineHeight: '1.3', fontWeight: 'bold' }}>
-              [{warehouseName}] {warehouseLocation || ''}
-            </div>
-            {imageUrl && (
-              <img
-                src={imageUrl}
-                alt={warehouseName}
-                style={{
-                  width: '100%',
-                  height: '70px',
-                  objectFit: 'contain',
-                  borderRadius: '4px'
-                }}
-              />
-            )}
-          </div>
-        );
-      },
-    },
-    {
-      title: '이력',
+      title: '작업',
       key: 'action',
-      width: 100,
+      width: 180,
       fixed: 'right' as 'right',
-      render: (_, record) => (
-        <Button
-          type="link"
-          size="small"
-          icon={<SearchOutlined />}
-          onClick={() => handleViewDetail(record)}
-        >
-          이력
-        </Button>
-      ),
+      align: 'center' as 'center',
+      render: (_, record) => {
+        // 재고가 있거나 불량이 있는 사이즈들 필터링
+        const sizesWithStock = record.sizes?.filter((s: any) => s.quantity > 0 || s.defect_quantity > 0) || [];
+
+        return (
+          <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
+            <Button
+              size="small"
+              style={{
+                backgroundColor: '#0d1117',
+                borderColor: '#0d1117',
+                color: '#fff',
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (sizesWithStock.length === 0) {
+                  return;
+                }
+                const firstSize = sizesWithStock[0];
+                handleDefectMark(
+                  firstSize.inventory_id,
+                  firstSize.size,
+                  record.product_name,
+                  firstSize.defect_quantity || 0,
+                  firstSize.defect_reason,
+                  firstSize.defect_image_url,
+                  sizesWithStock
+                );
+              }}
+              disabled={sizesWithStock.length === 0}
+            >
+              불량 등록
+            </Button>
+            <Button
+              size="small"
+              style={{
+                backgroundColor: '#161b22',
+                borderColor: '#161b22',
+                color: '#fff',
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleViewDetail(record);
+              }}
+            >
+              상세 보기
+            </Button>
+          </div>
+        );
+      },
     },
 
   ];
@@ -591,27 +783,27 @@ const InventoryListPage: React.FC = () => {
   };
 
   const categoryStats = [
-    { name: 'clothing', nameKr: '의류', count: getCategoryInventory('clothing'), icon: '👕' },
-    { name: 'shoes', nameKr: '신발', count: getCategoryInventory('shoes'), icon: '👟' },
-    { name: 'hats', nameKr: '모자', count: getCategoryInventory('hats'), icon: '🧢' },
-    { name: 'socks', nameKr: '양말', count: getCategoryInventory('socks'), icon: '🧦' },
-    { name: 'bags', nameKr: '가방', count: getCategoryInventory('bags'), icon: '🎒' },
-    { name: 'accessories', nameKr: '잡화', count: getCategoryInventory('accessories'), icon: '🛍️' },
-    { name: 'etc', nameKr: '기타', count: getCategoryInventory('etc'), icon: '📦' },
+    { name: 'clothing', nameKr: '의류', count: getCategoryInventory('clothing') },
+    { name: 'shoes', nameKr: '신발', count: getCategoryInventory('shoes') },
+    { name: 'hats', nameKr: '모자', count: getCategoryInventory('hats') },
+    { name: 'socks', nameKr: '양말', count: getCategoryInventory('socks') },
+    { name: 'bags', nameKr: '가방', count: getCategoryInventory('bags') },
+    { name: 'accessories', nameKr: '잡화', count: getCategoryInventory('accessories') },
+    { name: 'etc', nameKr: '기타', count: getCategoryInventory('etc') },
   ];
 
-  // 통계 카드 스타일 (상품 관리 페이지와 동일)
+  // 통계 카드 스타일
   const cardStyle = {
     borderRadius: '8px',
     boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-    border: '1px solid #e8f4fd',
+    border: '1px solid #e8e8e8',
     height: '100%'
   };
 
   const smallCardStyle = {
     borderRadius: '8px',
     boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-    border: '1px solid #e8f4fd',
+    border: '1px solid #e8e8e8',
     padding: '10px 14px',
     height: '48px',
     display: 'flex',
@@ -628,7 +820,7 @@ const InventoryListPage: React.FC = () => {
           width: '12.5%',
           minWidth: '120px',
           height: '104px',
-          backgroundColor: '#f0f8ff',
+          backgroundColor: '#ffffff',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center'
@@ -640,8 +832,8 @@ const InventoryListPage: React.FC = () => {
             justifyContent: 'center',
             gap: '4px'
           }}>
-            <div style={{ fontSize: 14, color: '#1890ff', fontWeight: 500, lineHeight: 1 }}>전체 재고</div>
-            <div style={{ fontSize: 24, fontWeight: 'bold', color: '#0050b3', lineHeight: 1 }}>{totalQuantity.toLocaleString()}개</div>
+            <div style={{ fontSize: 14, color: '#0d1b2a', fontWeight: 500, lineHeight: 1 }}>전체 재고</div>
+            <div style={{ fontSize: 24, fontWeight: 'bold', color: '#0d1b2a', lineHeight: 1 }}>{totalQuantity.toLocaleString()}개</div>
           </div>
         </Card>
 
@@ -654,7 +846,7 @@ const InventoryListPage: React.FC = () => {
                 ...smallCardStyle,
                 flex: 1,
                 width: 0,
-                backgroundColor: '#f0f8ff'
+                backgroundColor: '#ffffff'
               }}>
                 <div style={{
                   width: '100%',
@@ -688,7 +880,7 @@ const InventoryListPage: React.FC = () => {
                     <span style={{
                       fontSize: 13,
                       fontWeight: 500,
-                      color: '#1890ff',
+                      color: '#0d1b2a',
                       whiteSpace: 'nowrap',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis'
@@ -697,7 +889,7 @@ const InventoryListPage: React.FC = () => {
                   <span style={{
                     fontSize: 15,
                     fontWeight: 'bold',
-                    color: '#0050b3',
+                    color: '#0d1b2a',
                     whiteSpace: 'nowrap',
                     flexShrink: 0
                   }}>{brand.count}개</span>
@@ -713,7 +905,7 @@ const InventoryListPage: React.FC = () => {
                 ...smallCardStyle,
                 flex: 1,
                 width: 0,
-                backgroundColor: '#f0f8ff'
+                backgroundColor: '#ffffff'
               }}>
                 <div style={{
                   width: '100%',
@@ -722,31 +914,18 @@ const InventoryListPage: React.FC = () => {
                   justifyContent: 'space-between',
                   gap: '8px'
                 }}>
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    minWidth: 0,
-                    flex: 1
-                  }}>
-                    <span style={{
-                      fontSize: 20,
-                      opacity: 0.7,
-                      flexShrink: 0
-                    }}>{category.icon}</span>
-                    <span style={{
-                      fontSize: 13,
-                      fontWeight: 500,
-                      color: '#1890ff',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis'
-                    }}>{category.nameKr}</span>
-                  </div>
+                  <span style={{
+                    fontSize: 13,
+                    fontWeight: 500,
+                    color: '#0d1b2a',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis'
+                  }}>{category.nameKr}</span>
                   <span style={{
                     fontSize: 15,
                     fontWeight: 'bold',
-                    color: '#0050b3'
+                    color: '#0d1b2a'
                   }}>{category.count}개</span>
                 </div>
               </Card>
@@ -1112,21 +1291,9 @@ const InventoryListPage: React.FC = () => {
                           <strong style={{ color: '#595959' }}>카테고리:</strong>{' '}
                           <span style={{ fontSize: 15 }}>{selectedInventoryDetail.category}</span>
                         </div>
-                        <div style={{ marginBottom: 12 }}>
+                        <div>
                           <strong style={{ color: '#595959' }}>상품코드:</strong>{' '}
                           <Tag color="geekblue" style={{ fontSize: 13 }}>{selectedInventoryDetail.sku_code}</Tag>
-                        </div>
-                        <div>
-                          <strong style={{ color: '#595959' }}>창고:</strong>{' '}
-                          <span style={{ fontSize: 15 }}>
-                            {(() => {
-                              const warehouses = selectedInventoryDetail.size_inventories
-                                ?.filter((item: any) => item.warehouse_name)
-                                .map((item: any) => `[${item.warehouse_name}] ${item.warehouse_location || ''}`) || [];
-                              const uniqueWarehouses = Array.from(new Set(warehouses));
-                              return uniqueWarehouses.length > 0 ? uniqueWarehouses.join(', ') : '-';
-                            })()}
-                          </span>
                         </div>
                       </Col>
                     </Row>
@@ -1345,27 +1512,27 @@ const InventoryListPage: React.FC = () => {
                         title: '판매일',
                         dataIndex: 'sale_date',
                         key: 'sale_date',
-                        width: 100,
+                        width: 90,
                         render: (date: string) => new Date(date).toLocaleDateString('ko-KR')
                       },
                       {
                         title: '판매번호',
                         dataIndex: 'sale_number',
                         key: 'sale_number',
-                        width: 130
+                        width: 120
                       },
                       {
                         title: '사이즈',
                         dataIndex: 'size',
                         key: 'size',
-                        width: 70,
+                        width: 60,
                         align: 'center' as 'center'
                       },
                       {
                         title: '수량',
                         dataIndex: 'quantity',
                         key: 'quantity',
-                        width: 70,
+                        width: 60,
                         align: 'center' as 'center',
                         render: (qty: number) => <Tag color="orange">{qty}개</Tag>
                       },
@@ -1373,9 +1540,26 @@ const InventoryListPage: React.FC = () => {
                         title: '판매가',
                         dataIndex: 'sale_price',
                         key: 'sale_price',
-                        width: 110,
+                        width: 100,
                         align: 'right' as 'right',
                         render: (price: number) => '₩' + price.toLocaleString()
+                      },
+                      {
+                        title: '상태',
+                        dataIndex: 'status',
+                        key: 'status',
+                        width: 70,
+                        align: 'center' as 'center',
+                        render: (status: string) => {
+                          const statusConfig: Record<string, { color: string; text: string }> = {
+                            pending: { color: 'orange', text: '대기' },
+                            completed: { color: 'green', text: '완료' },
+                            cancelled: { color: 'red', text: '취소' },
+                            returned: { color: 'purple', text: '반품' },
+                          };
+                          const config = statusConfig[status] || { color: 'default', text: status || '-' };
+                          return <Tag color={config.color}>{config.text}</Tag>;
+                        }
                       }
                     ]}
                   />
@@ -1402,7 +1586,7 @@ const InventoryListPage: React.FC = () => {
       >
         <Table
           dataSource={
-            stockAlertType === 'low' 
+            stockAlertType === 'low'
               ? allInventory.filter(item => item.is_low_stock && item.quantity > 0)
               : allInventory.filter(item => (item.available_quantity || 0) <= 0)
           }
@@ -1447,6 +1631,308 @@ const InventoryListPage: React.FC = () => {
             }
           ]}
         />
+      </Modal>
+
+      {/* 불량 등록 모달 */}
+      <Modal
+        title={<span><ExclamationCircleOutlined style={{ color: '#ff4d4f', marginRight: 8 }} />불량 관리</span>}
+        open={defectModalVisible}
+        onCancel={() => {
+          setDefectModalVisible(false);
+          setDefectFileList([]);
+          setDefectImageUrl(null);
+          setQrCodeToken(null);
+          setMobileUploadedUrl(null);
+          cleanupPolling();
+        }}
+        footer={null}
+        width={600}
+      >
+        {selectedDefectItem && (
+          <div>
+            <div style={{ marginBottom: 16, padding: 12, backgroundColor: '#f0f2f5', borderRadius: 8 }}>
+              <Row gutter={12} align="middle">
+                {/* 상품 이미지 */}
+                <Col>
+                  {(() => {
+                    const sizeInfo = selectedDefectItem.sizesWithStock?.[0];
+                    const brand = inventory.find(inv => inv.product_name === selectedDefectItem.productName)?.brand;
+                    const skuCode = inventory.find(inv => inv.product_name === selectedDefectItem.productName)?.sku_code;
+                    const imagePath = brand && skuCode
+                      ? getFileUrl(`/uploads/products/${brand}/${skuCode}.png`)
+                      : null;
+                    return imagePath ? (
+                      <img
+                        src={imagePath}
+                        alt={selectedDefectItem.productName}
+                        style={{ width: 60, height: 60, objectFit: 'cover', borderRadius: 4, border: '1px solid #d9d9d9' }}
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                      />
+                    ) : (
+                      <div style={{ width: 60, height: 60, backgroundColor: '#fafafa', borderRadius: 4, border: '1px solid #d9d9d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ccc', fontSize: 10 }}>
+                        No Image
+                      </div>
+                    );
+                  })()}
+                </Col>
+                {/* 상품 정보 */}
+                <Col flex={1}>
+                  <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 15 }}>{selectedDefectItem.productName}</div>
+                  {(() => {
+                    const invItem = inventory.find(inv => inv.product_name === selectedDefectItem.productName);
+                    return invItem?.sku_code ? (
+                      <Tag color="geekblue" style={{ fontSize: 12 }}>{invItem.sku_code}</Tag>
+                    ) : null;
+                  })()}
+                </Col>
+              </Row>
+            </div>
+
+            <Form
+              form={defectForm}
+              layout="vertical"
+              onFinish={handleDefectSubmit}
+            >
+              {/* 사이즈 선택 드롭다운 */}
+              <Form.Item
+                label="사이즈 선택"
+                name="selected_size"
+                rules={[{ required: true, message: '사이즈를 선택해주세요.' }]}
+              >
+                <Select
+                  placeholder="사이즈를 선택하세요"
+                  onChange={(value) => {
+                    // 선택된 사이즈의 정보 업데이트
+                    const sizeInfo = selectedDefectItem.sizesWithStock?.find(s => s.size === value);
+                    if (sizeInfo) {
+                      setSelectedDefectItem({
+                        ...selectedDefectItem,
+                        size: sizeInfo.size,
+                        inventoryId: sizeInfo.inventory_id,
+                        defectQuantity: sizeInfo.defect_quantity || 0,
+                        defectReason: sizeInfo.defect_reason,
+                        defectImageUrl: sizeInfo.defect_image_url
+                      });
+                    }
+                  }}
+                >
+                  {/* 사이즈 정렬: 숫자면 오름차순, 문자면 알파벳순 */}
+                  {[...(selectedDefectItem.sizesWithStock || [])].sort((a, b) => {
+                    const aNum = parseFloat(a.size);
+                    const bNum = parseFloat(b.size);
+                    if (!isNaN(aNum) && !isNaN(bNum)) {
+                      return aNum - bNum;
+                    }
+                    return (a.size || '').localeCompare(b.size || '');
+                  }).map(sizeInfo => (
+                    <Option key={sizeInfo.size} value={sizeInfo.size}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>
+                          {sizeInfo.size} (정상 {sizeInfo.quantity}개)
+                        </span>
+                        {sizeInfo.defect_quantity > 0 && (
+                          <Tag color="red" style={{ marginLeft: 8 }}>불량 {sizeInfo.defect_quantity}개</Tag>
+                        )}
+                      </div>
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
+
+              {/* 선택된 사이즈 정보 표시 및 액션 선택 */}
+              <Form.Item noStyle shouldUpdate={(prev, curr) => prev.selected_size !== curr.selected_size}>
+                {() => {
+                  const selectedSize = defectForm.getFieldValue('selected_size') || selectedDefectItem.size;
+                  const sizeInfo = selectedDefectItem.sizesWithStock?.find(s => s.size === selectedSize);
+                  const defectQty = sizeInfo?.defect_quantity || 0;
+                  const normalQty = sizeInfo?.quantity || 0;
+
+                  return (
+                    <>
+                      {/* 현재 상태 표시 */}
+                      <div style={{ marginBottom: 16, padding: 12, backgroundColor: '#fafafa', borderRadius: 6 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <span>정상 재고:</span>
+                          <Tag color="blue">{normalQty}개</Tag>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span>불량 재고:</span>
+                          <Tag color="red">{defectQty}개</Tag>
+                        </div>
+                        {defectQty > 0 && sizeInfo?.defect_reason && (
+                          <div style={{ marginTop: 8, padding: 8, backgroundColor: '#fff2f0', borderRadius: 4 }}>
+                            <div style={{ fontSize: 11, color: '#999' }}>불량 사유</div>
+                            <div style={{ color: '#ff4d4f', fontSize: 13 }}>{sizeInfo.defect_reason}</div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 불량 등록 (정상 재고가 있을 때만) */}
+                      {normalQty > 0 && (
+                        <>
+                          <Form.Item
+                            label="불량 사유 (불량 등록 시)"
+                            name="defect_reason"
+                          >
+                            <TextArea
+                              rows={2}
+                              placeholder="불량 사유를 입력하세요 (예: 오염, 파손, 스크래치 등)"
+                            />
+                          </Form.Item>
+
+                          <Form.Item label="불량 사진">
+                            <Row gutter={16}>
+                              {/* PC에서 직접 업로드 */}
+                              <Col span={12}>
+                                <div style={{ textAlign: 'center', marginBottom: 8 }}>
+                                  <Tag style={{ backgroundColor: '#0d1117', borderColor: '#0d1117', color: '#fff' }}><UploadOutlined /> PC에서 업로드</Tag>
+                                </div>
+                                <div style={{
+                                  border: '1px dashed #d9d9d9',
+                                  borderRadius: 8,
+                                  padding: 12,
+                                  textAlign: 'center',
+                                  minHeight: 104,
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  justifyContent: 'center',
+                                  alignItems: 'center'
+                                }}>
+                                  <Upload
+                                    listType="picture"
+                                    fileList={defectFileList}
+                                    onChange={({ fileList }) => setDefectFileList(fileList)}
+                                    beforeUpload={() => false}
+                                    maxCount={1}
+                                    accept="image/*"
+                                    showUploadList={{
+                                      showPreviewIcon: true,
+                                      showRemoveIcon: true,
+                                    }}
+                                  >
+                                    {defectFileList.length === 0 && (
+                                      <div style={{ cursor: 'pointer' }}>
+                                        <PictureOutlined style={{ fontSize: 24, color: '#999' }} />
+                                        <div style={{ marginTop: 8, fontSize: 12, color: '#666' }}>파일 선택</div>
+                                      </div>
+                                    )}
+                                  </Upload>
+                                </div>
+                              </Col>
+
+                              {/* 모바일 QR 코드 업로드 */}
+                              <Col span={12}>
+                                <div style={{ textAlign: 'center', marginBottom: 8 }}>
+                                  <Tag style={{ backgroundColor: '#0d1117', borderColor: '#0d1117', color: '#fff' }}><MobileOutlined /> 모바일로 촬영</Tag>
+                                </div>
+                                <div style={{
+                                  border: '1px dashed #d9d9d9',
+                                  borderRadius: 8,
+                                  padding: 12,
+                                  textAlign: 'center',
+                                  minHeight: 104,
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  justifyContent: 'center',
+                                  alignItems: 'center'
+                                }}>
+                                  {/* QR 코드 생성 전 */}
+                                  {!qrCodeToken && !mobileUploadedUrl && (
+                                    <Button
+                                      type="dashed"
+                                      icon={<QrcodeOutlined />}
+                                      onClick={handleGenerateQrCode}
+                                      loading={qrCodeLoading}
+                                    >
+                                      QR 코드 생성
+                                    </Button>
+                                  )}
+
+                                  {/* QR 코드 표시 중 (아직 업로드 안됨) */}
+                                  {qrCodeToken && !mobileUploadedUrl && (
+                                    <div style={{ textAlign: 'center' }}>
+                                      <QRCodeSVG
+                                        value={getQrCodeUrl()}
+                                        size={100}
+                                        level="M"
+                                        includeMargin={true}
+                                      />
+                                      <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+                                        모바일로 스캔하세요
+                                      </div>
+                                      {qrCodePolling && (
+                                        <div style={{ marginTop: 4 }}>
+                                          <SyncOutlined spin style={{ color: '#1890ff', marginRight: 4 }} />
+                                          <span style={{ fontSize: 11, color: '#1890ff' }}>대기 중...</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {/* 모바일에서 업로드 완료 */}
+                                  {mobileUploadedUrl && (
+                                    <div style={{ textAlign: 'center' }}>
+                                      <img
+                                        src={mobileUploadedUrl.startsWith('/') ? `${window.location.origin.replace(':3000', ':8000')}${mobileUploadedUrl}` : mobileUploadedUrl}
+                                        alt="uploaded"
+                                        style={{ maxWidth: 100, maxHeight: 80, borderRadius: 4 }}
+                                      />
+                                      <div style={{ marginTop: 4 }}>
+                                        <Tag color="success"><CheckCircleOutlined /> 업로드 완료</Tag>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </Col>
+                            </Row>
+                          </Form.Item>
+                        </>
+                      )}
+                    </>
+                  );
+                }}
+              </Form.Item>
+
+              <Form.Item style={{ marginBottom: 0, textAlign: 'right' }} shouldUpdate>
+                {() => {
+                  const selectedSize = defectForm.getFieldValue('selected_size') || selectedDefectItem.size;
+                  const sizeInfo = selectedDefectItem.sizesWithStock?.find(s => s.size === selectedSize);
+                  const defectQty = sizeInfo?.defect_quantity || 0;
+                  const normalQty = sizeInfo?.quantity || 0;
+
+                  return (
+                    <Space>
+                      <Button onClick={() => {
+                        setDefectModalVisible(false);
+                        setDefectFileList([]);
+                        setDefectImageUrl(null);
+                      }}>
+                        취소
+                      </Button>
+                      {/* 불량 등록 버튼 (정상 재고가 있을 때만) */}
+                      {normalQty > 0 && (
+                        <Button
+                          type="primary"
+                          loading={uploadingImage}
+                          onClick={() => {
+                            defectForm.setFieldsValue({ action: 'add' });
+                            defectForm.submit();
+                          }}
+                          style={{ backgroundColor: '#0d1117', borderColor: '#0d1117' }}
+                        >
+                          불량 1개 등록
+                        </Button>
+                      )}
+                    </Space>
+                  );
+                }}
+              </Form.Item>
+              <Form.Item name="action" hidden>
+                <input type="hidden" />
+              </Form.Item>
+            </Form>
+          </div>
+        )}
       </Modal>
 
 

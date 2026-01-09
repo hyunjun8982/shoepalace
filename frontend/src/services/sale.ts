@@ -67,5 +67,17 @@ export const saleService = {
     const response = await api.post(`/sales/${saleId}/upload-tax-invoice`, formData);
     console.log('Upload response:', response);
     return response.data;
+  },
+
+  // 반품 처리
+  async processReturn(saleId: string): Promise<{ message: string }> {
+    const response = await api.post(`/sales/${saleId}/return`);
+    return response.data;
+  },
+
+  // 반품 취소
+  async cancelReturn(saleId: string): Promise<{ message: string }> {
+    const response = await api.post(`/sales/${saleId}/cancel-return`);
+    return response.data;
   }
 };

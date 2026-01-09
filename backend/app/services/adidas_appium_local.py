@@ -17,18 +17,22 @@ logger = logging.getLogger(__name__)
 class AdidasAppiumAutomation:
     """Adidas 앱 자동화 클래스 (로컬 Appium 서버)"""
 
-    # Appium 서버 URL
+    # Appium 서버 URL (Appium 3.x는 /wd/hub 경로 필요)
     # Docker 컨테이너에서 호스트 머신의 Appium에 접근
-    APPIUM_SERVER = "http://host.docker.internal:4723"
+    APPIUM_SERVER = "http://host.docker.internal:4723/wd/hub"
 
     # 로컬 테스트 시 (컨테이너 외부)
-    # APPIUM_SERVER = "http://localhost:4723"
+    # APPIUM_SERVER = "http://localhost:4723/wd/hub"
 
-    def __init__(self, device_name: str = "emulator-5554"):
+    def __init__(self, device_name: str = None):
         """
         Args:
-            device_name: ADB 디바이스 이름 (adb devices로 확인)
+            device_name: ADB 디바이스 이름/UDID (adb devices로 확인).
+                        None이면 자동 감지.
         """
+        from app.services.appium_utils import get_connected_device_udid
+        if device_name is None:
+            device_name = get_connected_device_udid()
         self.device_name = device_name
         self.driver: Optional[webdriver.Remote] = None
 
@@ -53,6 +57,7 @@ class AdidasAppiumAutomation:
             options = UiAutomator2Options()
             options.platform_name = 'Android'
             options.automation_name = 'UiAutomator2'
+            options.udid = self.device_name
             options.device_name = self.device_name
 
             # 앱 패키지/액티비티 설정 (선택사항)
@@ -64,6 +69,11 @@ class AdidasAppiumAutomation:
             # 추가 옵션
             options.no_reset = True  # 앱 데이터 유지
             options.new_command_timeout = 300  # 5분 타임아웃
+
+            # 연결 속도 최적화 - 불필요한 앱 설치 건너뛰기
+            options.set_capability('skipServerInstallation', True)
+            options.set_capability('skipDeviceInitialization', True)
+            options.set_capability('adbExecTimeout', 30000)
 
             logger.info(f"Appium 서버 연결 중: {self.APPIUM_SERVER}")
             logger.info(f"디바이스: {self.device_name}")
@@ -296,7 +306,7 @@ class AdidasAppiumAutomation:
 def test_local_appium():
     """로컬 Appium 테스트"""
     try:
-        with AdidasAppiumAutomation(device_name="emulator-5554") as automation:
+        with AdidasAppiumAutomation() as automation:  # 환경변수 DEVICE_UDID 또는 기본값 사용
             # 세션 시작
             automation.start(
                 app_package="com.adidas.app",  # 실제 패키지명으로 변경

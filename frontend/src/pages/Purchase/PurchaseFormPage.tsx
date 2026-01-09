@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Form,
@@ -18,16 +18,19 @@ import {
   Row,
   Col,
   Modal,
+  Tag,
 } from 'antd';
-import { PlusOutlined, DeleteOutlined, UploadOutlined, MinusCircleOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { DeleteOutlined, UploadOutlined, CheckCircleOutlined, QrcodeOutlined, MobileOutlined, SyncOutlined } from '@ant-design/icons';
+import { QRCodeSVG } from 'qrcode.react';
 import type { ColumnsType } from 'antd/es/table';
 import { purchaseService } from '../../services/purchase';
 import { productService } from '../../services/product';
-import { warehouseService } from '../../services/warehouse';
 import { uploadService } from '../../services/upload';
+import { userService } from '../../services/user';
 import { PaymentType, PurchaseItem } from '../../types/purchase';
-import { Warehouse } from '../../types/warehouse';
 import { Product } from '../../types/product';
+import { User } from '../../types';
+import { useAuth } from '../../contexts/AuthContext';
 import dayjs from 'dayjs';
 import { getFileUrl } from '../../utils/urlUtils';
 
@@ -38,6 +41,7 @@ const PurchaseFormPage: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams();
   const { message } = App.useApp();
+  const { user: currentUser } = useAuth();
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<PurchaseItem[]>([]);
@@ -55,22 +59,33 @@ const PurchaseFormPage: React.FC = () => {
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [purchasePrice, setPurchasePrice] = useState<number>(0);
   const [sizeQuantityMap, setSizeQuantityMap] = useState<Record<string, number>>({});
-  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>("");
   const [confirmModalVisible, setConfirmModalVisible] = useState(false);
-  const [warehouseExpanded, setWarehouseExpanded] = useState(false);
+
+  // 사용자 목록 (구매자/입고확인자 선택용)
+  const [users, setUsers] = useState<User[]>([]);
+
+  // QR 코드 영수증 업로드 관련 상태
+  const [qrCodeToken, setQrCodeToken] = useState<string | null>(null);
+  const [qrCodeLoading, setQrCodeLoading] = useState(false);
+  const [qrCodePolling, setQrCodePolling] = useState(false);
+  const [mobileUploadedUrls, setMobileUploadedUrls] = useState<string[]>([]);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // 상품 목록 로드 및 거래번호 생성
   useEffect(() => {
     loadProducts();
-    loadWarehouses();
+    loadUsers();
     if (id) {
       loadPurchase(id);
     } else {
       // 신규 등록일 때 거래번호 자동 생성
       loadNextTransactionNo();
+      // 구매자 기본값을 현재 로그인한 사용자로 설정
+      if (currentUser?.id) {
+        form.setFieldsValue({ buyer_id: currentUser.id });
+      }
     }
-  }, [id]);
+  }, [id, currentUser]);
 
   const loadProducts = async () => {
     try {
@@ -82,13 +97,99 @@ const PurchaseFormPage: React.FC = () => {
       message.error('상품 목록 조회 실패');
     }
   };
-  const loadWarehouses = async () => {
+
+  const loadUsers = async () => {
     try {
-      const response = await warehouseService.getWarehouses({ limit: 1000, is_active: true });
-      setWarehouses(response.items || []);
+      const response = await userService.getUsers({ is_active: true });
+      setUsers(response);
     } catch (error) {
-      console.error("Failed to load warehouses:", error);
-      message.error("창고 목록 조회 실패");
+      console.error('Failed to load users:', error);
+    }
+  };
+
+  // QR 코드 폴링 정리
+  const cleanupPolling = useCallback(() => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    setQrCodePolling(false);
+  }, []);
+
+  // 컴포넌트 언마운트 시 폴링 정리
+  useEffect(() => {
+    return () => {
+      cleanupPolling();
+    };
+  }, [cleanupPolling]);
+
+  // QR 코드 URL 생성
+  const getQrCodeUrl = useCallback((token: string) => {
+    // 운영 환경에서는 현재 도메인 사용, 개발환경에서는 localhost
+    const baseUrl = window.location.origin;
+    return `${baseUrl}/mobile/receipt/${token}`;
+  }, []);
+
+  // QR 코드 생성
+  const handleGenerateQrCode = async () => {
+    setQrCodeLoading(true);
+    try {
+      const response = await purchaseService.generateReceiptUploadToken();
+      setQrCodeToken(response.token);
+      setMobileUploadedUrls([]);
+      startPolling(response.token);
+      message.success('QR 코드가 생성되었습니다. 모바일로 스캔해주세요.');
+    } catch (error: any) {
+      console.error('QR code generation failed:', error);
+      message.error('QR 코드 생성에 실패했습니다.');
+    } finally {
+      setQrCodeLoading(false);
+    }
+  };
+
+  // 폴링 시작
+  const startPolling = useCallback((token: string) => {
+    setQrCodePolling(true);
+
+    const poll = async () => {
+      try {
+        const status = await purchaseService.checkReceiptUploadStatus(token);
+        if (status.valid && status.uploaded_urls.length > 0) {
+          setMobileUploadedUrls(status.uploaded_urls);
+        }
+      } catch (error) {
+        console.error('Polling error:', error);
+      }
+    };
+
+    // 즉시 한 번 폴링
+    poll();
+
+    // 2초마다 폴링
+    pollingIntervalRef.current = setInterval(poll, 2000);
+
+    // 10분 후 자동 종료
+    setTimeout(() => {
+      cleanupPolling();
+      setQrCodeToken(null);
+    }, 10 * 60 * 1000);
+  }, [cleanupPolling]);
+
+  // QR 코드 닫기
+  const handleCloseQrCode = () => {
+    cleanupPolling();
+    setQrCodeToken(null);
+    // 업로드된 이미지가 있으면 fileList에 반영
+    if (mobileUploadedUrls.length > 0) {
+      const newFileList = mobileUploadedUrls.map((url, index) => ({
+        uid: `mobile-${index}`,
+        name: `영수증 ${index + 1}`,
+        status: 'done',
+        url: url,
+        thumbUrl: getFileUrl(url),
+      }));
+      setFileList(newFileList);
+      setReceiptUrl(mobileUploadedUrls[0]); // 첫 번째 URL을 대표로
     }
   };
 
@@ -111,17 +212,28 @@ const PurchaseFormPage: React.FC = () => {
         purchase_date: dayjs(purchase.purchase_date),
       });
 
-      // 영수증 URL이 있으면 fileList에 추가
-      if (purchase.receipt_url) {
+      // 영수증 URL이 있으면 fileList에 추가 (다중 영수증 지원)
+      if (purchase.receipt_urls && purchase.receipt_urls.length > 0) {
+        // 다중 영수증
+        setReceiptUrl(purchase.receipt_urls[0]);
+        const newFileList = purchase.receipt_urls.map((url: string, index: number) => ({
+          uid: `receipt-${index}`,
+          name: `영수증 ${index + 1}`,
+          status: 'done',
+          url: url,
+          thumbUrl: getFileUrl(url),
+        }));
+        setFileList(newFileList);
+      } else if (purchase.receipt_url) {
+        // 기존 단일 영수증 (하위 호환)
         setReceiptUrl(purchase.receipt_url);
-        // 미리보기를 위해 전체 URL 설정 (getFileUrl 사용)
         const fullUrl = getFileUrl(purchase.receipt_url);
         setFileList([{
           uid: '-1',
           name: '영수증',
           status: 'done',
           url: purchase.receipt_url,
-          thumbUrl: fullUrl,  // 썸네일 URL 추가
+          thumbUrl: fullUrl,
         }]);
       }
 
@@ -240,7 +352,7 @@ const PurchaseFormPage: React.FC = () => {
     return items.reduce((sum, item) => sum + item.purchase_price * item.quantity, 0);
   };
 
-  // 영수증 업로드 처리
+  // 영수증 업로드 처리 (다중 업로드 지원)
   const handleUpload = async (options: any) => {
     const { file, onSuccess, onError } = options;
 
@@ -249,19 +361,22 @@ const PurchaseFormPage: React.FC = () => {
       console.log('Starting upload:', file.name);
       const response = await uploadService.uploadReceipt(file);
       console.log('Upload response:', response);
-      setReceiptUrl(response.file_url);
 
       // 미리보기를 위한 전체 URL 생성 (getFileUrl 사용)
       const fullUrl = getFileUrl(response.file_url);
       console.log('Full URL:', fullUrl);
 
-      setFileList([{
-        uid: file.uid,
+      // 기존 목록에 추가 (다중 업로드)
+      const newFile = {
+        uid: file.uid || `upload-${Date.now()}`,
         name: file.name,
-        status: 'done',
+        status: 'done' as const,
         url: response.file_url,
-        thumbUrl: fullUrl, // 미리보기용 URL 추가
-      }]);
+        thumbUrl: fullUrl,
+      };
+
+      setFileList(prev => [...prev, newFile]);
+      setReceiptUrl(response.file_url); // 대표 URL
       onSuccess(response);
       message.success('영수증이 업로드되었습니다.');
     } catch (error: any) {
@@ -275,9 +390,21 @@ const PurchaseFormPage: React.FC = () => {
     }
   };
 
+  // 전체 삭제
   const handleRemove = () => {
     setReceiptUrl(null);
     setFileList([]);
+  };
+
+  // 개별 삭제
+  const handleRemoveFile = (index: number) => {
+    const newFileList = fileList.filter((_, i) => i !== index);
+    setFileList(newFileList);
+    if (newFileList.length > 0) {
+      setReceiptUrl(newFileList[0].url);
+    } else {
+      setReceiptUrl(null);
+    }
   };
 
   const handlePreview = async (file: any) => {
@@ -323,14 +450,20 @@ const PurchaseFormPage: React.FC = () => {
             processedSize = item.size[0];
           }
 
+          // 영수증 URL 목록
+          const receiptUrls = fileList.map(f => f.url).filter(Boolean);
+
           const data = {
             ...values,
             transaction_no: transactionNo,
             purchase_date: values.purchase_date.format('YYYY-MM-DD'),
-            receipt_url: receiptUrl,
+            receipt_url: receiptUrls[0] || receiptUrl,
+            receipt_urls: receiptUrls,
+            buyer_id: values.buyer_id || null,
+            receiver_id: values.receiver_id || null,
             items: [{
               product_id: item.product_id,
-              warehouse_id: values.warehouse_id || null,
+              warehouse_id: null,
               size: processedSize ? String(processedSize) : null,
               quantity: item.quantity || 1,
               purchase_price: item.purchase_price,
@@ -371,7 +504,7 @@ const PurchaseFormPage: React.FC = () => {
 
         return {
           product_id: item.product_id,
-          warehouse_id: values.warehouse_id || null,
+          warehouse_id: null,
           size: processedSize ? String(processedSize) : null,
           quantity: item.quantity || 1,
           purchase_price: item.purchase_price,
@@ -380,11 +513,17 @@ const PurchaseFormPage: React.FC = () => {
         };
       });
 
+      // 영수증 URL 목록 생성 (fileList에서 URL 추출)
+      const receiptUrls = fileList.map(file => file.url).filter(Boolean);
+
       const data = {
         ...values,
         transaction_no: values.transaction_no, // 이미 자동 생성된 값 사용
         purchase_date: values.purchase_date.format('YYYY-MM-DD'),
-        receipt_url: receiptUrl,
+        receipt_url: receiptUrls[0] || receiptUrl, // 하위 호환성
+        receipt_urls: receiptUrls, // 다중 영수증
+        buyer_id: values.buyer_id || null,
+        receiver_id: values.receiver_id || null,
         items: processedItems,
       };
 
@@ -512,10 +651,8 @@ const PurchaseFormPage: React.FC = () => {
           payment_type: PaymentType.CORP_CARD,
         }}
       >
-        <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
-          {/* 왼쪽: 모든 입력 정보 (70%) */}
-          <div style={{ flex: '0 0 70%' }}>
-            <Space direction="vertical" size="small" style={{ width: '100%' }}>
+        <div>
+          <Space direction="vertical" size="small" style={{ width: '100%' }}>
               {/* 첫째 줄: 거래번호, 구매일, 결제방식, 구매처 */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 16 }}>
                 <Form.Item
@@ -552,171 +689,190 @@ const PurchaseFormPage: React.FC = () => {
                 </Form.Item>
               </div>
 
-              {/* 둘째 줄: 입고 창고 + 메모 */}
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 2fr', gap: 16 }}>
-                <Form.Item name="warehouse_id" label="입고 창고" style={{ marginBottom: 0, minWidth: 0 }}>
-                  <div style={{ minWidth: 0, overflow: 'hidden' }}>
-                    {/* 선택된 창고 표시 또는 선택 버튼 */}
-                    {selectedWarehouseId && !warehouseExpanded ? (
-                      <div>
-                        {(() => {
-                          const selectedWarehouse = warehouses.find(w => w.id === selectedWarehouseId);
-                          if (!selectedWarehouse) return null;
+              {/* 둘째 줄: 구매자, 입고확인자, 메모 */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: 16 }}>
+                <Form.Item name="buyer_id" label="구매자">
+                  <Select
+                    placeholder="구매자 선택"
+                    allowClear
+                    showSearch
+                    filterOption={(input, option) =>
+                      String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
+                    }
+                    disabled={currentUser?.role !== 'admin'}
+                  >
+                    {users.map(user => (
+                      <Option key={user.id} value={user.id}>{user.full_name}</Option>
+                    ))}
+                  </Select>
+                </Form.Item>
 
-                          const imageUrl = selectedWarehouse.image_url ? getFileUrl(selectedWarehouse.image_url) : null;
-
-                          return (
-                            <Card
-                              size="small"
-                              onClick={() => setWarehouseExpanded(true)}
-                              style={{
-                                cursor: 'pointer',
-                                border: '2px solid #1890ff',
-                                backgroundColor: '#e6f7ff',
-                                maxWidth: '250px'
-                              }}
-                              bodyStyle={{ padding: '12px' }}
-                            >
-                              <div style={{ textAlign: 'center' }}>
-                                {imageUrl ? (
-                                  <img
-                                    src={imageUrl}
-                                    alt={selectedWarehouse.name}
-                                    style={{
-                                      width: '100%',
-                                      height: '80px',
-                                      objectFit: 'contain',
-                                      marginBottom: '8px',
-                                      borderRadius: '4px'
-                                    }}
-                                  />
-                                ) : (
-                                  <div style={{
-                                    width: '100%',
-                                    height: '80px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    backgroundColor: '#f0f0f0',
-                                    marginBottom: '8px',
-                                    borderRadius: '4px',
-                                    fontSize: '48px'
-                                  }}>
-                                    📦
-                                  </div>
-                                )}
-                                <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>
-                                  {selectedWarehouse.name}
-                                </div>
-                                <div style={{ fontSize: '12px', color: '#666' }}>
-                                  {selectedWarehouse.location || '-'}
-                                </div>
-                                <div style={{ fontSize: '11px', color: '#1890ff', marginTop: '8px' }}>
-                                  클릭하여 변경
-                                </div>
-                              </div>
-                            </Card>
-                          );
-                        })()}
-                      </div>
-                    ) : (
-                      <div>
-                        <Button
-                          onClick={() => setWarehouseExpanded(!warehouseExpanded)}
-                          style={{ marginBottom: warehouseExpanded ? '12px' : 0 }}
-                        >
-                          {warehouseExpanded ? '창고 목록 닫기' : '창고 선택'}
-                        </Button>
-                        {warehouseExpanded && (
-                          <div style={{
-                            position: 'relative',
-                            width: '100%'
-                          }}>
-                            <div style={{
-                              display: 'flex',
-                              gap: '12px',
-                              overflowX: 'auto',
-                              overflowY: 'hidden',
-                              paddingBottom: '8px',
-                              scrollBehavior: 'smooth',
-                              WebkitOverflowScrolling: 'touch',
-                              maxHeight: '200px'
-                            }}>
-                              {warehouses.map(warehouse => {
-                                const imageUrl = warehouse.image_url ? getFileUrl(warehouse.image_url) : null;
-                                const isSelected = selectedWarehouseId === warehouse.id;
-
-                                return (
-                                  <Card
-                                    key={warehouse.id}
-                                    size="small"
-                                    hoverable
-                                    onClick={() => {
-                                      setSelectedWarehouseId(warehouse.id);
-                                      form.setFieldValue('warehouse_id', warehouse.id);
-                                      setWarehouseExpanded(false);
-                                    }}
-                                    style={{
-                                      cursor: 'pointer',
-                                      border: isSelected ? '2px solid #1890ff' : '1px solid #d9d9d9',
-                                      backgroundColor: isSelected ? '#e6f7ff' : '#fff',
-                                      transition: 'all 0.3s',
-                                      minWidth: '180px',
-                                      maxWidth: '180px',
-                                      flexShrink: 0,
-                                      height: '168px'
-                                    }}
-                                    bodyStyle={{ padding: '12px', height: '100%', display: 'flex', flexDirection: 'column' }}
-                                  >
-                                    <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', height: '100%' }}>
-                                      {imageUrl ? (
-                                        <img
-                                          src={imageUrl}
-                                          alt={warehouse.name}
-                                          style={{
-                                            width: '100%',
-                                            height: '80px',
-                                            objectFit: 'contain',
-                                            marginBottom: '8px',
-                                            borderRadius: '4px'
-                                          }}
-                                        />
-                                      ) : (
-                                        <div style={{
-                                          width: '100%',
-                                          height: '80px',
-                                          display: 'flex',
-                                          alignItems: 'center',
-                                          justifyContent: 'center',
-                                          backgroundColor: '#f0f0f0',
-                                          marginBottom: '8px',
-                                          borderRadius: '4px',
-                                          fontSize: '48px'
-                                        }}>
-                                          📦
-                                        </div>
-                                      )}
-                                      <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>
-                                        {warehouse.name}
-                                      </div>
-                                      <div style={{ fontSize: '12px', color: '#666' }}>
-                                        {warehouse.location || '-'}
-                                      </div>
-                                    </div>
-                                  </Card>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                <Form.Item name="receiver_id" label="입고확인자">
+                  <Select
+                    placeholder="입고확인자 선택"
+                    allowClear
+                    showSearch
+                    filterOption={(input, option) =>
+                      String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
+                    }
+                  >
+                    {users.map(user => (
+                      <Option key={user.id} value={user.id}>{user.full_name}</Option>
+                    ))}
+                  </Select>
                 </Form.Item>
 
                 <Form.Item name="notes" label="메모" style={{ marginBottom: 0 }}>
-                  <TextArea rows={3} placeholder="메모 입력" />
+                  <TextArea rows={1} placeholder="메모 입력" />
                 </Form.Item>
+              </div>
+
+              {/* 셋째 줄: 영수증 (가로 스크롤) */}
+              <div style={{ marginTop: 8 }}>
+                <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <label style={{ fontWeight: 500 }}>영수증</label>
+                  <Space size="small">
+                    {!qrCodeToken && (
+                      <>
+                        <Upload
+                          customRequest={handleUpload}
+                          accept="image/*"
+                          multiple
+                          showUploadList={false}
+                        >
+                          <Button size="small" icon={<UploadOutlined />} loading={uploadLoading}>
+                            PC 업로드
+                          </Button>
+                        </Upload>
+                        <Button size="small" icon={<QrcodeOutlined />} onClick={handleGenerateQrCode} loading={qrCodeLoading}>
+                          모바일 촬영
+                        </Button>
+                        {fileList.length > 0 && (
+                          <Button size="small" danger icon={<DeleteOutlined />} onClick={handleRemove}>
+                            전체삭제
+                          </Button>
+                        )}
+                      </>
+                    )}
+                  </Space>
+                </div>
+
+                {/* QR 코드 모달 */}
+                {qrCodeToken ? (
+                  <div style={{
+                    border: '1px solid #1890ff',
+                    borderRadius: 8,
+                    padding: 16,
+                    backgroundColor: '#e6f7ff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 24
+                  }}>
+                    <div style={{
+                      backgroundColor: 'white',
+                      padding: 12,
+                      borderRadius: 8,
+                      flexShrink: 0
+                    }}>
+                      <QRCodeSVG value={getQrCodeUrl(qrCodeToken)} size={120} level="H" />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 500, marginBottom: 8 }}>
+                        <MobileOutlined style={{ marginRight: 8 }} />
+                        모바일로 QR 코드를 스캔하세요
+                      </div>
+                      {qrCodePolling && (
+                        <Tag icon={<SyncOutlined spin />} color="processing">
+                          대기 중...
+                        </Tag>
+                      )}
+                      {mobileUploadedUrls.length > 0 && (
+                        <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                          {mobileUploadedUrls.map((url, index) => (
+                            <Image
+                              key={index}
+                              src={getFileUrl(url) || ''}
+                              width={50}
+                              height={50}
+                              style={{ objectFit: 'cover', borderRadius: 4 }}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <Button onClick={handleCloseQrCode} type={mobileUploadedUrls.length > 0 ? 'primary' : 'default'}>
+                      {mobileUploadedUrls.length > 0 ? '완료' : '취소'}
+                    </Button>
+                  </div>
+                ) : fileList.length > 0 ? (
+                  /* 업로드된 영수증 목록 (가로 스크롤) */
+                  <div style={{
+                    border: '1px solid #d9d9d9',
+                    borderRadius: 8,
+                    padding: 12,
+                    backgroundColor: '#fafafa',
+                    overflowX: 'auto',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    <Image.PreviewGroup>
+                      <div style={{ display: 'inline-flex', gap: 12 }}>
+                        {fileList.map((file, index) => (
+                          <div key={file.uid} style={{
+                            position: 'relative',
+                            flexShrink: 0,
+                            width: 200,
+                            height: 200
+                          }}>
+                            <Image
+                              src={file.thumbUrl || getFileUrl(file.url) || ''}
+                              width={200}
+                              height={200}
+                              style={{ objectFit: 'cover', borderRadius: 4, border: '1px solid #d9d9d9' }}
+                            />
+                            <Tag style={{ position: 'absolute', bottom: 4, left: 4, margin: 0 }}>
+                              #{index + 1}
+                            </Tag>
+                            {/* 개별 삭제 버튼 */}
+                            <Button
+                              type="primary"
+                              danger
+                              size="small"
+                              icon={<DeleteOutlined />}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRemoveFile(index);
+                              }}
+                              style={{
+                                position: 'absolute',
+                                top: 4,
+                                right: 4,
+                                borderRadius: '50%',
+                                width: 24,
+                                height: 24,
+                                padding: 0,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                              }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </Image.PreviewGroup>
+                  </div>
+                ) : (
+                  /* 영수증 없음 */
+                  <div style={{
+                    border: '2px dashed #d9d9d9',
+                    borderRadius: 8,
+                    padding: '16px 24px',
+                    backgroundColor: '#fafafa',
+                    color: '#999',
+                    textAlign: 'center'
+                  }}>
+                    영수증을 업로드하세요 (선택사항)
+                  </div>
+                )}
               </div>
 
               {/* 상품 추가 */}
@@ -879,6 +1035,7 @@ const PurchaseFormPage: React.FC = () => {
                         onClick={handleAddItems}
                         disabled={Object.values(sizeQuantityMap).every(qty => qty === 0)}
                         size="large"
+                        style={{ backgroundColor: '#0d1117', borderColor: '#0d1117' }}
                       >
                         등록
                       </Button>
@@ -886,81 +1043,7 @@ const PurchaseFormPage: React.FC = () => {
                   </div>
                 )}
               </Card>
-            </Space>
-          </div>
-
-          {/* 오른쪽: 영수증 영역 (30%) */}
-          <div style={{ flex: '0 0 30%', position: 'sticky', top: 24 }}>
-            <Form.Item label="영수증">
-              {fileList.length === 0 ? (
-                <div style={{ paddingRight: 16 }}>
-                  <Upload
-                    customRequest={handleUpload}
-                    onRemove={handleRemove}
-                    fileList={[]}
-                    accept="image/*"
-                    maxCount={1}
-                    listType="picture-card"
-                    showUploadList={false}
-                    style={{ width: '100%', display: 'block' }}
-                  >
-                    <div style={{ width: '100%', padding: '40px 20px', textAlign: 'center' }}>
-                      <UploadOutlined style={{ fontSize: 32, color: '#1890ff' }} />
-                      <div style={{ marginTop: 8, whiteSpace: 'nowrap' }}>영수증 업로드</div>
-                    </div>
-                  </Upload>
-                </div>
-              ) : (
-                <div>
-                  {/* 영수증 미리보기 */}
-                  <div style={{
-                    border: '1px solid #d9d9d9',
-                    borderRadius: 8,
-                    overflow: 'auto',
-                    backgroundColor: '#fafafa',
-                    maxHeight: 'calc(100vh - 200px)',
-                    position: 'relative'
-                  }}>
-                    <Image
-                      src={fileList[0].thumbUrl || fileList[0].url}
-                      style={{
-                        width: '100%',
-                        objectFit: 'contain',
-                        display: 'block'
-                      }}
-                      preview={{
-                        mask: '크게 보기'
-                      }}
-                    />
-                  </div>
-                  {/* 수정/삭제 버튼 */}
-                  <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-                    <Upload
-                      customRequest={handleUpload}
-                      onRemove={handleRemove}
-                      fileList={[]}
-                      accept="image/*"
-                      maxCount={1}
-                      showUploadList={false}
-                      style={{ flex: 1 }}
-                    >
-                      <Button icon={<UploadOutlined />} style={{ width: '100%' }}>
-                        수정
-                      </Button>
-                    </Upload>
-                    <Button
-                      danger
-                      icon={<DeleteOutlined />}
-                      onClick={handleRemove}
-                      style={{ flex: 1 }}
-                    >
-                      삭제
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </Form.Item>
-          </div>
+          </Space>
         </div>
       </Form>
 

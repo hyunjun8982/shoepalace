@@ -83,16 +83,39 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
         print(f"  현재 패키지: {current_pkg}")
 
         if current_pkg != "com.adidas.app":
-            print("  [ERROR] 앱이 실행되지 않음")
-            raise Exception("Adidas 앱이 실행되지 않았습니다. 앱을 먼저 실행해주세요.")
+            print("  앱 실행 중...")
+            driver.activate_app("com.adidas.app")
+            time.sleep(3)
+            print("  [OK] 앱 실행 완료")
 
-        print("  [OK] 앱이 실행 중")
+        # 앱 상태 확인 (앱 데이터 초기화 후이므로 로그인 화면이어야 함)
+        print("  앱 상태 확인 중...")
+        login_screen_found = False
+        for wait_i in range(10):
+            time.sleep(1)
+            page_source = driver.page_source
+
+            # 로그인 화면인지 확인
+            if any(text in page_source for text in [
+                'login.email.input', '가입 또는 로그인하기', 'JOIN OR LOG IN', '로그인하기'
+            ]):
+                print(f"  [OK] 로그인 화면 확인됨 ({wait_i+1}초)")
+                login_screen_found = True
+                break
+
+        if not login_screen_found:
+            print("  [WARNING] 로그인 화면을 찾지 못함, 그래도 진행")
 
         # [2단계] 로그인
         print("\n[2단계] 로그인 시작")
 
         # 로그인 화면이 나타날 때까지 대기 (최대 5초)
         if not wait_for_page_source_contains(driver, '로그인', timeout=5):
+            # 한번 더 확인 - 이미 로그인된 상태일 수 있음
+            page_source = driver.page_source
+            if any(text in page_source for text in ['adiclub_toolbar', 'profileButton']):
+                print("  [ERROR] 이미 로그인된 상태 - 로그아웃 필요")
+                return {"success": False, "message": "이전 계정이 로그인된 상태입니다. 로그아웃 후 다시 시도하세요."}
             print("  [ERROR] 로그인 화면을 찾을 수 없음")
             raise Exception("로그인 화면을 찾을 수 없습니다.")
 
@@ -106,7 +129,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                 login_btn = driver.find_element(AppiumBy.XPATH, "//*[@text='로그인하기']")
                 login_btn.click()
                 print("  [OK] 광고 화면에서 로그인 시작")
-                time.sleep(2)
                 login_button_found = True
             except:
                 pass
@@ -120,7 +142,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                     login_btn.click()
                     print(f"  [OK] '{desc}' 버튼 클릭")
                     login_button_found = True
-                    time.sleep(3)
                     break
                 except:
                     pass
@@ -132,7 +153,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                         login_btn.click()
                         print(f"  [OK] '{text}' 버튼 클릭")
                         login_button_found = True
-                        time.sleep(2)
                         break
                     except:
                         pass
@@ -162,8 +182,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
         email_field.send_keys(email)
         print(f"  [OK] 이메일 입력 완료")
 
-        time.sleep(1)
-
         # [4단계] 비밀번호 입력
         print("\n[4단계] 비밀번호 입력")
 
@@ -192,8 +210,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
 
         if not password_entered:
             return {"success": False, "message": "비밀번호 입력란을 찾을 수 없습니다"}
-
-        time.sleep(1)
 
         # [5단계] 로그인하기 버튼 클릭
         print("\n[5단계] '로그인하기' 버튼 클릭")
@@ -237,8 +253,19 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
         if not submit_clicked:
             return {"success": False, "message": "로그인 버튼을 찾을 수 없습니다"}
 
+        # 로그인 처리 대기 (동적 대기: 로그인 성공/실패 화면이 나타날 때까지)
         print("\n  로그인 처리 중...")
-        time.sleep(5)
+        login_indicators = ['Close', 'close', '닫기', '잘못된', 'Invalid', '다시 시도', 'Try again', '아디클럽', 'adiCLUB']
+        login_complete = False
+        for _ in range(10):  # 최대 5초 대기 (0.5초 간격)
+            page_source = driver.page_source
+            for indicator in login_indicators:
+                if indicator in page_source:
+                    login_complete = True
+                    break
+            if login_complete:
+                break
+            time.sleep(0.5)
 
         # 로그인 실패 확인
         page_source = driver.page_source
@@ -264,7 +291,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                         close_btn = driver.find_element(AppiumBy.XPATH, f"//*[@content-desc='{desc}']")
                         close_btn.click()
                         print(f"  [OK] 로그인 실패 후 웹뷰 닫기 (content-desc: {desc})")
-                        time.sleep(2)
                         closed = True
                         break
                     except:
@@ -276,7 +302,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                         image_btn = driver.find_element(AppiumBy.XPATH, "//android.widget.ImageButton")
                         image_btn.click()
                         print(f"  [OK] 로그인 실패 후 웹뷰 닫기 (ImageButton)")
-                        time.sleep(2)
                         closed = True
                     except:
                         pass
@@ -285,7 +310,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                 if not closed:
                     driver.press_keycode(4)
                     print(f"  [OK] 로그인 실패 후 뒤로가기")
-                    time.sleep(2)
 
             except Exception as e:
                 print(f"  [경고] 웹뷰 닫기 실패: {e}")
@@ -309,7 +333,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                 x_btn.click()
                 print(f"  [OK] X 버튼 클릭 (content-desc: {desc})")
                 x_button_clicked = True
-                time.sleep(1)
                 break
 
         # 방법 2: X 버튼 찾기 (text)
@@ -321,7 +344,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                     x_btn.click()
                     print(f"  [OK] X 버튼 클릭 (text: {text})")
                     x_button_clicked = True
-                    time.sleep(1)
                     break
 
         # 방법 3: 뒤로가기 키
@@ -330,26 +352,22 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                 driver.press_keycode(4)  # 뒤로가기
                 print("  [OK] 뒤로가기 버튼으로 닫기")
                 x_button_clicked = True
-                time.sleep(1)
             except:
                 pass
 
         # [7단계] 하단 메뉴에서 아디클럽 버튼 클릭
         print("\n[7단계] 하단 메뉴에서 아디클럽 클릭")
-        time.sleep(3)
 
         adiclub_clicked = False
 
-        # 방법 1: resource-id로 찾기
-        try:
-            adiclub_btn = driver.find_element(AppiumBy.XPATH,
-                "//*[@resource-id='com.adidas.app:id/mainTabBarAdiClub']")
+        # 방법 1: resource-id로 찾기 (동적 대기)
+        adiclub_btn = wait_for_element(driver, AppiumBy.XPATH,
+            "//*[@resource-id='com.adidas.app:id/mainTabBarAdiClub']",
+            timeout=5, condition='clickable')
+        if adiclub_btn:
             adiclub_btn.click()
             print("  [OK] 아디클럽 버튼 클릭 (resource-id)")
             adiclub_clicked = True
-            time.sleep(3)
-        except:
-            pass
 
         # 방법 2: content-desc로 찾기
         if not adiclub_clicked:
@@ -359,7 +377,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                     adiclub_btn.click()
                     print(f"  [OK] 아디클럽 버튼 클릭 (content-desc: {desc})")
                     adiclub_clicked = True
-                    time.sleep(3)
                     break
                 except:
                     pass
@@ -396,9 +413,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
         if not page_fully_loaded:
             return {"success": False, "message": "아디클럽 페이지 로딩 실패 (타임아웃)"}
 
-        # 로딩 완료 후 약간의 안정화 시간
-        time.sleep(1)
-
         # DEBUG: 초기 페이지 소스 저장
         try:
             initial_page = driver.page_source
@@ -410,7 +424,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
 
         # [9단계] "상품권 쿠폰 받기" 확인
         print("\n[9단계] '상품권 쿠폰 받기' 섹션 확인")
-        time.sleep(2)
 
         # 화면 크기 가져오기
         window_size = driver.get_window_size()
@@ -447,7 +460,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
 
         # [10단계] 100,000원 쿠폰 찾기 (스크롤 없이 먼저 시도)
         print(f"\n[10단계] 100,000원 쿠폰 찾기")
-        time.sleep(1)
 
         # 스크롤 없이 먼저 숨어있는 버튼 찾기 시도
         print("  [시도] 스크롤 없이 쿠폰 버튼 찾기")
@@ -474,7 +486,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
             print("  [정보] 스크롤 없이 찾기 실패, 가로 스크롤 시작")
             # [10-1단계] 가로 스크롤로 100,000원 쿠폰 찾기
             print(f"\n[10-1단계] 가로 스크롤로 100,000원 쿠폰 찾기")
-            time.sleep(1)
 
         # 쿠폰 목록의 scrollable 영역 찾기
         coupon_y = int(height * 0.85)  # 기본값: 화면 하단쪽
@@ -525,7 +536,7 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                         500                    # 스크롤 시간
                     )
                     print(f"  [INFO] 우측으로 가로 스크롤 {swipe_count + 1}번 (Y={coupon_y})")
-                    time.sleep(2)  # 스크롤 후 UI 안정화 대기 시간 증가 (1.5초 → 2초)
+                    time.sleep(1)  # 스크롤 후 UI 안정화 (2초 → 1초로 축소)
                 except Exception as e:
                     print(f"  [오류] 가로 스크롤 {swipe_count + 1}번 중 예외: {e}")
                     break
@@ -546,7 +557,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
 
         # [11단계] ₩100000 할인 쿠폰 버튼 클릭
         print(f"\n[11단계] ₩100000 할인 쿠폰 버튼 클릭")
-        time.sleep(0.5)  # 딜레이 감소
 
         offer_clicked = False
 
@@ -570,8 +580,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                     grandparent.click()
                     print(f"  [OK] ₩100000 할인 쿠폰 클릭 (조부모 View)")
                     offer_clicked = True
-
-            time.sleep(2)  # 페이지 로딩 대기
         except Exception as e:
             print(f"  [시도 실패] ₩100000 할인 텍스트 방식: {e}")
 
@@ -582,16 +590,16 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                 coupon_view.click()
                 print(f"  [OK] ₩100000 할인 쿠폰 클릭 (resource-id)")
                 offer_clicked = True
-                time.sleep(2)
             except Exception as e:
                 print(f"  [시도 실패] resource-id 방식: {e}")
 
         if not offer_clicked:
             return {"success": False, "message": "₩100000 할인 쿠폰 버튼을 찾을 수 없습니다"}
 
-        # [12단계] 쿠폰 상세 페이지 로딩 대기
+        # [12단계] 쿠폰 상세 페이지 로딩 대기 (동적 대기)
         print(f"\n[12단계] 쿠폰 상세 페이지 로딩 대기")
-        time.sleep(2)
+        # 상세 페이지 로딩 확인 (변환하기 버튼 또는 교환 완료 텍스트)
+        wait_for_page_source_contains(driver, '변환', timeout=5)
 
         # DEBUG: 쿠폰 상세 페이지 소스 저장
         try:
@@ -613,7 +621,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
             time.sleep(0.3)
 
         print("  [OK] 하단으로 스크롤 완료")
-        time.sleep(0.5)
 
         # DEBUG: 스크롤 후 페이지 소스 저장
         after_scroll_page = ""
@@ -636,39 +643,35 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
             try:
                 driver.tap([(int(width * 0.07), int(height * 0.08))])
                 print("  [OK] 좌측 상단 뒤로가기")
-                time.sleep(2)
             except:
                 driver.press_keycode(4)
-                time.sleep(2)
 
             # 로그아웃 처리
             try:
                 print("  [시도] 우측 상단 사용자 관리 버튼 클릭")
                 user_clicked = False
 
-                # 방법 1: resource-id로 찾기
+                # 방법 1: resource-id로 찾기 (동적 대기)
                 for resource_id in ['user_management', 'profile', 'account', 'profileButton']:
-                    try:
-                        user_btn = driver.find_element(AppiumBy.XPATH, f"//*[contains(@resource-id, '{resource_id}')]")
+                    user_btn = wait_for_element(driver, AppiumBy.XPATH,
+                        f"//*[contains(@resource-id, '{resource_id}')]", timeout=2, condition='clickable')
+                    if user_btn:
                         user_btn.click()
                         print(f"  [OK] 사용자 관리 버튼 클릭 ({resource_id})")
                         user_clicked = True
-                        time.sleep(2)
                         break
-                    except:
-                        pass
 
                 # 방법 2: 우측 상단 좌표 클릭
                 if not user_clicked:
                     driver.tap([(int(width * 0.9), int(height * 0.1))])
                     print("  [OK] 우측 상단 영역 클릭")
-                    time.sleep(2)
+                    time.sleep(0.5)
 
                 # 하단으로 스크롤하여 로그아웃 버튼 찾기
                 print("  [시도] 하단으로 스크롤")
                 for i in range(5):
                     driver.swipe(width // 2, int(height * 0.8), width // 2, int(height * 0.2), 400)
-                    time.sleep(0.5)
+                    time.sleep(0.3)
 
                     page_source = driver.page_source
                     if '로그아웃' in page_source or 'LOGOUT' in page_source:
@@ -683,7 +686,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                         logout_btn.click()
                         print(f"  [OK] 로그아웃 완료 ({text})")
                         logout_success = True
-                        time.sleep(2)
                         break
                     except:
                         pass
@@ -696,7 +698,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                             logout_btn.click()
                             print(f"  [OK] 로그아웃 완료 (content-desc: {desc})")
                             logout_success = True
-                            time.sleep(2)
                             break
                         except:
                             pass
@@ -751,39 +752,35 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
             try:
                 driver.tap([(int(width * 0.07), int(height * 0.08))])
                 print("  [OK] 좌측 상단 뒤로가기")
-                time.sleep(2)
             except:
                 driver.press_keycode(4)
-                time.sleep(2)
 
             # 로그아웃 처리 (포인트 부족과 동일한 로직)
             try:
                 print("  [시도] 우측 상단 사용자 관리 버튼 클릭")
                 user_clicked = False
 
-                # 방법 1: resource-id로 찾기
+                # 방법 1: resource-id로 찾기 (동적 대기)
                 for resource_id in ['user_management', 'profile', 'account', 'profileButton']:
-                    try:
-                        user_btn = driver.find_element(AppiumBy.XPATH, f"//*[contains(@resource-id, '{resource_id}')]")
+                    user_btn = wait_for_element(driver, AppiumBy.XPATH,
+                        f"//*[contains(@resource-id, '{resource_id}')]", timeout=2, condition='clickable')
+                    if user_btn:
                         user_btn.click()
                         print(f"  [OK] 사용자 관리 버튼 클릭 ({resource_id})")
                         user_clicked = True
-                        time.sleep(2)
                         break
-                    except:
-                        pass
 
                 # 방법 2: 우측 상단 좌표 클릭
                 if not user_clicked:
                     driver.tap([(int(width * 0.9), int(height * 0.1))])
                     print("  [OK] 우측 상단 영역 클릭")
-                    time.sleep(2)
+                    time.sleep(0.5)
 
                 # 하단으로 스크롤하여 로그아웃 버튼 찾기
                 print("  [시도] 하단으로 스크롤")
                 for i in range(5):
                     driver.swipe(width // 2, int(height * 0.8), width // 2, int(height * 0.2), 400)
-                    time.sleep(0.5)
+                    time.sleep(0.3)
 
                     page_source = driver.page_source
                     if '로그아웃' in page_source or 'LOGOUT' in page_source:
@@ -798,7 +795,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                         logout_btn.click()
                         print(f"  [OK] 로그아웃 완료 ({text})")
                         logout_success = True
-                        time.sleep(2)
                         break
                     except:
                         pass
@@ -811,7 +807,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                             logout_btn.click()
                             print(f"  [OK] 로그아웃 완료 (content-desc: {desc})")
                             logout_success = True
-                            time.sleep(2)
                             break
                         except:
                             pass
@@ -840,7 +835,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
             exchange_btn.click()
             print(f"  [OK] '상품권 변환하기' 버튼 클릭 (voucher_offer_buy_button)")
             exchange_clicked = True
-            time.sleep(2)
         except Exception as e:
             print(f"  [시도 실패] voucher_offer_buy_button: {e}")
 
@@ -851,7 +845,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                 exchange_btn.click()
                 print(f"  [OK] '6000 포인트로 상품권 변환하기' 버튼 클릭")
                 exchange_clicked = True
-                time.sleep(2)
             except Exception as e:
                 print(f"  [시도 실패] 6000 포함 텍스트: {e}")
 
@@ -863,7 +856,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                     exchange_btn.click()
                     print(f"  [OK] '{text}' 버튼 클릭")
                     exchange_clicked = True
-                    time.sleep(2)
                     break
                 except:
                     pass
@@ -880,7 +872,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                         btn.click()
                         print(f"  [OK] 하단 버튼 클릭 (Y={btn_y})")
                         exchange_clicked = True
-                        time.sleep(2)
                         break
             except Exception as e:
                 print(f"  [시도 실패] 하단 버튼 탐색: {e}")
@@ -888,9 +879,10 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
         if not exchange_clicked:
             return {"success": False, "message": "상품권 변환하기 버튼을 찾을 수 없습니다"}
 
-        # [15단계] "상품권 변환 확정하기" 버튼 클릭
+        # [15단계] "상품권 변환 확정하기" 버튼 클릭 (동적 대기)
         print("\n[15단계] '상품권 변환 확정하기' 버튼 클릭")
-        time.sleep(2)
+        # 확정 버튼이 나타날 때까지 대기
+        wait_for_page_source_contains(driver, '확정', timeout=3)
 
         # DEBUG: 확정 페이지 소스 저장
         try:
@@ -909,7 +901,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
             confirm_btn.click()
             print(f"  [OK] '상품권 변환 확정하기' 버튼 클릭 (redemption_points_confirmation_confirm_button)")
             confirm_clicked = True
-            time.sleep(3)  # 쿠폰 페이지 로딩 대기
         except Exception as e:
             print(f"  [시도 실패] redemption_points_confirmation_confirm_button: {e}")
 
@@ -921,7 +912,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                     confirm_btn.click()
                     print(f"  [OK] '{text}' 버튼 클릭")
                     confirm_clicked = True
-                    time.sleep(2)
                     break
                 except:
                     pass
@@ -937,7 +927,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                         btn.click()
                         print(f"  [OK] 하단 버튼 클릭 (Y={btn_y})")
                         confirm_clicked = True
-                        time.sleep(2)
                         break
             except Exception as e:
                 print(f"  [시도 실패] 하단 버튼 탐색: {e}")
@@ -1028,7 +1017,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                 driver.tap([(int(width * 0.07), int(height * 0.08))])
                 print("  [OK] 좌측 상단 뒤로가기 영역 클릭")
                 back_clicked = True
-                time.sleep(2)
             except Exception as e:
                 print(f"  [시도 실패] 좌측 상단 클릭: {e}")
 
@@ -1039,7 +1027,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                     back_btn.click()
                     print("  [OK] 뒤로가기 버튼 클릭 (app_bar_back_button)")
                     back_clicked = True
-                    time.sleep(2)
                 except Exception as e:
                     print(f"  [시도 실패] app_bar_back_button: {e}")
 
@@ -1050,7 +1037,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                     back_btn.click()
                     print("  [OK] 뒤로가기 버튼 클릭 (content-desc)")
                     back_clicked = True
-                    time.sleep(2)
                 except Exception as e:
                     print(f"  [시도 실패] content-desc: {e}")
 
@@ -1058,27 +1044,24 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
             if not back_clicked:
                 driver.press_keycode(4)
                 print("  [OK] 뒤로가기 키 사용")
-                time.sleep(2)
 
             # 로그아웃 처리
             try:
-                # 우측 상단 사용자 관리 버튼 클릭
+                # 우측 상단 사용자 관리 버튼 클릭 (동적 대기)
                 user_management_clicked = False
                 for resource_id in ['user_management', 'profile', 'account', 'profileButton']:
-                    try:
-                        user_btn = driver.find_element(AppiumBy.XPATH, f"//*[contains(@resource-id, '{resource_id}')]")
+                    user_btn = wait_for_element(driver, AppiumBy.XPATH,
+                        f"//*[contains(@resource-id, '{resource_id}')]", timeout=2, condition='clickable')
+                    if user_btn:
                         user_btn.click()
                         print(f"  [OK] 사용자 관리 버튼 클릭")
                         user_management_clicked = True
-                        time.sleep(2)
                         break
-                    except:
-                        pass
 
                 if not user_management_clicked:
                     # 화면 우측 상단 클릭
                     driver.tap([(int(width * 0.9), int(height * 0.1))])
-                    time.sleep(2)
+                    time.sleep(0.5)
 
                 # 로그아웃 버튼 찾기 및 클릭
                 for text in ['로그아웃', 'LOGOUT', 'Log out']:
@@ -1086,7 +1069,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                         logout_btn = driver.find_element(AppiumBy.XPATH, f"//*[@text='{text}']")
                         logout_btn.click()
                         print(f"  [OK] 로그아웃 완료")
-                        time.sleep(2)
                         break
                     except:
                         pass
@@ -1104,14 +1086,12 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
             back_btn = driver.find_element(AppiumBy.XPATH, "//*[@resource-id='app_bar_back_button']")
             back_btn.click()
             print("  [OK] 뒤로가기 버튼 클릭 (app_bar_back_button)")
-            time.sleep(2)
         except Exception as e:
             print(f"  [시도 실패] app_bar_back_button: {e}")
             # 뒤로가기 키 사용
             try:
                 driver.press_keycode(4)
                 print("  [OK] 뒤로가기 키 사용")
-                time.sleep(2)
             except:
                 pass
 
@@ -1135,20 +1115,18 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                 if '로그아웃' in page_source or 'LOGOUT' in page_source:
                     print("  [INFO] 로그아웃 버튼이 이미 화면에 있음")
                 else:
-                    # 사용자 관리 버튼 찾기
+                    # 사용자 관리 버튼 찾기 (동적 대기)
                     user_management_clicked = False
 
                     # 방법 1: resource-id로 찾기
                     for resource_id in ['user_management', 'profile', 'account', 'profileButton', 'user', 'my_profile']:
-                        try:
-                            user_btn = driver.find_element(AppiumBy.XPATH, f"//*[contains(@resource-id, '{resource_id}')]")
+                        user_btn = wait_for_element(driver, AppiumBy.XPATH,
+                            f"//*[contains(@resource-id, '{resource_id}')]", timeout=2, condition='clickable')
+                        if user_btn:
                             user_btn.click()
                             print(f"  [OK] 사용자 관리 버튼 클릭 (resource-id: {resource_id})")
                             user_management_clicked = True
-                            time.sleep(2)
                             break
-                        except:
-                            pass
 
                     # 방법 2: text로 찾기
                     if not user_management_clicked:
@@ -1158,7 +1136,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                                 user_btn.click()
                                 print(f"  [OK] 사용자 관리 버튼 클릭 (text: {text})")
                                 user_management_clicked = True
-                                time.sleep(2)
                                 break
                             except:
                                 pass
@@ -1171,7 +1148,7 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                                 try:
                                     driver.tap([(int(width * x_ratio), int(height * y_ratio))])
                                     print(f"  [시도] 좌표 클릭: ({x_ratio}, {y_ratio})")
-                                    time.sleep(2)
+                                    time.sleep(0.5)
 
                                     # 클릭 후 페이지 확인
                                     page_source = driver.page_source
@@ -1188,7 +1165,7 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                         print("  [경고] 사용자 관리 버튼을 찾을 수 없음, 재시도")
                         # 뒤로가기 후 재시도
                         driver.press_keycode(4)
-                        time.sleep(2)
+                        time.sleep(0.5)
                         continue
 
                 # 하단으로 스크롤하여 로그아웃 버튼 찾기
@@ -1201,7 +1178,7 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                         int(height * 0.2),
                         400
                     )
-                    time.sleep(0.5)
+                    time.sleep(0.3)
 
                     page_source = driver.page_source
                     if '로그아웃' in page_source or 'LOGOUT' in page_source:
@@ -1215,7 +1192,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                         logout_btn.click()
                         print(f"  [OK] 로그아웃 버튼 클릭 (text: '{text}')")
                         logout_success = True
-                        time.sleep(2)
                         break
                     except:
                         pass
@@ -1227,7 +1203,6 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                             logout_btn.click()
                             print(f"  [OK] 로그아웃 버튼 클릭 (content-desc: '{desc}')")
                             logout_success = True
-                            time.sleep(2)
                             break
                         except:
                             pass
@@ -1238,7 +1213,7 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
                     # 뒤로가기로 초기 화면으로 돌아가기
                     try:
                         driver.press_keycode(4)
-                        time.sleep(2)
+                        time.sleep(0.5)
                     except:
                         pass
 
@@ -1259,7 +1234,7 @@ def _issue_coupon_core(driver, email: str, password: str, coupon_amount: str = "
         return {"success": False, "message": f"쿠폰 발급 실패: {str(e)}"}
 
 
-def issue_coupon_mobile(email: str, password: str, coupon_amount: str = "100000", appium_url: str = "http://127.0.0.1:4723") -> dict:
+def issue_coupon_mobile(email: str, password: str, coupon_amount: str = "100000", appium_url: str = "http://127.0.0.1:4723/wd/hub") -> dict:
     """
     Adidas 앱에서 쿠폰 발급 (단일 계정용 - driver 생성/종료 포함)
 
@@ -1275,21 +1250,10 @@ def issue_coupon_mobile(email: str, password: str, coupon_amount: str = "100000"
     Raises:
         ConnectionError: Appium 서버 연결 실패 시
     """
+    from app.services.appium_utils import get_appium_options
 
-    # Appium 연결 설정
-    options = UiAutomator2Options()
-    options.platform_name = "Android"
-    options.device_name = "emulator-5554"
-    options.app_package = "com.adidas.app"
-    options.app_activity = ".MainActivity"
-    options.automation_name = "UiAutomator2"
-    options.no_reset = True
-
-    # Chrome WebView 사용 (Samsung 브라우저 대신)
-    options.set_capability('chromedriverExecutable', '')
-    options.set_capability('recreateChromeDriverSessions', True)
-    options.set_capability('nativeWebScreenshot', True)
-    options.set_capability('autoWebview', False)
+    # Appium 연결 설정 (자동 디바이스 감지)
+    options = get_appium_options()
 
     try:
         driver = webdriver.Remote(appium_url, options=options)
@@ -1309,9 +1273,168 @@ def issue_coupon_mobile(email: str, password: str, coupon_amount: str = "100000"
             pass
 
 
-def issue_coupon_mobile_bulk(account_list: list, appium_url: str = "http://127.0.0.1:4723", on_each_complete=None) -> list:
+def navigate_to_login_screen_coupon(driver, max_retries: int = 5) -> bool:
+    """
+    현재 화면에서 로그인 화면으로 이동 (뒤로가기 반복)
+
+    로그아웃 상태에서 로그인 화면까지 복귀하는 빠른 방법:
+    - 뒤로가기 키를 반복 눌러서 로그인 화면까지 이동
+    - 앱 재시작보다 훨씬 빠름 (2-3초 vs 15초+)
+
+    Args:
+        driver: Appium WebDriver 인스턴스
+        max_retries: 최대 뒤로가기 시도 횟수
+
+    Returns:
+        bool: 로그인 화면 도달 여부
+    """
+    print("  [복귀] 로그인 화면으로 이동 중...")
+
+    for i in range(max_retries):
+        try:
+            page_source = driver.page_source
+
+            # 로그인 화면 확인 (이메일/비밀번호 입력 화면 또는 로그인 버튼 화면)
+            if any(text in page_source for text in [
+                'login.email.input',  # 이메일 입력 필드
+                '가입 또는 로그인하기', 'JOIN OR LOG IN',  # 메인 로그인 버튼
+                '로그인하기'  # 광고 화면의 로그인 버튼
+            ]):
+                print(f"  [복귀] 로그인 화면 도달 (뒤로가기 {i}번)")
+                return True
+
+            # 뒤로가기
+            driver.press_keycode(4)
+            time.sleep(0.5)
+
+        except Exception as e:
+            print(f"  [복귀] 오류: {e}")
+            time.sleep(0.3)
+
+    print(f"  [복귀] 로그인 화면 도달 실패 ({max_retries}회 시도)")
+    return False
+
+
+def force_return_to_login_coupon(driver) -> bool:
+    """
+    강제로 로그인 화면으로 복귀 (앱 재시작 + 필요시 로그아웃)
+
+    앱 재시작 후에도 이전 계정이 로그인된 상태일 수 있으므로,
+    로그인 상태면 먼저 로그아웃 후 로그인 화면으로 이동
+
+    Returns:
+        bool: 성공 여부
+    """
+    print("  [강제 복귀] 앱 재시작...")
+    try:
+        driver.terminate_app("com.adidas.app")
+        time.sleep(1)
+        driver.activate_app("com.adidas.app")
+
+        # 앱 로딩 대기 (최대 10초)
+        for i in range(10):
+            try:
+                page_source = driver.page_source
+
+                # 로그인 화면인지 확인 (로그아웃 상태)
+                if any(text in page_source for text in [
+                    'login.email.input',  # 이메일 입력 필드
+                    '가입 또는 로그인하기', 'JOIN OR LOG IN',  # 메인 로그인 버튼
+                    '로그인하기'  # 광고 화면의 로그인 버튼
+                ]):
+                    print(f"  [강제 복귀] 로그인 화면 도달 ({i+1}초)")
+                    return True
+
+                # 이미 로그인된 상태인지 확인 (adiclub 툴바, 프로필 버튼 등)
+                if any(text in page_source for text in [
+                    'adiclub_toolbar', 'profileButton', '로그아웃', 'LOGOUT',
+                    'mainTabBarAdiClub', '아디클럽'
+                ]):
+                    print(f"  [강제 복귀] 이미 로그인된 상태 감지 - 로그아웃 필요")
+
+                    # 로그아웃 시도 (쿠폰 발급 모듈 내에서 직접 처리)
+                    try:
+                        logout_success = _logout_for_recovery(driver)
+                        if logout_success:
+                            print(f"  [강제 복귀] 로그아웃 완료, 로그인 화면으로 이동")
+                            time.sleep(1)
+                            return navigate_to_login_screen_coupon(driver, max_retries=5)
+                        else:
+                            print(f"  [강제 복귀] 로그아웃 실패, 앱 재시작 재시도")
+                            driver.terminate_app("com.adidas.app")
+                            time.sleep(2)
+                            driver.activate_app("com.adidas.app")
+                            time.sleep(3)
+                            continue
+                    except Exception as logout_error:
+                        print(f"  [강제 복귀] 로그아웃 오류: {logout_error}")
+
+            except Exception as e:
+                print(f"  [강제 복귀] 페이지 확인 오류: {e}")
+            time.sleep(1)
+
+        print("  [강제 복귀] 로그인 화면 도달 실패")
+        return False
+    except Exception as e:
+        print(f"  [강제 복귀] 오류: {e}")
+        return False
+
+
+def _logout_for_recovery(driver) -> bool:
+    """
+    복구용 로그아웃 (간단한 버전)
+    """
+    try:
+        window_size = driver.get_window_size()
+        width = window_size['width']
+        height = window_size['height']
+
+        # 프로필 버튼 클릭 시도
+        profile_btn = wait_for_element(driver, AppiumBy.XPATH, "//android.view.View[@resource-id='profileButton']", timeout=3)
+        if profile_btn:
+            profile_btn.click()
+            time.sleep(1)
+
+        # 하단으로 스크롤하여 로그아웃 찾기
+        for i in range(5):
+            driver.swipe(width // 2, int(height * 0.8), width // 2, int(height * 0.2), 400)
+            time.sleep(0.3)
+            page_source = driver.page_source
+            if '로그아웃' in page_source or 'LOGOUT' in page_source:
+                break
+
+        # 로그아웃 버튼 클릭
+        for text in ['로그아웃', 'LOGOUT', 'Log out']:
+            try:
+                logout_btn = driver.find_element(AppiumBy.XPATH, f"//*[@text='{text}']")
+                logout_btn.click()
+                print(f"  [복구 로그아웃] '{text}' 클릭")
+                time.sleep(1)
+                return True
+            except:
+                pass
+
+        # content-desc로 시도
+        for desc in ['로그아웃', 'logout', 'LOGOUT']:
+            try:
+                logout_btn = driver.find_element(AppiumBy.XPATH, f"//*[@content-desc='{desc}']")
+                logout_btn.click()
+                print(f"  [복구 로그아웃] content-desc '{desc}' 클릭")
+                time.sleep(1)
+                return True
+            except:
+                pass
+
+        return False
+    except Exception as e:
+        print(f"  [복구 로그아웃] 오류: {e}")
+        return False
+
+
+def issue_coupon_mobile_bulk(account_list: list, appium_url: str = "http://127.0.0.1:4723/wd/hub", on_each_complete=None) -> list:
     """
     Adidas 앱에서 여러 계정 쿠폰 발급 (단일 driver 세션 재사용)
+    안정화: 각 계정 처리 전 앱 상태 완전 초기화
 
     Args:
         account_list: 계정 정보 리스트 [{"id": int, "email": str, "password": str, "coupon_amount": str}, ...]
@@ -1324,21 +1447,10 @@ def issue_coupon_mobile_bulk(account_list: list, appium_url: str = "http://127.0
     Raises:
         ConnectionError: Appium 서버 연결 실패 시
     """
+    from app.services.appium_utils import get_appium_options
 
-    # Appium 연결 설정
-    options = UiAutomator2Options()
-    options.platform_name = "Android"
-    options.device_name = "emulator-5554"
-    options.app_package = "com.adidas.app"
-    options.app_activity = ".MainActivity"
-    options.automation_name = "UiAutomator2"
-    options.no_reset = True
-
-    # Chrome WebView 사용 (Samsung 브라우저 대신)
-    options.set_capability('chromedriverExecutable', '')
-    options.set_capability('recreateChromeDriverSessions', True)
-    options.set_capability('nativeWebScreenshot', True)
-    options.set_capability('autoWebview', False)
+    # Appium 연결 설정 (자동 디바이스 감지)
+    options = get_appium_options()
 
     try:
         driver = webdriver.Remote(appium_url, options=options)
@@ -1360,14 +1472,33 @@ def issue_coupon_mobile_bulk(account_list: list, appium_url: str = "http://127.0
             print(f"\n{'=' * 60}")
             print(f"[벌크 쿠폰발급] {idx}/{len(account_list)} 처리 중")
             print(f"{'=' * 60}")
+            print(f"계정: {email}")
 
             try:
+                # 첫 번째 계정이 아니면 로그인 화면 복귀 확인
+                # (첫 번째 계정은 사용자가 로그인 화면을 켜둔 상태로 시작)
+                if idx > 1:
+                    print(f"\n[사전 단계] 로그인 화면 확인")
+                    # 로그인 화면인지 빠르게 확인
+                    page_source = driver.page_source
+                    if not any(text in page_source for text in [
+                        'login.email.input', '가입 또는 로그인하기', 'JOIN OR LOG IN', '로그인하기'
+                    ]):
+                        # 로그인 화면이 아니면 뒤로가기로 복귀 시도
+                        if not navigate_to_login_screen_coupon(driver):
+                            # 실패하면 앱 재시작 (최후의 수단)
+                            force_return_to_login_coupon(driver)
+
                 result = _issue_coupon_core(driver, email, password, coupon_amount)
                 results.append({"email": email, "result": result})
 
                 # 각 계정 처리 완료 시 콜백 호출 (DB 즉시 업데이트용)
                 if on_each_complete:
                     on_each_complete(account_id, email, result, idx, len(account_list))
+
+                # 쿠폰 발급 완료 후 로그인 화면으로 복귀 (다음 계정을 위해)
+                print("\n  [후처리] 로그인 화면 복귀")
+                navigate_to_login_screen_coupon(driver)
 
             except Exception as e:
                 print(f"[벌크 쿠폰발급] {email} 처리 실패: {e}")
@@ -1377,6 +1508,12 @@ def issue_coupon_mobile_bulk(account_list: list, appium_url: str = "http://127.0
                 # 실패 시에도 콜백 호출
                 if on_each_complete:
                     on_each_complete(account_id, email, error_result, idx, len(account_list))
+
+                # 오류 발생 시 로그인 화면으로 복귀 시도 (다음 계정을 위해)
+                print("  [오류 복구] 로그인 화면 복귀 시도")
+                if not navigate_to_login_screen_coupon(driver):
+                    # 실패하면 앱 재시작 (최후의 수단)
+                    force_return_to_login_coupon(driver)
 
         return results
 

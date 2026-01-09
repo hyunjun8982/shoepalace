@@ -48,4 +48,53 @@ export const adidasAccountService = {
     const response = await api.post(`/adidas-accounts/${id}/issue-coupon?coupon_type=${couponType}`);
     return response.data;
   },
+
+  // 일괄 정보 조회 (모바일)
+  bulkFetchInfo: async (accountIds: string[]): Promise<any> => {
+    const response = await api.post('/adidas-accounts/bulk-fetch-info', {
+      account_ids: accountIds,
+    });
+    return response.data;
+  },
+
+  // ============================================================
+  // 웹 크롤링 정보 조회 API
+  // ============================================================
+
+  // 단일 계정 웹 정보 조회
+  webFetchInfo: async (id: string): Promise<any> => {
+    const response = await api.post(`/adidas-accounts/web-fetch-info/${id}`);
+    return response.data;
+  },
+
+  // 일괄 웹 정보 조회
+  bulkWebFetchInfo: async (accountIds: string[]): Promise<any> => {
+    const response = await api.post('/adidas-accounts/bulk-web-fetch-info', {
+      account_ids: accountIds,
+    });
+    return response.data;
+  },
+
+  // 일괄 웹 정보 조회 (모드 선택)
+  bulkWebFetchInfoWithMode: async (accountIds: string[], mode: 'local' | 'container'): Promise<any> => {
+    const response = await api.post('/adidas-accounts/bulk-web-fetch-info', {
+      account_ids: accountIds,
+      mode: mode,
+    });
+    return response.data;
+  },
+
+  // 웹 정보 조회 진행 상황 확인
+  getWebFetchProgress: async (progressId: string): Promise<any> => {
+    const response = await api.get(`/adidas-accounts/web-fetch-progress/${progressId}`);
+    return response.data;
+  },
+
+  // 실패한 계정 모바일로 재시도
+  bulkMobileFetchFailed: async (accountIds: string[]): Promise<any> => {
+    const response = await api.post('/adidas-accounts/bulk-mobile-fetch-failed', {
+      account_ids: accountIds,
+    });
+    return response.data;
+  },
 };

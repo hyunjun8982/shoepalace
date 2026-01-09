@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Date, ForeignKey, Enum, Text, Numeric, Integer
+from sqlalchemy import Column, String, Date, DateTime, ForeignKey, Enum, Text, Numeric, Integer, Boolean, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 import enum
@@ -20,15 +20,20 @@ class Purchase(BaseModel):
     transaction_no = Column(String(50), unique=True, nullable=False, index=True)
     purchase_date = Column(Date, nullable=False)
     buyer_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    receiver_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)  # 입고확인자
+    is_confirmed = Column(Boolean, default=False)  # 입고확인 여부
+    confirmed_at = Column(DateTime, nullable=True)  # 입고확인 일시
     payment_type = Column(Enum(PaymentType), nullable=False)
     supplier = Column(String(100))
     total_amount = Column(Numeric(12, 2), default=0)
     status = Column(Enum(PurchaseStatus), default=PurchaseStatus.pending)
-    receipt_url = Column(String(500))  # 영수증 이미지 URL
+    receipt_url = Column(String(500))  # 영수증 이미지 URL (단일, 하위호환용)
+    receipt_urls = Column(JSON, default=list)  # 영수증 이미지 URL 목록 (다중)
     notes = Column(Text)
 
     # 관계 설정
-    buyer = relationship("User", back_populates="purchases")
+    buyer = relationship("User", foreign_keys=[buyer_id], back_populates="purchases")
+    receiver = relationship("User", foreign_keys=[receiver_id])
     items = relationship("PurchaseItem", back_populates="purchase", cascade="all, delete-orphan")
 
 class PurchaseItem(BaseModel):

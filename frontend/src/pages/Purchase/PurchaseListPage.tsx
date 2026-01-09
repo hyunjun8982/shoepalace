@@ -31,6 +31,9 @@ import { Purchase, PaymentType, PurchaseStatus } from '../../types/purchase';
 import { purchaseService } from '../../services/purchase';
 import { getColumns } from './PurchaseListPageColumns';
 import { brandService, Brand } from '../../services/brand';
+import { userService } from '../../services/user';
+import { User } from '../../types';
+import { useAuth } from '../../contexts/AuthContext';
 import dayjs from 'dayjs';
 import './PurchaseListPage.css';
 
@@ -40,6 +43,7 @@ const { Option } = Select;
 const PurchaseListPage: React.FC = () => {
   const navigate = useNavigate();
   const { message } = App.useApp();
+  const { user: currentUser } = useAuth();
   const [loading, setLoading] = useState(false);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [allPurchases, setAllPurchases] = useState<Purchase[]>([]); // 통계용 전체 데이터
@@ -50,11 +54,13 @@ const PurchaseListPage: React.FC = () => {
   });
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
 
   // 필터 상태
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
-  const [paymentType, setPaymentType] = useState<string | undefined>();
-  const [brandFilter, setBrandFilter] = useState<string | undefined>();
+  const [paymentType, setPaymentType] = useState<string[]>([]);
+  const [brandFilter, setBrandFilter] = useState<string[]>([]);
+  const [buyerFilter, setBuyerFilter] = useState<string[]>([]);
   const [searchText, setSearchText] = useState<string>('');
 
   // 전체 데이터 로드 (통계용)
@@ -81,8 +87,9 @@ const PurchaseListPage: React.FC = () => {
           start_date: dateRange[0].format('YYYY-MM-DD'),
           end_date: dateRange[1].format('YYYY-MM-DD'),
         }),
-        ...(paymentType && { payment_type: paymentType }),
-        ...(brandFilter && { brand_name: brandFilter }),
+        ...(paymentType.length > 0 && { payment_type: paymentType }),
+        ...(brandFilter.length > 0 && { brand_name: brandFilter }),
+        ...(buyerFilter.length > 0 && { buyer_id: buyerFilter }),
         ...(searchText && { search: searchText }),
       };
 
@@ -96,7 +103,7 @@ const PurchaseListPage: React.FC = () => {
     }
   };
 
-  // 브랜드 목록 로드
+  // 브랜드 및 사용자 목록 로드
   useEffect(() => {
     const fetchBrands = async () => {
       try {
@@ -106,13 +113,22 @@ const PurchaseListPage: React.FC = () => {
         console.error('브랜드 목록 조회 실패:', error);
       }
     };
+    const fetchUsers = async () => {
+      try {
+        const response = await userService.getUsers({ is_active: true });
+        setUsers(response);
+      } catch (error) {
+        console.error('사용자 목록 조회 실패:', error);
+      }
+    };
     fetchBrands();
+    fetchUsers();
     fetchAllPurchases(); // 통계용 전체 데이터 로드
   }, []);
 
   useEffect(() => {
     fetchPurchases();
-  }, [pagination.current, pagination.pageSize, dateRange, paymentType, brandFilter, searchText]);
+  }, [pagination.current, pagination.pageSize, dateRange, paymentType, brandFilter, buyerFilter, searchText]);
 
   // 구매 삭제
   const handleDelete = async (id: string) => {
@@ -225,8 +241,32 @@ const PurchaseListPage: React.FC = () => {
     });
   };
 
-  // 테이블 컬럼 정의 (거래번호/구매일/구매처/상품사진/상품번호/상품명/사이즈/개수/총액/결제방식/구매자/상태/등록시간/작업)
-  const columns = getColumns(navigate, handleDelete);
+  // 입고 확인 (모달은 PurchaseListPageColumns에서 처리)
+  const handleConfirm = async (id: string) => {
+    try {
+      await purchaseService.confirmPurchase(id);
+      message.success('입고 확인이 완료되었습니다');
+      fetchPurchases();
+      fetchAllPurchases();
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '입고 확인 실패');
+    }
+  };
+
+  // 입고 확인 취소 (모달은 PurchaseListPageColumns에서 처리)
+  const handleUnconfirm = async (id: string) => {
+    try {
+      await purchaseService.unconfirmPurchase(id);
+      message.success('입고 확인이 취소되었습니다');
+      fetchPurchases();
+      fetchAllPurchases();
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '입고 확인 취소 실패');
+    }
+  };
+
+  // 테이블 컬럼 정의
+  const columns = getColumns(navigate, handleDelete, handleConfirm, handleUnconfirm, currentUser?.role);
 
   // 행 선택 설정
   const rowSelection = {
@@ -498,6 +538,7 @@ const PurchaseListPage: React.FC = () => {
           </Col>
           <Col span={3}>
             <Select
+              mode="multiple"
               style={{ width: '100%' }}
               placeholder="브랜드"
               allowClear
@@ -507,6 +548,8 @@ const PurchaseListPage: React.FC = () => {
               filterOption={(input, option) =>
                 String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
               }
+              maxTagCount={0}
+              maxTagPlaceholder={(omittedValues) => `브랜드 ${omittedValues.length}개`}
             >
               {brands.map(brand => (
                 <Option key={brand.id} value={brand.name}>{brand.name}</Option>
@@ -515,18 +558,41 @@ const PurchaseListPage: React.FC = () => {
           </Col>
           <Col span={3}>
             <Select
+              mode="multiple"
               style={{ width: '100%' }}
               placeholder="결제방식"
               allowClear
               value={paymentType}
               onChange={setPaymentType}
+              maxTagCount={0}
+              maxTagPlaceholder={(omittedValues) => `결제방식 ${omittedValues.length}개`}
             >
               <Option value="corp_card">법인카드</Option>
               <Option value="corp_account">법인계좌</Option>
               <Option value="personal_card">개인카드</Option>
             </Select>
           </Col>
-          <Col span={7} style={{ textAlign: 'right' }}>
+          <Col span={3}>
+            <Select
+              mode="multiple"
+              style={{ width: '100%' }}
+              placeholder="구매자"
+              allowClear
+              value={buyerFilter}
+              onChange={setBuyerFilter}
+              showSearch
+              filterOption={(input, option) =>
+                String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
+              }
+              maxTagCount={0}
+              maxTagPlaceholder={(omittedValues) => `구매자 ${omittedValues.length}명`}
+            >
+              {users.map(user => (
+                <Option key={user.id} value={user.id}>{user.full_name}</Option>
+              ))}
+            </Select>
+          </Col>
+          <Col span={4} style={{ textAlign: 'right' }}>
             <Space>
               {selectedRowKeys.length > 0 && (
                   <Button
@@ -541,6 +607,7 @@ const PurchaseListPage: React.FC = () => {
                 type="primary"
                 icon={<PlusOutlined />}
                 onClick={() => navigate('/purchases/new')}
+                style={{ backgroundColor: '#0d1117', borderColor: '#0d1117' }}
               >
                 구매 등록
               </Button>

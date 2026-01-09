@@ -1,15 +1,32 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from app.db.database import SessionLocal, engine
 from app.models import User, Brand, Product
 from app.core.security import get_password_hash
 from app.models.user import UserRole
 import uuid
 
+def run_migrations() -> None:
+    """스키마 마이그레이션 실행"""
+    with engine.connect() as conn:
+        # feature_requests 테이블의 content 컬럼을 nullable로 변경
+        try:
+            conn.execute(text("ALTER TABLE feature_requests ALTER COLUMN content DROP NOT NULL"))
+            conn.commit()
+            print("Migration: feature_requests.content set to nullable")
+        except Exception as e:
+            # 이미 nullable이거나 테이블이 없는 경우 무시
+            conn.rollback()
+            print(f"Migration skipped or failed: {e}")
+
 def init_db() -> None:
     """데이터베이스 초기화"""
     # 테이블 생성 (이미 존재하면 무시)
     from app.db.database import Base
     Base.metadata.create_all(bind=engine)
+
+    # 마이그레이션 실행
+    run_migrations()
 
     db = SessionLocal()
     try:

@@ -259,7 +259,7 @@ const TrendingProductManagePage: React.FC = () => {
           <Col>
             <div style={{ marginBottom: 4, fontSize: 12, color: 'transparent' }}>-</div>
             <Upload {...uploadProps}>
-              <Button icon={<UploadOutlined />} loading={uploading} type="primary">
+              <Button icon={<UploadOutlined />} loading={uploading} type="primary" style={{ backgroundColor: '#0d1117', borderColor: '#0d1117' }}>
                 엑셀 파일 업로드
               </Button>
             </Upload>

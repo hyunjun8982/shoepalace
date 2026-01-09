@@ -20,10 +20,13 @@ import {
   SearchOutlined,
   GiftOutlined,
   DownloadOutlined,
+  BulbOutlined,
+  ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { notificationService } from '../../services/notification';
+import api from '../../services/api';
 import { Notification, NotificationType } from '../../types/notification';
 import ChatDropdown from '../Chat/ChatDropdown';
 import dayjs from 'dayjs';
@@ -64,6 +67,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     '/sales': '판매 관리',
     '/sales/new': '판매 등록',
     '/inventory': '재고 관리',
+    '/inventory/defective': '불량 물품 관리',
     '/warehouses': '창고 관리',
     '/settlements': '정산 관리',
     '/users': '사용자 관리',
@@ -74,6 +78,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     '/reports': '보고서',
     '/settings': '설정',
     '/profile': '프로필',
+    '/feature-requests': '요청사항',
   };
 
   // 브레드크럼 아이템 생성
@@ -181,20 +186,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   // 세션 연장
   const handleExtendSession = async () => {
     try {
-      const token = localStorage.getItem('access_token');
-      if (!token) return;
-
-      // 현재 토큰으로 API 호출하여 새 토큰 발급
-      const response = await fetch('/api/v1/auth/refresh', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        localStorage.setItem('access_token', data.access_token);
+      const response = await api.post('/auth/refresh');
+      if (response.data?.access_token) {
+        localStorage.setItem('access_token', response.data.access_token);
         window.location.reload(); // 새 토큰으로 페이지 리로드
       }
     } catch (error) {
@@ -281,55 +275,85 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       label: '대시보드',
     },
     {
-      key: '/purchases',
+      key: 'inout-management',
       icon: <ShoppingCartOutlined />,
-      label: '구매 관리',
-      roles: ['admin', 'buyer'],
+      label: '입출고 관리',
+      roles: ['admin', 'buyer', 'seller'],
+      children: [
+        {
+          key: '/purchases',
+          icon: <ShoppingCartOutlined />,
+          label: '구매 관리',
+          roles: ['admin', 'buyer'],
+        },
+        {
+          key: '/sales',
+          icon: <DollarOutlined />,
+          label: '판매 관리',
+          roles: ['admin', 'seller'],
+        },
+      ],
     },
     {
-      key: '/sales',
-      icon: <DollarOutlined />,
-      label: '판매 관리',
-      roles: ['admin', 'seller'],
-    },
-    {
-      key: '/inventory',
+      key: 'item-management',
       icon: <InboxOutlined />,
-      label: '재고 관리',
+      label: '물품 관리',
+      children: [
+        {
+          key: '/inventory',
+          icon: <InboxOutlined />,
+          label: '재고 관리',
+        },
+        {
+          key: '/inventory/defective',
+          icon: <ExclamationCircleOutlined />,
+          label: '불량 물품',
+        },
+      ],
     },
     {
-      key: '/warehouses',
-      icon: <HomeOutlined />,
-      label: '창고 관리',
-    },
-    {
-      key: '/products',
+      key: 'product-info-management',
       icon: <TeamOutlined />,
-      label: '상품 관리',
+      label: '상품 정보 관리',
+      children: [
+        {
+          key: '/products',
+          icon: <TeamOutlined />,
+          label: '상품 목록',
+        },
+        {
+          key: '/product-importer',
+          icon: <CloudDownloadOutlined />,
+          label: '상품 자동 수집',
+          roles: ['admin'],
+        },
+        {
+          key: '/trending-products',
+          icon: <SearchOutlined />,
+          label: '인기 상품 등록',
+          roles: ['admin'],
+        },
+      ],
     },
     {
-      key: '/trending-products',
-      icon: <TeamOutlined />,
-      label: '인기상품 관리',
+      key: 'etc-management',
+      icon: <BulbOutlined />,
+      label: '기타',
       roles: ['admin'],
+      children: [
+        {
+          key: '/feature-requests',
+          icon: <BulbOutlined />,
+          label: '요청 게시판',
+        },
+        {
+          key: '/adidas',
+          icon: <GiftOutlined />,
+          label: '아디다스 쿠폰',
+          roles: ['admin'],
+        },
+      ],
     },
-    {
-      key: '/product-importer',
-      icon: <CloudDownloadOutlined />,
-      label: '상품 자동 수집',
-      roles: ['admin'],
-    },
-    {
-      key: '/adidas',
-      icon: <GiftOutlined />,
-      label: '아디다스 쿠폰',
-      roles: ['admin'],
-    },
-    // {
-    //   key: '/settlements',
-    //   icon: <CalculatorOutlined />,
-    //   label: '정산 관리',
-    // },
     {
       key: '/users',
       icon: <UserOutlined />,
@@ -338,11 +362,29 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     },
   ];
 
-  // 사용자 권한에 따른 메뉴 필터링
-  const filteredMenuItems = menuItems.filter(item => {
-    if (!item.roles) return true;
-    return item.roles.includes(user?.role || '');
-  });
+  // 사용자 권한에 따른 메뉴 필터링 (자식 메뉴도 필터링)
+  const filteredMenuItems = menuItems.map(item => {
+    // 자식이 있는 경우
+    if (item.children) {
+      const filteredChildren = item.children.filter(child => {
+        if (!child.roles) return true;
+        return child.roles.includes(user?.role || '');
+      });
+
+      // 필터링된 자식이 없으면 부모도 제외
+      if (filteredChildren.length === 0) return null;
+
+      // 부모의 roles 체크
+      if (item.roles && !item.roles.includes(user?.role || '')) return null;
+
+      return { ...item, children: filteredChildren };
+    }
+
+    // 자식이 없는 경우 기존 로직
+    if (!item.roles) return item;
+    if (item.roles.includes(user?.role || '')) return item;
+    return null;
+  }).filter(Boolean) as MenuItem[];
 
   const handleMenuClick = ({ key }: { key: string }) => {
     // '/' 로 시작하는 경로만 네비게이션 (서브메뉴 부모는 무시)
@@ -351,13 +393,50 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     }
   };
 
-  // 현재 경로의 첫 번째 세그먼트를 기준으로 선택된 메뉴 키 결정
+  // 현재 경로에 맞는 메뉴 키 결정
   const selectedMenuKey = useMemo(() => {
-    const pathSegments = location.pathname.split('/').filter(segment => segment);
-    if (pathSegments.length === 0) return '/dashboard';
+    const pathname = location.pathname;
+
+    // 전체 경로가 메뉴 아이템과 일치하는지 확인
+    const findMatchingKey = (items: MenuItem[]): string | null => {
+      for (const item of items) {
+        // 정확히 일치하는 경우 (자식이 없는 최상위 메뉴)
+        if (item.key === pathname && !item.children) {
+          return item.key;
+        }
+
+        // 자식 메뉴 검색
+        if (item.children) {
+          for (const child of item.children) {
+            if (child.key === pathname) {
+              return child.key;
+            }
+          }
+        }
+      }
+      return null;
+    };
+
+    const exactMatch = findMatchingKey(menuItems);
+    if (exactMatch) {
+      return exactMatch;
+    }
+
+    // 일치하는 키가 없으면 첫 번째 세그먼트 기준
+    const pathSegments = pathname.split('/').filter(segment => segment);
+    if (pathSegments.length === 0) {
+      return '/dashboard';
+    }
 
     return `/${pathSegments[0]}`;
   }, [location.pathname]);
+
+  // 모든 서브메뉴를 기본으로 펼쳐둠
+  const defaultOpenKeys = useMemo(() => {
+    return menuItems
+      .filter(item => item.children && item.children.length > 0)
+      .map(item => item.key);
+  }, []);
 
   const userMenuItems = [
     {
@@ -440,10 +519,11 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         <Menu
           mode="inline"
           selectedKeys={[selectedMenuKey]}
+          defaultOpenKeys={defaultOpenKeys}
           onClick={handleMenuClick}
           style={{
             border: 'none',
-            height: 'calc(100vh - 64px - 48px)',
+            height: 'calc(100vh - 64px - 48px - 32px)',
             overflowY: 'auto',
             background: 'transparent',
             padding: '8px',
@@ -453,13 +533,44 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             key: item.key,
             icon: item.icon,
             label: item.label,
-            ...(item.children ? { children: item.children } : {}),
+            ...(item.children ? {
+              children: item.children.map(child => ({
+                key: child.key,
+                icon: child.icon,
+                label: child.label,
+                style: {
+                  borderRadius: 6,
+                  margin: '2px 0',
+                },
+              }))
+            } : {}),
             style: {
               borderRadius: 8,
               margin: '4px 0',
             },
           }))}
         />
+        {/* 버전 표시 */}
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 48,
+            width: '100%',
+            height: 32,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'transparent',
+          }}
+        >
+          <span style={{
+            fontSize: 13,
+            color: '#94a3b8',
+            fontWeight: 600,
+          }}>
+            {collapsed ? 'v1.0' : 'Beta v1.0'}
+          </span>
+        </div>
         <div
           style={{
             position: 'absolute',
@@ -567,20 +678,26 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   background: sessionTimeRemaining < 300000 ? '#ffd8bf' : '#bae7ff',
                   margin: '0 2px',
                 }} />
-                <span
-                  onClick={handleExtendSession}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleExtendSession();
+                  }}
                   style={{
                     fontSize: 13,
                     color: '#8c8c8c',
                     cursor: 'pointer',
                     lineHeight: '22px',
-                    padding: '0 4px',
+                    padding: '0 6px',
+                    border: 'none',
+                    background: 'transparent',
+                    outline: 'none',
                   }}
                   onMouseEnter={(e) => e.currentTarget.style.color = '#262626'}
                   onMouseLeave={(e) => e.currentTarget.style.color = '#8c8c8c'}
                 >
                   연장
-                </span>
+                </button>
               </div>
             )}
 

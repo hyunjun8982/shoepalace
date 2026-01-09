@@ -4,7 +4,327 @@ from appium import webdriver
 from appium.options.android import UiAutomator2Options
 from appium.webdriver.common.appiumby import AppiumBy
 
-def login(email: str, password: str, appium_url: str = "http://127.0.0.1:4723"):
+
+def login_with_driver(driver, email: str, password: str) -> bool:
+    """
+    기존 Appium 드라이버를 사용하여 로그인 (벌크 처리용)
+
+    Args:
+        driver: Appium WebDriver 인스턴스
+        email: 이메일 주소
+        password: 비밀번호
+
+    Returns:
+        bool: 로그인 성공 여부
+    """
+    try:
+        print("=" * 60)
+        print("Adidas 로그인 (드라이버 재사용)")
+        print("=" * 60)
+        print(f"계정: {email}\n")
+
+        # [1단계] 앱 실행 확인
+        print("[1단계] 앱 실행 확인")
+        current_pkg = driver.current_package
+        print(f"  현재 패키지: {current_pkg}")
+
+        if current_pkg != "com.adidas.app":
+            print("  앱 실행 중...")
+            driver.activate_app("com.adidas.app")
+            time.sleep(3)
+            print("  [OK] 앱 실행 완료")
+
+        # 앱 로딩 대기 및 상태 확인 (앱 데이터 초기화 후이므로 로그인 화면이어야 함)
+        print("  앱 상태 확인 중...")
+        login_screen_found = False
+        for wait_i in range(10):
+            time.sleep(1)
+            page_source = driver.page_source
+
+            # 로그인 화면인지 확인
+            if any(text in page_source for text in [
+                'login.email.input', '가입 또는 로그인하기', 'JOIN OR LOG IN', '로그인하기'
+            ]):
+                print(f"  [OK] 로그인 화면 확인됨 ({wait_i+1}초)")
+                login_screen_found = True
+                break
+
+        if not login_screen_found:
+            print("  [WARNING] 로그인 화면을 찾지 못함, 그래도 진행")
+
+        # [2단계] 로그인 시작
+        print("\n[2단계] 로그인 시작")
+
+        page_source = driver.page_source
+
+        # 현재 화면에서 바로 "로그인하기" 버튼 찾기
+        login_button_found = False
+        if '로그인하기' in page_source:
+            print("\n[광고 화면] 하단 '로그인하기' 버튼으로 시작")
+            try:
+                login_btn = driver.find_element(AppiumBy.XPATH, "//*[@text='로그인하기']")
+                login_btn.click()
+                print("  [OK] 광고 화면에서 로그인 시작")
+                time.sleep(2)
+                login_button_found = True
+            except:
+                print("  [시도] X 버튼으로 광고 닫기")
+                closed = False
+                for desc in ['Close', 'close', '닫기', 'Dismiss', 'dismiss']:
+                    try:
+                        close_btn = driver.find_element(AppiumBy.XPATH, f"//*[@content-desc='{desc}']")
+                        close_btn.click()
+                        time.sleep(2)
+                        print(f"  [OK] 광고 X 버튼 클릭 (content-desc: {desc})")
+                        closed = True
+                        break
+                    except:
+                        continue
+
+                if not closed:
+                    try:
+                        close_btn = driver.find_element(AppiumBy.XPATH, "//android.widget.ImageButton")
+                        close_btn.click()
+                        time.sleep(2)
+                        print("  [OK] 광고 X 버튼 클릭 (ImageButton)")
+                    except:
+                        print("  [WARNING] X 버튼을 찾을 수 없음")
+
+                login_button_found = False
+        else:
+            login_button_found = False
+
+        # [3단계] 가입 또는 로그인하기 버튼 클릭
+        if not login_button_found:
+            print("\n[3단계] '가입 또는 로그인하기' 버튼 찾기")
+
+            for desc in ['지금 로그인하기', '가입 또는 로그인하기', 'JOIN OR LOG IN']:
+                try:
+                    login_btn = driver.find_element(AppiumBy.XPATH, f"//*[@content-desc='{desc}']")
+                    login_btn.click()
+                    print(f"  [OK] content-desc '{desc}' 버튼 클릭 성공")
+                    login_button_found = True
+                    time.sleep(3)
+                    break
+                except:
+                    pass
+
+            if not login_button_found:
+                for text in ['가입 또는 로그인하기', 'JOIN OR LOG IN', '로그인', 'LOG IN']:
+                    try:
+                        login_btn = driver.find_element(AppiumBy.XPATH, f"//*[@text='{text}']")
+                        login_btn.click()
+                        print(f"  [OK] '{text}' 버튼 클릭 성공")
+                        login_button_found = True
+                        time.sleep(2)
+                        break
+                    except:
+                        pass
+
+        if not login_button_found:
+            print("  [ERROR] 로그인 버튼을 찾을 수 없습니다")
+            return False
+
+        # [4단계] 이메일 입력
+        print("\n[4단계] 이메일 입력")
+        time.sleep(3)
+
+        email_entered = False
+
+        try:
+            email_field = driver.find_element(AppiumBy.XPATH,
+                "//android.widget.EditText[@resource-id='login.email.input']")
+            email_field.clear()
+            email_field.send_keys(email)
+            print(f"  [OK] 이메일 입력 완료 (resource-id)")
+            email_entered = True
+        except:
+            pass
+
+        if not email_entered:
+            try:
+                email_field = driver.find_element(AppiumBy.XPATH,
+                    "//android.webkit.WebView//android.widget.EditText[@resource-id='login.email.input']")
+                email_field.clear()
+                email_field.send_keys(email)
+                print(f"  [OK] 이메일 입력 완료 (WebView 내 resource-id)")
+                email_entered = True
+            except:
+                pass
+
+        if not email_entered:
+            try:
+                email_field = driver.find_element(AppiumBy.XPATH,
+                    "(//android.webkit.WebView//android.widget.EditText)[1]")
+                email_field.clear()
+                email_field.send_keys(email)
+                print(f"  [OK] 이메일 입력 완료 (WebView 내 첫번째 EditText)")
+                email_entered = True
+            except:
+                pass
+
+        if not email_entered:
+            print("  [ERROR] 이메일 필드를 찾을 수 없습니다")
+            return False
+
+        time.sleep(1)
+
+        # [5단계] 비밀번호 입력
+        print("\n[5단계] 비밀번호 입력")
+
+        password_entered = False
+
+        try:
+            pwd_field = driver.find_element(AppiumBy.XPATH,
+                "//android.widget.EditText[@resource-id='login.password.input']")
+            pwd_field.clear()
+            pwd_field.send_keys(password)
+            print(f"  [OK] 비밀번호 입력 완료 (resource-id)")
+            password_entered = True
+        except:
+            pass
+
+        if not password_entered:
+            try:
+                pwd_field = driver.find_element(AppiumBy.XPATH,
+                    "//android.webkit.WebView//android.widget.EditText[@resource-id='login.password.input']")
+                pwd_field.clear()
+                pwd_field.send_keys(password)
+                print(f"  [OK] 비밀번호 입력 완료 (WebView 내 resource-id)")
+                password_entered = True
+            except:
+                pass
+
+        if not password_entered:
+            try:
+                pwd_field = driver.find_element(AppiumBy.XPATH,
+                    "(//android.webkit.WebView//android.widget.EditText)[2]")
+                pwd_field.clear()
+                pwd_field.send_keys(password)
+                print(f"  [OK] 비밀번호 입력 완료 (WebView 내 두번째 EditText)")
+                password_entered = True
+            except:
+                pass
+
+        if not password_entered:
+            print("  [ERROR] 비밀번호 필드를 찾을 수 없습니다")
+            return False
+
+        time.sleep(1)
+
+        # [6단계] 로그인하기 버튼 클릭
+        print("\n[6단계] '로그인하기' 버튼 클릭")
+
+        submit_clicked = False
+
+        try:
+            submit_btn = driver.find_element(AppiumBy.XPATH,
+                "//android.widget.Button[@resource-id='login-submit-button']")
+            submit_btn.click()
+            print(f"  [OK] 로그인 버튼 클릭 (resource-id)")
+            submit_clicked = True
+        except:
+            pass
+
+        if not submit_clicked:
+            for text in ['로그인하기', 'LOG IN', '로그인']:
+                try:
+                    submit_btn = driver.find_element(AppiumBy.XPATH,
+                        f"//android.widget.Button[@text='{text}']")
+                    submit_btn.click()
+                    print(f"  [OK] '{text}' 버튼 클릭 성공")
+                    submit_clicked = True
+                    break
+                except:
+                    pass
+
+        if not submit_clicked:
+            try:
+                buttons = driver.find_elements(AppiumBy.CLASS_NAME, "android.widget.Button")
+                for btn in buttons:
+                    btn.click()
+                    print(f"  [OK] 버튼 클릭 완료 (Button class)")
+                    submit_clicked = True
+                    break
+            except:
+                pass
+
+        if not submit_clicked:
+            print("  [ERROR] 로그인 버튼을 찾을 수 없습니다")
+            return False
+
+        # [7단계] 로그인 처리 대기
+        print("\n로그인 처리 중...")
+        time.sleep(3)
+
+        # [8단계] 로그인 결과 확인
+        print("\n[7단계] 로그인 결과 확인")
+
+        time.sleep(2)
+        page_source = driver.page_source
+
+        error_messages = [
+            '잘못된 이메일/비밀번호입니다',
+            'Invalid email or password',
+            '다시 시도하세요',
+            'Try again',
+            '이메일 또는 비밀번호가',
+            '입력한 정보가'
+        ]
+
+        for error_msg in error_messages:
+            if error_msg in page_source:
+                print(f"  [FAILED] 로그인 실패: {error_msg}")
+
+                # 웹뷰 닫기 (더 견고한 방법)
+                print("  [웹뷰 닫기] 로그인 실패 후 웹뷰 닫는 중...")
+                closed = False
+
+                # 방법 1: X 버튼 또는 닫기 버튼 (content-desc)
+                for desc in ['Close', 'close', '닫기', 'X', 'Dismiss', 'dismiss']:
+                    try:
+                        close_btn = driver.find_element(AppiumBy.XPATH, f"//*[@content-desc='{desc}']")
+                        close_btn.click()
+                        print(f"  [웹뷰 닫기] X 버튼 클릭 (content-desc: {desc})")
+                        closed = True
+                        time.sleep(0.5)
+                        break
+                    except:
+                        pass
+
+                # 방법 2: ImageButton 찾기
+                if not closed:
+                    try:
+                        image_btn = driver.find_element(AppiumBy.XPATH, "//android.widget.ImageButton")
+                        image_btn.click()
+                        print("  [웹뷰 닫기] ImageButton 클릭")
+                        closed = True
+                        time.sleep(0.5)
+                    except:
+                        pass
+
+                # 방법 3: 뒤로가기 키
+                if not closed:
+                    try:
+                        driver.press_keycode(4)
+                        print("  [웹뷰 닫기] 뒤로가기 키 사용")
+                        time.sleep(0.5)
+                    except:
+                        pass
+
+                return False
+
+        print("  [SUCCESS] 로그인 성공!")
+        return True
+
+    except Exception as e:
+        print(f"\n[ERROR] 로그인 예외 발생: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def login(email: str, password: str, appium_url: str = "http://127.0.0.1:4723/wd/hub"):
     """
     Adidas 앱 로그인
 
@@ -19,21 +339,10 @@ def login(email: str, password: str, appium_url: str = "http://127.0.0.1:4723"):
     Raises:
         ConnectionError: Appium 서버 연결 실패 시
     """
+    from app.services.appium_utils import get_appium_options
 
-    # Appium 연결 설정
-    options = UiAutomator2Options()
-    options.platform_name = "Android"
-    options.device_name = "emulator-5554"
-    options.app_package = "com.adidas.app"
-    options.app_activity = ".MainActivity"
-    options.automation_name = "UiAutomator2"
-    options.no_reset = True
-
-    # Chrome WebView 사용 (Samsung 브라우저 대신)
-    options.set_capability('chromedriverExecutable', '')  # 자동으로 chromedriver 다운로드
-    options.set_capability('recreateChromeDriverSessions', True)
-    options.set_capability('nativeWebScreenshot', True)
-    options.set_capability('autoWebview', False)  # 수동으로 webview 전환
+    # Appium 연결 설정 (자동 디바이스 감지)
+    options = get_appium_options()
 
     try:
         driver = webdriver.Remote(appium_url, options=options)

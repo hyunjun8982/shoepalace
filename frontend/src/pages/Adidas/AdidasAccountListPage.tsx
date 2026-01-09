@@ -17,6 +17,8 @@ import {
   Checkbox,
   Dropdown,
   Badge,
+  Progress,
+  Radio,
 } from 'antd';
 import {
   PlusOutlined,
@@ -29,6 +31,11 @@ import {
   ReloadOutlined,
   SearchOutlined,
   FilterOutlined,
+  GlobalOutlined,
+  MobileOutlined,
+  SyncOutlined,
+  DesktopOutlined,
+  CloudServerOutlined,
 } from '@ant-design/icons';
 import { adidasAccountService } from '../../services/adidasAccount';
 import { AdidasAccount, AdidasAccountCreate } from '../../types/adidasAccount';
@@ -79,6 +86,23 @@ const AdidasAccountListPage: React.FC = () => {
     isSold: boolean;
   } | null>(null);
   const [voucherSoldTo, setVoucherSoldTo] = useState('');
+
+  // 웹 정보 조회 진행 상황 모니터링 상태
+  const [webFetchProgressId, setWebFetchProgressId] = useState<string | null>(null);
+  const [webFetchProgress, setWebFetchProgress] = useState<{
+    total: number;
+    current: number;
+    current_email: string;
+    status: string;
+    results: any[];
+    failed_accounts: { id: string; email: string; error: string }[];
+  } | null>(null);
+  const [webFetchModalVisible, setWebFetchModalVisible] = useState(false);
+  const [mobileFallbackModalVisible, setMobileFallbackModalVisible] = useState(false);
+
+  // 웹 조회 모드 선택 상태
+  const [webFetchModeModalVisible, setWebFetchModeModalVisible] = useState(false);
+  const [selectedWebFetchMode, setSelectedWebFetchMode] = useState<'local' | 'container'>('container');
 
   // 필터 변경 시 1페이지로 리셋
   useEffect(() => {
@@ -342,7 +366,7 @@ const AdidasAccountListPage: React.FC = () => {
     }
   };
 
-  // 선택 계정 일괄 정보 조회
+  // 선택 계정 일괄 정보 조회 (모바일 전용 - 기존)
   const handleBulkFetchInfo = async () => {
     if (selectedRowKeys.length === 0) {
       message.warning('조회할 계정을 선택하세요');
@@ -374,6 +398,115 @@ const AdidasAccountListPage: React.FC = () => {
     } catch (error: any) {
       const errorMsg = error.response?.data?.detail || '일괄 정보 조회에 실패했습니다';
       message.error({ content: errorMsg, key: 'bulkFetch' });
+    }
+  };
+
+  // 웹 크롤링 일괄 정보 조회 - 모드 선택 모달 표시
+  const handleBulkWebFetchInfo = () => {
+    if (selectedRowKeys.length === 0) {
+      message.warning('조회할 계정을 선택하세요');
+      return;
+    }
+    // 모드 선택 모달 표시
+    setWebFetchModeModalVisible(true);
+  };
+
+  // 실제 웹 정보 조회 실행 (모드 선택 후)
+  const executeWebFetchInfo = async (mode: 'local' | 'container') => {
+    try {
+      const orderedAccountIds = filteredAccounts
+        .filter(acc => selectedRowKeys.includes(acc.id))
+        .map(acc => acc.id);
+
+      const modeLabel = mode === 'local' ? '로컬 GUI' : '컨테이너';
+      message.loading({ content: `${selectedRowKeys.length}개 계정 ${modeLabel} 웹 정보 조회 시작...`, key: 'webFetch' });
+
+      // 모드 파라미터와 함께 API 호출
+      const response = await adidasAccountService.bulkWebFetchInfoWithMode(orderedAccountIds, mode);
+
+      if (response.success && response.progress_id) {
+        setWebFetchProgressId(response.progress_id);
+        setWebFetchProgress({
+          total: selectedRowKeys.length,
+          current: 0,
+          current_email: '',
+          status: 'starting',
+          results: [],
+          failed_accounts: [],
+        });
+        setFallbackShown(false);  // 새 조회 시작 시 초기화
+        setWebFetchModalVisible(true);
+        setWebFetchModeModalVisible(false);
+        message.success({ content: response.message, key: 'webFetch' });
+        setSelectedRowKeys([]);
+      } else {
+        message.error({ content: response.message || '웹 정보 조회 시작에 실패했습니다', key: 'webFetch' });
+      }
+    } catch (error: any) {
+      const errorMsg = error.response?.data?.detail || '웹 정보 조회에 실패했습니다';
+      message.error({ content: errorMsg, key: 'webFetch' });
+    }
+  };
+
+  // 웹 정보 조회 진행 상황 폴링
+  const [fallbackShown, setFallbackShown] = useState(false);
+
+  useEffect(() => {
+    if (!webFetchProgressId || !webFetchModalVisible) return;
+
+    // 완료 상태면 더 이상 폴링하지 않음
+    if (webFetchProgress?.status === 'completed') return;
+
+    const pollProgress = async () => {
+      try {
+        const progress = await adidasAccountService.getWebFetchProgress(webFetchProgressId);
+        setWebFetchProgress(progress);
+
+        // 완료되면 목록 새로고침
+        if (progress.status === 'completed') {
+          loadAccounts();
+
+          // 실패한 계정이 있고 아직 폴백 모달을 안 띄웠으면 표시
+          if (progress.failed_accounts && progress.failed_accounts.length > 0 && !fallbackShown) {
+            setFallbackShown(true);
+            setTimeout(() => {
+              setMobileFallbackModalVisible(true);
+            }, 1000);
+          }
+        }
+      } catch (error) {
+        console.error('진행 상황 조회 오류:', error);
+      }
+    };
+
+    // 1초마다 폴링
+    const intervalId = setInterval(pollProgress, 1000);
+    pollProgress(); // 즉시 한번 실행
+
+    return () => clearInterval(intervalId);
+  }, [webFetchProgressId, webFetchModalVisible, webFetchProgress?.status, fallbackShown]);
+
+  // 실패한 계정 모바일로 재시도
+  const handleMobileFallback = async () => {
+    if (!webFetchProgress?.failed_accounts || webFetchProgress.failed_accounts.length === 0) {
+      return;
+    }
+
+    try {
+      const failedIds = webFetchProgress.failed_accounts.map(acc => acc.id);
+
+      message.loading({ content: `${failedIds.length}개 계정 모바일 재시도 중...`, key: 'mobileFallback' });
+
+      const response = await adidasAccountService.bulkMobileFetchFailed(failedIds);
+
+      if (response.success) {
+        message.success({ content: response.message, key: 'mobileFallback' });
+        setMobileFallbackModalVisible(false);
+        loadAccounts();
+      }
+    } catch (error: any) {
+      const errorMsg = error.response?.data?.detail || '모바일 재시도에 실패했습니다';
+      message.error({ content: errorMsg, key: 'mobileFallback' });
     }
   };
 
@@ -1069,7 +1202,7 @@ const AdidasAccountListPage: React.FC = () => {
       title: '조회 현황',
       dataIndex: 'fetch_status',
       key: 'fetch_status',
-      width: 200,
+      width: 220,
       render: (fetchStatus: string) => {
         if (!fetchStatus) return '-';
 
@@ -1091,7 +1224,11 @@ const AdidasAccountListPage: React.FC = () => {
                 color = 'warning';
               }
 
-              return <Tag key={index} color={color}>{line}</Tag>;
+              return (
+                <Tag key={index} color={color}>
+                  {line}
+                </Tag>
+              );
             })}
           </div>
         );
@@ -1359,7 +1496,19 @@ const AdidasAccountListPage: React.FC = () => {
                     {selectedRowKeys.length}개 선택
                   </span>
                   <Button
-                    icon={<ReloadOutlined />}
+                    icon={<GlobalOutlined />}
+                    onClick={handleBulkWebFetchInfo}
+                    size="small"
+                    style={{
+                      backgroundColor: '#1890ff',
+                      color: '#fff',
+                      border: 'none'
+                    }}
+                  >
+                    웹 정보조회
+                  </Button>
+                  <Button
+                    icon={<MobileOutlined />}
                     onClick={handleBulkFetchInfo}
                     size="small"
                     style={{
@@ -1368,7 +1517,7 @@ const AdidasAccountListPage: React.FC = () => {
                       border: 'none'
                     }}
                   >
-                    선택 정보조회
+                    모바일 정보조회
                   </Button>
                   <Button
                     onClick={handleBulkIssueCoupon}
@@ -1753,6 +1902,296 @@ const AdidasAccountListPage: React.FC = () => {
               />
             </div>
           </div>
+        </div>
+      </Modal>
+
+      {/* 웹 정보 조회 진행 상황 모달 */}
+      <Modal
+        title={
+          <Space>
+            <GlobalOutlined />
+            웹 정보 조회 진행 상황
+          </Space>
+        }
+        open={webFetchModalVisible}
+        onCancel={() => {
+          if (webFetchProgress?.status === 'completed') {
+            setWebFetchModalVisible(false);
+            setWebFetchProgressId(null);
+            setWebFetchProgress(null);
+          }
+        }}
+        footer={
+          webFetchProgress?.status === 'completed' ? (
+            <Button type="primary" onClick={() => {
+              setWebFetchModalVisible(false);
+              setWebFetchProgressId(null);
+              setWebFetchProgress(null);
+            }}>
+              닫기
+            </Button>
+          ) : null
+        }
+        closable={webFetchProgress?.status === 'completed'}
+        maskClosable={false}
+        width={600}
+      >
+        {webFetchProgress && (
+          <div style={{ padding: '16px 0' }}>
+            {/* 진행률 */}
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                <span style={{ fontWeight: 500 }}>
+                  {webFetchProgress.status === 'completed' ? '완료' : '처리 중...'}
+                </span>
+                <span>
+                  {webFetchProgress.current} / {webFetchProgress.total}
+                </span>
+              </div>
+              <Progress
+                percent={Math.round((webFetchProgress.current / webFetchProgress.total) * 100)}
+                status={webFetchProgress.status === 'completed' ? 'success' : 'active'}
+                strokeColor={{
+                  '0%': '#108ee9',
+                  '100%': '#87d068',
+                }}
+              />
+            </div>
+
+            {/* 현재 처리 중인 계정 */}
+            {webFetchProgress.status !== 'completed' && webFetchProgress.current_email && (
+              <div style={{ marginBottom: 24, padding: 12, background: '#f5f5f5', borderRadius: 8 }}>
+                <SyncOutlined spin style={{ marginRight: 8, color: '#1890ff' }} />
+                <span>현재 처리 중: <strong>{webFetchProgress.current_email}</strong></span>
+              </div>
+            )}
+
+            {/* 처리 결과 목록 */}
+            <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+              <div style={{ fontWeight: 500, marginBottom: 8 }}>처리 결과</div>
+              {webFetchProgress.results.length === 0 ? (
+                <div style={{ color: '#999', textAlign: 'center', padding: 20 }}>
+                  아직 처리된 계정이 없습니다
+                </div>
+              ) : (
+                <Table
+                  dataSource={webFetchProgress.results}
+                  rowKey="account_id"
+                  size="small"
+                  pagination={false}
+                  columns={[
+                    {
+                      title: '이메일',
+                      dataIndex: 'email',
+                      width: 180,
+                      ellipsis: true,
+                    },
+                    {
+                      title: '결과',
+                      dataIndex: 'success',
+                      width: 80,
+                      render: (success: boolean) => (
+                        <Tag color={success ? 'success' : 'error'}>
+                          {success ? '성공' : '실패'}
+                        </Tag>
+                      ),
+                    },
+                    {
+                      title: '이름',
+                      dataIndex: 'name',
+                      width: 80,
+                      render: (name: string, record: any) => name || record.error || '-',
+                    },
+                    {
+                      title: '포인트',
+                      dataIndex: 'points',
+                      width: 80,
+                      render: (points: number) => points?.toLocaleString() || '-',
+                    },
+                    {
+                      title: '소요시간',
+                      dataIndex: 'elapsed',
+                      width: 80,
+                      render: (elapsed: number) => elapsed ? `${elapsed.toFixed(1)}초` : '-',
+                    },
+                  ]}
+                />
+              )}
+            </div>
+
+            {/* 완료 시 요약 */}
+            {webFetchProgress.status === 'completed' && (
+              <div style={{ marginTop: 16, padding: 12, background: '#f6ffed', borderRadius: 8, border: '1px solid #b7eb8f' }}>
+                <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 8 }} />
+                <span>
+                  완료: 성공 {webFetchProgress.results.filter(r => r.success).length}개,
+                  실패 {webFetchProgress.failed_accounts?.length || 0}개
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {/* 모바일 폴백 질의 모달 */}
+      <Modal
+        title={
+          <Space>
+            <MobileOutlined />
+            웹 조회 실패 계정 처리
+          </Space>
+        }
+        open={mobileFallbackModalVisible}
+        onOk={handleMobileFallback}
+        onCancel={() => {
+          setMobileFallbackModalVisible(false);
+          // 상태 초기화
+          setWebFetchProgressId(null);
+          setWebFetchProgress(null);
+        }}
+        okText="모바일로 재시도"
+        cancelText="건너뛰기"
+        width={500}
+      >
+        {webFetchProgress?.failed_accounts && webFetchProgress.failed_accounts.length > 0 && (
+          <div>
+            <p style={{ marginBottom: 16 }}>
+              웹 크롤링으로 정보 조회에 실패한 계정이 {webFetchProgress.failed_accounts.length}개 있습니다.
+              <br />
+              모바일 앱 자동화로 재시도하시겠습니까?
+            </p>
+            <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 8 }}>
+              {webFetchProgress.failed_accounts.map((acc, idx) => (
+                <div key={acc.id} style={{ padding: '4px 8px', borderBottom: idx < webFetchProgress.failed_accounts.length - 1 ? '1px solid #f0f0f0' : 'none' }}>
+                  <span style={{ color: '#ff4d4f' }}>
+                    <CloseCircleOutlined style={{ marginRight: 8 }} />
+                  </span>
+                  <span>{acc.email}</span>
+                  <span style={{ color: '#999', marginLeft: 8, fontSize: 12 }}>
+                    ({acc.error})
+                  </span>
+                </div>
+              ))}
+            </div>
+            <p style={{ marginTop: 16, color: '#999', fontSize: 12 }}>
+              모바일 자동화는 Appium 서버가 실행 중이어야 합니다.
+            </p>
+          </div>
+        )}
+      </Modal>
+
+      {/* 웹 조회 모드 선택 모달 */}
+      <Modal
+        title={
+          <Space>
+            <GlobalOutlined />
+            웹 정보 조회 모드 선택
+          </Space>
+        }
+        open={webFetchModeModalVisible}
+        onOk={() => executeWebFetchInfo(selectedWebFetchMode)}
+        onCancel={() => setWebFetchModeModalVisible(false)}
+        okText="조회 시작"
+        cancelText="취소"
+        width={500}
+      >
+        <div style={{ padding: '16px 0' }}>
+          <p style={{ marginBottom: 16 }}>
+            {selectedRowKeys.length}개 계정의 웹 정보를 조회합니다.
+            <br />
+            실행 모드를 선택하세요.
+          </p>
+
+          <Radio.Group
+            value={selectedWebFetchMode}
+            onChange={(e) => setSelectedWebFetchMode(e.target.value)}
+            style={{ width: '100%' }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <Radio.Button
+                value="local"
+                style={{
+                  height: 'auto',
+                  padding: '12px 16px',
+                  borderRadius: 8,
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                  <DesktopOutlined style={{ fontSize: 24, marginTop: 2 }} />
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>로컬 GUI 모드</div>
+                    <div style={{ color: '#666', fontSize: 12, marginTop: 4 }}>
+                      로컬 Windows에서 Chrome 브라우저를 GUI로 실행합니다.
+                      <br />
+                      봇 차단 우회가 가능하며, 로컬 웹 서버(8002포트)가 필요합니다.
+                    </div>
+                  </div>
+                </div>
+              </Radio.Button>
+
+              <Radio.Button
+                value="container"
+                style={{
+                  height: 'auto',
+                  padding: '12px 16px',
+                  borderRadius: 8,
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                  <CloudServerOutlined style={{ fontSize: 24, marginTop: 2 }} />
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>컨테이너 Xvfb 모드</div>
+                    <div style={{ color: '#666', fontSize: 12, marginTop: 4 }}>
+                      Docker 컨테이너에서 Xvfb 가상 디스플레이로 실행합니다.
+                      <br />
+                      별도 설정 없이 사용 가능하며, 봇 탐지 우회가 적용됩니다.
+                    </div>
+                  </div>
+                </div>
+              </Radio.Button>
+            </div>
+          </Radio.Group>
+
+          {selectedWebFetchMode === 'local' && (
+            <div style={{
+              marginTop: 16,
+              padding: 12,
+              background: '#fffbe6',
+              border: '1px solid #ffe58f',
+              borderRadius: 8
+            }}>
+              <strong>로컬 웹 서버 실행 필요:</strong>
+              <div style={{ marginTop: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <code style={{
+                    fontSize: 12,
+                    background: '#f5f5f5',
+                    padding: '4px 8px',
+                    borderRadius: 4,
+                    flex: 1
+                  }}>
+                    backend\start_local_server.bat
+                  </code>
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      navigator.clipboard.writeText('backend\\start_local_server.bat');
+                      message.success('경로가 복사되었습니다');
+                    }}
+                  >
+                    복사
+                  </Button>
+                </div>
+                <span style={{ color: '#666', fontSize: 12 }}>
+                  위 배치 파일을 더블클릭하거나, 터미널에서 실행하세요.
+                </span>
+              </div>
+            </div>
+          )}
         </div>
       </Modal>
     </div>

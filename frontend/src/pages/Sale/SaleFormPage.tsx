@@ -773,6 +773,7 @@ const SaleFormPageNew: React.FC = () => {
                     icon={<SaveOutlined />}
                     onClick={handleShowConfirmModal}
                     size="large"
+                    style={{ backgroundColor: '#0d1117', borderColor: '#0d1117' }}
                   >
                     등록
                   </Button>

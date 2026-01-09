@@ -2,6 +2,7 @@ export enum SaleStatus {
   PENDING = 'pending',
   COMPLETED = 'completed',
   CANCELLED = 'cancelled',
+  RETURNED = 'returned',
 }
 
 export interface SaleItem {
@@ -88,7 +89,7 @@ export interface SaleListParams {
   limit?: number;
   start_date?: string;
   end_date?: string;
-  status?: SaleStatus;
-  brand_name?: string;
+  status?: SaleStatus | SaleStatus[];
+  brand_name?: string | string[];
   search?: string; // 고객명, 연락처 검색
 }

@@ -7,6 +7,9 @@ export interface Inventory {
   location?: string;
   min_stock_level: number;
   is_low_stock?: boolean;
+  is_defective?: boolean;
+  defect_reason?: string;
+  defect_marked_at?: string;
   last_updated?: string;
   created_at?: string;
   updated_at?: string;
@@ -29,6 +32,9 @@ export interface InventoryDetail extends Inventory {
   warehouse_name?: string;
   warehouse_location?: string;
   warehouse_image_url?: string;
+  is_defective?: boolean;
+  defect_reason?: string;
+  defect_image_url?: string;
 }
 
 export interface InventoryList {

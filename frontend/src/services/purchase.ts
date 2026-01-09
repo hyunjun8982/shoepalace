@@ -14,8 +14,11 @@ export const purchaseService = {
     limit?: number;
     start_date?: string;
     end_date?: string;
-    payment_type?: string;
-    status?: string;
+    payment_type?: string | string[];
+    status?: string | string[];
+    brand_name?: string | string[];
+    buyer_id?: string | string[];
+    search?: string;
   }): Promise<{ total: number; items: Purchase[] }> {
     const response = await api.get('/purchases', { params });
     return response.data;
@@ -53,6 +56,32 @@ export const purchaseService = {
         'Content-Type': 'multipart/form-data',
       },
     });
+    return response.data;
+  },
+
+  // 입고 확인
+  async confirmPurchase(id: string): Promise<Purchase> {
+    const response = await api.post(`/purchases/${id}/confirm`);
+    return response.data;
+  },
+
+  // 입고 확인 취소
+  async unconfirmPurchase(id: string): Promise<Purchase> {
+    const response = await api.post(`/purchases/${id}/unconfirm`);
+    return response.data;
+  },
+
+  // ============ 영수증 QR 코드 업로드 관련 ============
+
+  // 영수증 업로드 토큰 생성
+  async generateReceiptUploadToken(): Promise<{ token: string; expires_at: string }> {
+    const response = await api.post('/purchases/receipt-upload-token/generate');
+    return response.data;
+  },
+
+  // 영수증 업로드 상태 확인 (폴링용)
+  async checkReceiptUploadStatus(token: string): Promise<{ valid: boolean; uploaded_urls: string[]; upload_count: number }> {
+    const response = await api.get(`/purchases/receipt-upload-token/${token}/status`);
     return response.data;
   },
 };

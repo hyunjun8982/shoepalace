@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Card,
   Descriptions,
@@ -26,7 +26,12 @@ import {
   CloseOutlined,
   UploadOutlined,
   DeleteOutlined,
+  PictureOutlined,
+  QrcodeOutlined,
+  MobileOutlined,
+  SyncOutlined,
 } from '@ant-design/icons';
+import { QRCodeSVG } from 'qrcode.react';
 import { useParams, useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { Purchase, PurchaseItem, PaymentType } from '../../types/purchase';
@@ -51,6 +56,13 @@ const PurchaseDetailPage: React.FC = () => {
   const [form] = Form.useForm();
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [uploadLoading, setUploadLoading] = useState(false);
+
+  // QR 코드 영수증 업로드 관련 상태
+  const [qrCodeToken, setQrCodeToken] = useState<string | null>(null);
+  const [qrCodeLoading, setQrCodeLoading] = useState(false);
+  const [qrCodePolling, setQrCodePolling] = useState(false);
+  const [mobileUploadedUrls, setMobileUploadedUrls] = useState<string[]>([]);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (id) {
@@ -112,16 +124,16 @@ const PurchaseDetailPage: React.FC = () => {
     }
   };
 
-  // 영수증 삭제
+  // 영수증 전체 삭제
   const handleReceiptDelete = async () => {
-    if (!purchase?.receipt_url) return;
+    if (!purchase?.receipt_url && (!purchase?.receipt_urls || purchase.receipt_urls.length === 0)) return;
 
     try {
       setUploadLoading(true);
-      console.log('Deleting receipt:', purchase.receipt_url);
-      // 구매 정보 업데이트를 통해 영수증 URL을 null로 설정 (파일 삭제는 하지 않음)
-      await purchaseService.updatePurchase(id!, { receipt_url: null } as any);
-      message.success('영수증이 삭제되었습니다.');
+      console.log('Deleting all receipts');
+      // 구매 정보 업데이트를 통해 영수증 URL을 모두 삭제
+      await purchaseService.updatePurchase(id!, { receipt_url: null, receipt_urls: [] } as any);
+      message.success('영수증이 모두 삭제되었습니다.');
       // 구매 정보 다시 불러오기
       await fetchPurchaseDetail();
     } catch (error: any) {
@@ -132,6 +144,123 @@ const PurchaseDetailPage: React.FC = () => {
     } finally {
       setUploadLoading(false);
     }
+  };
+
+  // 영수증 개별 삭제
+  const handleReceiptDeleteSingle = async (index: number) => {
+    if (!purchase?.receipt_urls || purchase.receipt_urls.length === 0) return;
+
+    try {
+      setUploadLoading(true);
+      const newUrls = purchase.receipt_urls.filter((_, i) => i !== index);
+      await purchaseService.updatePurchase(id!, {
+        receipt_url: newUrls.length > 0 ? newUrls[0] : null,
+        receipt_urls: newUrls
+      } as any);
+      message.success('영수증이 삭제되었습니다.');
+      await fetchPurchaseDetail();
+    } catch (error: any) {
+      console.error('Delete failed:', error);
+      const errorMsg = error.response?.data?.detail || '영수증 삭제에 실패했습니다.';
+      message.error(errorMsg);
+    } finally {
+      setUploadLoading(false);
+    }
+  };
+
+  // QR 코드 폴링 정리
+  const cleanupPolling = useCallback(() => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    setQrCodePolling(false);
+  }, []);
+
+  // 컴포넌트 언마운트 시 폴링 정리
+  useEffect(() => {
+    return () => {
+      cleanupPolling();
+    };
+  }, [cleanupPolling]);
+
+  // QR 코드 URL 생성
+  const getQrCodeUrl = useCallback((token: string) => {
+    const baseUrl = window.location.origin;
+    return `${baseUrl}/mobile/receipt/${token}`;
+  }, []);
+
+  // QR 코드 생성
+  const handleGenerateQrCode = async () => {
+    setQrCodeLoading(true);
+    try {
+      const response = await purchaseService.generateReceiptUploadToken();
+      setQrCodeToken(response.token);
+      setMobileUploadedUrls([]);
+      startPolling(response.token);
+      message.success('QR 코드가 생성되었습니다. 모바일로 스캔해주세요.');
+    } catch (error: any) {
+      console.error('QR code generation failed:', error);
+      message.error('QR 코드 생성에 실패했습니다.');
+    } finally {
+      setQrCodeLoading(false);
+    }
+  };
+
+  // 폴링 시작
+  const startPolling = useCallback((token: string) => {
+    setQrCodePolling(true);
+
+    const poll = async () => {
+      try {
+        const status = await purchaseService.checkReceiptUploadStatus(token);
+        if (status.valid && status.uploaded_urls.length > 0) {
+          setMobileUploadedUrls(status.uploaded_urls);
+        }
+      } catch (error) {
+        console.error('Polling error:', error);
+      }
+    };
+
+    // 즉시 한 번 폴링
+    poll();
+
+    // 2초마다 폴링
+    pollingIntervalRef.current = setInterval(poll, 2000);
+
+    // 10분 후 자동 종료
+    setTimeout(() => {
+      cleanupPolling();
+      setQrCodeToken(null);
+    }, 10 * 60 * 1000);
+  }, [cleanupPolling]);
+
+  // QR 코드 완료 - 업로드된 이미지를 구매에 추가
+  const handleCloseQrCode = async () => {
+    cleanupPolling();
+
+    // 업로드된 이미지가 있으면 구매 정보에 추가
+    if (mobileUploadedUrls.length > 0 && purchase) {
+      try {
+        setUploadLoading(true);
+        const currentUrls = purchase.receipt_urls || [];
+        const newUrls = [...currentUrls, ...mobileUploadedUrls];
+        await purchaseService.updatePurchase(id!, {
+          receipt_url: newUrls[0],
+          receipt_urls: newUrls
+        } as any);
+        message.success(`${mobileUploadedUrls.length}장의 영수증이 추가되었습니다.`);
+        await fetchPurchaseDetail();
+      } catch (error: any) {
+        console.error('Failed to save receipts:', error);
+        message.error('영수증 저장에 실패했습니다.');
+      } finally {
+        setUploadLoading(false);
+      }
+    }
+
+    setQrCodeToken(null);
+    setMobileUploadedUrls([]);
   };
 
   if (loading) {
@@ -220,6 +349,7 @@ const PurchaseDetailPage: React.FC = () => {
                   });
                   setEditingPrices(prices);
                 }}
+                style={{ backgroundColor: '#0d1117', borderColor: '#0d1117' }}
               >
                 편집
               </Button>
@@ -228,6 +358,7 @@ const PurchaseDetailPage: React.FC = () => {
                 <Button
                   type="primary"
                   icon={<SaveOutlined />}
+                  style={{ backgroundColor: '#0d1117', borderColor: '#0d1117' }}
                   onClick={async () => {
                     try {
                       const values = await form.validateFields();
@@ -495,27 +626,73 @@ const PurchaseDetailPage: React.FC = () => {
               영수증
             </Title>
 
-            {purchase.receipt_url ? (
+            {/* 다중 영수증 지원 */}
+            {purchase.receipt_urls && purchase.receipt_urls.length > 0 ? (
               <div>
                 <Card size="small" style={{ marginBottom: editMode ? 8 : 0 }}>
-                  <Image
-                    src={(() => {
-                      const url = getFileUrl(purchase.receipt_url);
-                      console.log('Receipt URL:', purchase.receipt_url, '-> Full URL:', url);
-                      return url || '';
-                    })()}
-                    alt="영수증"
-                    style={{ width: '100%', height: 'auto' }}
-                    preview={{
-                      mask: '크게 보기'
-                    }}
-                    onError={(e) => {
-                      console.error('Image load failed for:', purchase.receipt_url);
-                    }}
-                  />
+                  <Image.PreviewGroup>
+                    <div style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: 12
+                    }}>
+                      {purchase.receipt_urls.map((url: string, index: number) => (
+                        <div key={index} style={{ position: 'relative' }}>
+                          <Image
+                            src={getFileUrl(url) || ''}
+                            alt={`영수증 ${index + 1}`}
+                            style={{
+                              width: 200,
+                              height: 260,
+                              objectFit: 'cover',
+                              borderRadius: 4,
+                              border: '1px solid #f0f0f0'
+                            }}
+                          />
+                          <Tag
+                            style={{
+                              position: 'absolute',
+                              bottom: 8,
+                              left: 8,
+                              margin: 0,
+                              fontSize: 12
+                            }}
+                          >
+                            #{index + 1}
+                          </Tag>
+                          {/* 편집 모드에서 개별 삭제 버튼 */}
+                          {editMode && (
+                            <Button
+                              type="primary"
+                              danger
+                              size="small"
+                              icon={<DeleteOutlined />}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleReceiptDeleteSingle(index);
+                              }}
+                              loading={uploadLoading}
+                              style={{
+                                position: 'absolute',
+                                top: 8,
+                                right: 8,
+                                borderRadius: '50%',
+                                width: 28,
+                                height: 28,
+                                padding: 0,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                              }}
+                            />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </Image.PreviewGroup>
                 </Card>
-                {editMode && (
-                  <Space style={{ width: '100%' }}>
+                {editMode && !qrCodeToken && (
+                  <Space style={{ width: '100%', marginTop: 8 }}>
                     <Upload
                       customRequest={handleReceiptUpload}
                       accept="image/*,.pdf"
@@ -523,9 +700,109 @@ const PurchaseDetailPage: React.FC = () => {
                       showUploadList={false}
                     >
                       <Button icon={<UploadOutlined />} loading={uploadLoading}>
-                        수정
+                        PC 추가
                       </Button>
                     </Upload>
+                    <Button
+                      icon={<QrcodeOutlined />}
+                      onClick={handleGenerateQrCode}
+                      loading={qrCodeLoading}
+                    >
+                      모바일 촬영
+                    </Button>
+                    <Button
+                      danger
+                      icon={<DeleteOutlined />}
+                      onClick={handleReceiptDelete}
+                      loading={uploadLoading}
+                    >
+                      전체 삭제
+                    </Button>
+                  </Space>
+                )}
+                {/* QR 코드 표시 */}
+                {editMode && qrCodeToken && (
+                  <div style={{
+                    border: '1px solid #1890ff',
+                    borderRadius: 8,
+                    padding: 16,
+                    backgroundColor: '#e6f7ff',
+                    marginTop: 8
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                      <div style={{
+                        backgroundColor: 'white',
+                        padding: 12,
+                        borderRadius: 8,
+                        flexShrink: 0
+                      }}>
+                        <QRCodeSVG value={getQrCodeUrl(qrCodeToken)} size={120} level="H" />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 500, marginBottom: 8 }}>
+                          <MobileOutlined style={{ marginRight: 8 }} />
+                          모바일로 QR 코드를 스캔하세요
+                        </div>
+                        {qrCodePolling && (
+                          <Tag icon={<SyncOutlined spin />} color="processing">
+                            대기 중...
+                          </Tag>
+                        )}
+                        {mobileUploadedUrls.length > 0 && (
+                          <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                            {mobileUploadedUrls.map((url, index) => (
+                              <Image
+                                key={index}
+                                src={getFileUrl(url) || ''}
+                                width={50}
+                                height={50}
+                                style={{ objectFit: 'cover', borderRadius: 4 }}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <Button
+                        onClick={handleCloseQrCode}
+                        type={mobileUploadedUrls.length > 0 ? 'primary' : 'default'}
+                        loading={uploadLoading}
+                      >
+                        {mobileUploadedUrls.length > 0 ? '완료' : '취소'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : purchase.receipt_url ? (
+              // 기존 단일 영수증 (하위 호환)
+              <div>
+                <Card size="small" style={{ marginBottom: editMode ? 8 : 0 }}>
+                  <Image
+                    src={getFileUrl(purchase.receipt_url) || ''}
+                    alt="영수증"
+                    style={{ width: '100%', height: 'auto' }}
+                    preview={{ mask: '크게 보기' }}
+                  />
+                </Card>
+                {editMode && !qrCodeToken && (
+                  <Space style={{ width: '100%', marginTop: 8 }}>
+                    <Upload
+                      customRequest={handleReceiptUpload}
+                      accept="image/*,.pdf"
+                      maxCount={1}
+                      showUploadList={false}
+                    >
+                      <Button icon={<UploadOutlined />} loading={uploadLoading}>
+                        PC 추가
+                      </Button>
+                    </Upload>
+                    <Button
+                      icon={<QrcodeOutlined />}
+                      onClick={handleGenerateQrCode}
+                      loading={qrCodeLoading}
+                    >
+                      모바일 촬영
+                    </Button>
                     <Button
                       danger
                       icon={<DeleteOutlined />}
@@ -536,27 +813,147 @@ const PurchaseDetailPage: React.FC = () => {
                     </Button>
                   </Space>
                 )}
+                {/* QR 코드 표시 */}
+                {editMode && qrCodeToken && (
+                  <div style={{
+                    border: '1px solid #1890ff',
+                    borderRadius: 8,
+                    padding: 16,
+                    backgroundColor: '#e6f7ff',
+                    marginTop: 8
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                      <div style={{
+                        backgroundColor: 'white',
+                        padding: 12,
+                        borderRadius: 8,
+                        flexShrink: 0
+                      }}>
+                        <QRCodeSVG value={getQrCodeUrl(qrCodeToken)} size={120} level="H" />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 500, marginBottom: 8 }}>
+                          <MobileOutlined style={{ marginRight: 8 }} />
+                          모바일로 QR 코드를 스캔하세요
+                        </div>
+                        {qrCodePolling && (
+                          <Tag icon={<SyncOutlined spin />} color="processing">
+                            대기 중...
+                          </Tag>
+                        )}
+                        {mobileUploadedUrls.length > 0 && (
+                          <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                            {mobileUploadedUrls.map((url, index) => (
+                              <Image
+                                key={index}
+                                src={getFileUrl(url) || ''}
+                                width={50}
+                                height={50}
+                                style={{ objectFit: 'cover', borderRadius: 4 }}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <Button
+                        onClick={handleCloseQrCode}
+                        type={mobileUploadedUrls.length > 0 ? 'primary' : 'default'}
+                        loading={uploadLoading}
+                      >
+                        {mobileUploadedUrls.length > 0 ? '완료' : '취소'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div>
                 {editMode ? (
-                  <Upload
-                    customRequest={handleReceiptUpload}
-                    accept="image/*,.pdf"
-                    maxCount={1}
-                    showUploadList={false}
-                    listType="picture-card"
-                    style={{ width: '100%' }}
-                  >
+                  qrCodeToken ? (
+                    // QR 코드 표시
                     <div style={{
-                      padding: '40px 20px',
-                      textAlign: 'center',
-                      width: '100%'
+                      border: '1px solid #1890ff',
+                      borderRadius: 8,
+                      padding: 16,
+                      backgroundColor: '#e6f7ff'
                     }}>
-                      <UploadOutlined style={{ fontSize: 32, color: '#1890ff', marginBottom: 8 }} />
-                      <div style={{ fontSize: 14, whiteSpace: 'nowrap' }}>영수증 업로드</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                        <div style={{
+                          backgroundColor: 'white',
+                          padding: 12,
+                          borderRadius: 8,
+                          flexShrink: 0
+                        }}>
+                          <QRCodeSVG value={getQrCodeUrl(qrCodeToken)} size={120} level="H" />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 500, marginBottom: 8 }}>
+                            <MobileOutlined style={{ marginRight: 8 }} />
+                            모바일로 QR 코드를 스캔하세요
+                          </div>
+                          {qrCodePolling && (
+                            <Tag icon={<SyncOutlined spin />} color="processing">
+                              대기 중...
+                            </Tag>
+                          )}
+                          {mobileUploadedUrls.length > 0 && (
+                            <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                              {mobileUploadedUrls.map((url, index) => (
+                                <Image
+                                  key={index}
+                                  src={getFileUrl(url) || ''}
+                                  width={50}
+                                  height={50}
+                                  style={{ objectFit: 'cover', borderRadius: 4 }}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <Button
+                          onClick={handleCloseQrCode}
+                          type={mobileUploadedUrls.length > 0 ? 'primary' : 'default'}
+                          loading={uploadLoading}
+                        >
+                          {mobileUploadedUrls.length > 0 ? '완료' : '취소'}
+                        </Button>
+                      </div>
                     </div>
-                  </Upload>
+                  ) : (
+                    // 업로드 옵션
+                    <div>
+                      <div style={{
+                        border: '2px dashed #d9d9d9',
+                        borderRadius: 8,
+                        padding: '24px',
+                        backgroundColor: '#fafafa',
+                        textAlign: 'center',
+                        marginBottom: 12
+                      }}>
+                        <UploadOutlined style={{ fontSize: 32, color: '#999', marginBottom: 8 }} />
+                        <div style={{ color: '#666' }}>영수증을 업로드하세요</div>
+                      </div>
+                      <Space style={{ width: '100%' }}>
+                        <Upload
+                          customRequest={handleReceiptUpload}
+                          accept="image/*,.pdf"
+                          maxCount={1}
+                          showUploadList={false}
+                        >
+                          <Button icon={<UploadOutlined />} loading={uploadLoading}>
+                            PC 업로드
+                          </Button>
+                        </Upload>
+                        <Button
+                          icon={<QrcodeOutlined />}
+                          onClick={handleGenerateQrCode}
+                          loading={qrCodeLoading}
+                        >
+                          모바일 촬영
+                        </Button>
+                      </Space>
+                    </div>
+                  )
                 ) : (
                   <div style={{
                     padding: '60px 20px',

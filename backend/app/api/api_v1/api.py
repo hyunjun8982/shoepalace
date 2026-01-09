@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.api_v1.endpoints import auth, products, purchases, sales, inventory, settlements, uploads, users, files, test_upload, admin, brands, categories, trending_products, warehouses, notifications, product_importer, chat, kream_scraper, adidas_accounts
+from app.api.api_v1.endpoints import auth, products, purchases, sales, inventory, settlements, uploads, users, files, test_upload, admin, brands, categories, trending_products, warehouses, notifications, product_importer, chat, kream_scraper, adidas_accounts, feature_requests
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["인증"])
@@ -22,3 +22,4 @@ api_router.include_router(admin.router, prefix="/admin", tags=["관리자"])
 api_router.include_router(product_importer.router, prefix="/product-importer", tags=["상품수집"])
 api_router.include_router(kream_scraper.router, prefix="/kream-scraper", tags=["KREAM크롤러"])
 api_router.include_router(adidas_accounts.router, prefix="/adidas-accounts", tags=["아디다스계정"])
+api_router.include_router(feature_requests.router, prefix="/feature-requests", tags=["요청사항"])

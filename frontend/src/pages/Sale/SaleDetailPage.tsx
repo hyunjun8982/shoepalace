@@ -17,6 +17,7 @@ import {
   Form,
   Input,
   DatePicker,
+  Modal,
   message as antMessage,
 } from 'antd';
 import {
@@ -29,6 +30,7 @@ import {
   EditOutlined,
   SaveOutlined,
   CloseOutlined,
+  RollbackOutlined,
 } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
@@ -155,9 +157,38 @@ const SaleDetailPage: React.FC = () => {
       [SaleStatus.PENDING]: { color: 'gold', text: '대기' },
       [SaleStatus.COMPLETED]: { color: 'green', text: '완료' },
       [SaleStatus.CANCELLED]: { color: 'red', text: '취소' },
+      [SaleStatus.RETURNED]: { color: 'purple', text: '반품' },
     };
     const { color, text } = config[status || SaleStatus.PENDING];
     return <Tag color={color}>{text}</Tag>;
+  };
+
+  // 반품 처리 핸들러
+  const handleReturn = async () => {
+    try {
+      setLoading(true);
+      await saleService.processReturn(id!);
+      message.success('반품 처리가 완료되었습니다. 재고가 원복되었습니다.');
+      fetchSaleDetail();
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '반품 처리에 실패했습니다.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 반품 취소 핸들러
+  const handleCancelReturn = async () => {
+    try {
+      setLoading(true);
+      await saleService.cancelReturn(id!);
+      message.success('반품 취소가 완료되었습니다. 재고가 다시 차감되었습니다.');
+      fetchSaleDetail();
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '반품 취소에 실패했습니다.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const formatPhoneNumber = (phone: string) => {
@@ -246,28 +277,75 @@ const SaleDetailPage: React.FC = () => {
             {!editMode ? (
               <>
                 {(user?.role === 'admin' || user?.id === sale?.seller_id) && (
-                  <Button
-                    type="primary"
-                    icon={<EditOutlined />}
-                    onClick={() => {
-                      setEditMode(true);
-                      form.setFieldsValue({
-                        customer_name: sale?.customer_name,
-                        customer_contact: sale?.customer_contact,
-                        notes: sale?.notes,
-                      });
-                      // 가격 정보 초기화
-                      const prices: { [key: string]: number } = {};
-                      sale?.items?.forEach(item => {
-                        if (item.id) {
-                          prices[item.id] = item.company_sale_price || 0;
-                        }
-                      });
-                      setEditingPrices(prices);
-                    }}
-                  >
-                    편집
-                  </Button>
+                  <>
+                    <Button
+                      icon={<EditOutlined />}
+                      onClick={() => {
+                        setEditMode(true);
+                        form.setFieldsValue({
+                          customer_name: sale?.customer_name,
+                          customer_contact: sale?.customer_contact,
+                          notes: sale?.notes,
+                        });
+                        // 가격 정보 초기화
+                        const prices: { [key: string]: number } = {};
+                        sale?.items?.forEach(item => {
+                          if (item.id) {
+                            prices[item.id] = item.company_sale_price || 0;
+                          }
+                        });
+                        setEditingPrices(prices);
+                      }}
+                    >
+                      편집
+                    </Button>
+                    {sale?.status !== SaleStatus.RETURNED && sale?.status !== SaleStatus.CANCELLED && (
+                      <Button
+                        icon={<RollbackOutlined />}
+                        style={{
+                          backgroundColor: '#0d1117',
+                          borderColor: '#0d1117',
+                          color: '#fff',
+                        }}
+                        onClick={() => {
+                          Modal.confirm({
+                            title: '반품 처리',
+                            icon: <RollbackOutlined style={{ color: '#0d1117' }} />,
+                            content: '반품 처리하시겠습니까? 해당 상품이 재고로 복구됩니다.',
+                            okText: '반품 처리',
+                            cancelText: '취소',
+                            okButtonProps: { style: { backgroundColor: '#0d1117', borderColor: '#0d1117' } },
+                            onOk: handleReturn,
+                          });
+                        }}
+                      >
+                        반품
+                      </Button>
+                    )}
+                    {sale?.status === SaleStatus.RETURNED && user?.role === 'admin' && (
+                      <Button
+                        icon={<RollbackOutlined />}
+                        style={{
+                          backgroundColor: '#0d1117',
+                          borderColor: '#0d1117',
+                          color: '#fff',
+                        }}
+                        onClick={() => {
+                          Modal.confirm({
+                            title: '반품 취소',
+                            icon: <RollbackOutlined style={{ color: '#0d1117' }} />,
+                            content: '반품을 취소하시겠습니까? 재고가 다시 차감됩니다.',
+                            okText: '반품 취소',
+                            cancelText: '닫기',
+                            okButtonProps: { style: { backgroundColor: '#0d1117', borderColor: '#0d1117' } },
+                            onOk: handleCancelReturn,
+                          });
+                        }}
+                      >
+                        반품 취소
+                      </Button>
+                    )}
+                  </>
                 )}
               </>
             ) : (
@@ -275,6 +353,7 @@ const SaleDetailPage: React.FC = () => {
                 <Button
                   type="primary"
                   icon={<SaveOutlined />}
+                  style={{ backgroundColor: '#0d1117', borderColor: '#0d1117' }}
                   onClick={async () => {
                     try {
                       const values = await form.validateFields();
@@ -335,6 +414,9 @@ const SaleDetailPage: React.FC = () => {
             </Descriptions.Item>
             <Descriptions.Item label="등록일시">
               {sale.created_at ? dayjs(sale.created_at).format('YYYY-MM-DD HH:mm') : '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="상태">
+              {getStatusTag(sale.status)}
             </Descriptions.Item>
             <Descriptions.Item label="총 판매자 판매금액">
               ₩{Math.floor(sale.total_seller_amount || 0).toLocaleString()}

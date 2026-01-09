@@ -223,6 +223,7 @@ const UserListPage: React.FC = () => {
                 type="primary"
                 icon={<UserAddOutlined />}
                 onClick={() => navigate('/users/new')}
+                style={{ backgroundColor: '#0d1117', borderColor: '#0d1117' }}
               >
                 사용자 등록
               </Button>

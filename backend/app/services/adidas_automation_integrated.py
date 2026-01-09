@@ -7,7 +7,7 @@ from appium.options.android import UiAutomator2Options
 from appium.webdriver.common.appiumby import AppiumBy
 
 
-def login_and_extract(email: str, password: str, appium_url: str = "http://127.0.0.1:4723", debug: bool = False):
+def login_and_extract(email: str, password: str, appium_url: str = "http://127.0.0.1:4723/wd/hub", debug: bool = False):
     """
     Adidas 로그인 + 사용자 정보 및 쿠폰 추출 통합
 
@@ -21,14 +21,10 @@ def login_and_extract(email: str, password: str, appium_url: str = "http://127.0
             "owned_vouchers": str (JSON)
         }
     """
+    from app.services.appium_utils import get_appium_options
 
-    options = UiAutomator2Options()
-    options.platform_name = "Android"
-    options.device_name = "emulator-5554"
-    options.app_package = "com.adidas.app"
-    options.app_activity = ".MainActivity"
-    options.automation_name = "UiAutomator2"
-    options.no_reset = True
+    # Appium 연결 설정 (자동 디바이스 감지)
+    options = get_appium_options()
 
     driver = webdriver.Remote(appium_url, options=options)
 

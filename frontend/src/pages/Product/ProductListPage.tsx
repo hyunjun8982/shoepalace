@@ -310,17 +310,18 @@ const ProductListPage: React.FC = () => {
       render: (text: string) => <span style={{ fontSize: '15px' }}>{text}</span>,
     },
     {
-      title: '수정 및 삭제',
+      title: '작업',
       key: 'action',
       width: 130,
       fixed: 'right',
       render: (_, record) => (
         <Space size="small">
           <Button
-            icon={<EditOutlined />}
+            size="small"
             onClick={() => navigate(`/products/edit/${record.id}`)}
-            title="수정"
-          />
+          >
+            수정
+          </Button>
           {user?.role === 'admin' && (
             <Popconfirm
               title="상품을 삭제하시겠습니까?"
@@ -330,10 +331,11 @@ const ProductListPage: React.FC = () => {
               cancelText="취소"
             >
               <Button
+                size="small"
                 danger
-                icon={<DeleteOutlined />}
-                title="삭제"
-              />
+              >
+                삭제
+              </Button>
             </Popconfirm>
           )}
         </Space>
@@ -389,27 +391,27 @@ const ProductListPage: React.FC = () => {
 
   // 카테고리 통계 계산 (고정 순서)
   const categoryStats = [
-    { name: 'clothing', nameKr: '의류', count: getCategoryCount('clothing'), icon: '👕' },
-    { name: 'shoes', nameKr: '신발', count: getCategoryCount('shoes'), icon: '👟' },
-    { name: 'hats', nameKr: '모자', count: getCategoryCount('hats'), icon: '🧢' },
-    { name: 'socks', nameKr: '양말', count: getCategoryCount('socks'), icon: '🧦' },
-    { name: 'bags', nameKr: '가방', count: getCategoryCount('bags'), icon: '🎒' },
-    { name: 'accessories', nameKr: '잡화', count: getCategoryCount('accessories'), icon: '🛍️' },
-    { name: 'etc', nameKr: '기타', count: getCategoryCount('etc'), icon: '📦' },
+    { name: 'clothing', nameKr: '의류', count: getCategoryCount('clothing') },
+    { name: 'shoes', nameKr: '신발', count: getCategoryCount('shoes') },
+    { name: 'hats', nameKr: '모자', count: getCategoryCount('hats') },
+    { name: 'socks', nameKr: '양말', count: getCategoryCount('socks') },
+    { name: 'bags', nameKr: '가방', count: getCategoryCount('bags') },
+    { name: 'accessories', nameKr: '잡화', count: getCategoryCount('accessories') },
+    { name: 'etc', nameKr: '기타', count: getCategoryCount('etc') },
   ];
 
   // 통계 카드 스타일
   const cardStyle = {
     borderRadius: '8px',
     boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-    border: '1px solid #e8f4fd',
+    border: '1px solid #e8e8e8',
     height: '100%'
   };
 
   const smallCardStyle = {
     borderRadius: '8px',
     boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-    border: '1px solid #e8f4fd',
+    border: '1px solid #e8e8e8',
     padding: '10px 14px',
     height: '48px',
     display: 'flex',
@@ -426,7 +428,7 @@ const ProductListPage: React.FC = () => {
           width: '12.5%',
           minWidth: '120px',
           height: '104px',
-          backgroundColor: '#f0f8ff',
+          backgroundColor: '#ffffff',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center'
@@ -436,10 +438,10 @@ const ProductListPage: React.FC = () => {
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            gap: '8px'
+            gap: '4px'
           }}>
-            <div style={{ fontSize: 14, color: '#1890ff', fontWeight: 500, lineHeight: 1 }}>등록된 상품</div>
-            <div style={{ fontSize: 24, fontWeight: 'bold', color: '#0050b3', lineHeight: 1 }}>{total}개</div>
+            <div style={{ fontSize: 14, color: '#0d1b2a', fontWeight: 500, lineHeight: 1 }}>등록된 상품</div>
+            <div style={{ fontSize: 24, fontWeight: 'bold', color: '#0d1b2a', lineHeight: 1 }}>{total}개</div>
           </div>
         </Card>
 
@@ -452,7 +454,7 @@ const ProductListPage: React.FC = () => {
                 ...smallCardStyle,
                 flex: 1,
                 width: 0,
-                backgroundColor: '#f0f8ff'
+                backgroundColor: '#ffffff'
               }}>
                 <div style={{
                   width: '100%',
@@ -486,7 +488,7 @@ const ProductListPage: React.FC = () => {
                     <span style={{
                       fontSize: 13,
                       fontWeight: 500,
-                      color: '#1890ff',
+                      color: '#0d1b2a',
                       whiteSpace: 'nowrap',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis'
@@ -495,7 +497,7 @@ const ProductListPage: React.FC = () => {
                   <span style={{
                     fontSize: 15,
                     fontWeight: 'bold',
-                    color: '#0050b3',
+                    color: '#0d1b2a',
                     whiteSpace: 'nowrap',
                     flexShrink: 0
                   }}>{brand.count}개</span>
@@ -511,7 +513,7 @@ const ProductListPage: React.FC = () => {
                 ...smallCardStyle,
                 flex: 1,
                 width: 0,
-                backgroundColor: '#f0f8ff'
+                backgroundColor: '#ffffff'
               }}>
                 <div style={{
                   width: '100%',
@@ -520,33 +522,18 @@ const ProductListPage: React.FC = () => {
                   justifyContent: 'space-between',
                   gap: '8px'
                 }}>
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    minWidth: 0,
-                    flex: 1
-                  }}>
-                    <span style={{
-                      fontSize: 20,
-                      opacity: 0.7,
-                      flexShrink: 0
-                    }}>{category.icon}</span>
-                    <span style={{
-                      fontSize: 13,
-                      fontWeight: 500,
-                      color: '#1890ff',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis'
-                    }}>{category.nameKr}</span>
-                  </div>
+                  <span style={{
+                    fontSize: 13,
+                    fontWeight: 500,
+                    color: '#0d1b2a',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis'
+                  }}>{category.nameKr}</span>
                   <span style={{
                     fontSize: 15,
                     fontWeight: 'bold',
-                    color: '#0050b3',
-                    whiteSpace: 'nowrap',
-                    flexShrink: 0
+                    color: '#0d1b2a'
                   }}>{category.count}개</span>
                 </div>
               </Card>
@@ -632,6 +619,7 @@ const ProductListPage: React.FC = () => {
                     type="primary"
                     icon={<PlusOutlined />}
                     onClick={() => navigate('/products/new')}
+                    style={{ backgroundColor: '#0d1117', borderColor: '#0d1117' }}
                   >
                     상품 등록
                   </Button>

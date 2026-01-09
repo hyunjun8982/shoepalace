@@ -1,7 +1,10 @@
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import List, Optional, Dict
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
+import os
+import shutil
+from datetime import datetime, timedelta
 from app.api.deps import get_db, get_current_user
 from app.models.user import User
 from app.models.inventory import Inventory
@@ -19,11 +22,16 @@ from app.schemas.inventory import (
     InventoryAdjustment as InventoryAdjustmentSchema,
     InventoryAdjustmentList,
     PurchaseHistoryItem,
-    SaleHistoryItem
+    SaleHistoryItem,
+    DefectMarkRequest,
+    SizeInventory
 )
 import uuid
 
 router = APIRouter()
+
+# 임시 업로드 토큰 저장소 (메모리 기반, 프로덕션에서는 Redis 권장)
+upload_tokens: Dict[str, dict] = {}
 
 @router.get("/", response_model=InventoryDetailList)
 def get_inventory_list(
@@ -104,6 +112,9 @@ def get_inventory_list(
             warehouse_name=warehouse_name,
             warehouse_location=warehouse_location,
             warehouse_image_url=warehouse_image_url,
+            defect_quantity=inv.defect_quantity or 0,
+            defect_reason=inv.defect_reason,
+            defect_image_url=inv.defect_image_url,
         )
         inventory_details.append(detail)
 
@@ -387,7 +398,8 @@ def get_inventory_detail_with_history(
             quantity=item.quantity,
             sale_price=float(item.company_sale_price or 0),
             customer_name=sale.customer_name,
-            seller_name=seller_name
+            seller_name=seller_name,
+            status=sale.status.value if sale.status else None
         ))
 
     # 재고 상세 정보 생성
@@ -566,6 +578,160 @@ def create_inventory_for_size(
         "quantity": new_inventory.quantity
     }
 
+@router.get("/defective/list", response_model=InventoryDetailList)
+def get_defective_inventory_list(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=10000),
+    search: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """불량 물품 목록 조회"""
+    query = db.query(Inventory).join(Product).options(
+        joinedload(Inventory.product).joinedload(Product.brand)
+    ).filter(Inventory.defect_quantity > 0)
+
+    # 검색 필터
+    if search:
+        query = query.filter(
+            or_(
+                Product.product_name.ilike(f"%{search}%"),
+                Product.product_code.ilike(f"%{search}%")
+            )
+        )
+
+    total = query.count()
+    items = query.offset(skip).limit(limit).all()
+
+    # 상품 정보 포함한 재고 정보 생성
+    inventory_details = []
+    for inv in items:
+        detail = InventoryDetail(
+            id=str(inv.id),
+            product_id=str(inv.product_id),
+            quantity=inv.quantity,
+            reserved_quantity=inv.reserved_quantity,
+            available_quantity=inv.available_quantity,
+            location=inv.location,
+            min_stock_level=inv.min_stock_level,
+            is_low_stock=inv.is_low_stock,
+            last_updated=inv.last_updated,
+            created_at=inv.created_at,
+            updated_at=inv.updated_at,
+            product_name=inv.product.product_name,
+            brand=inv.product.brand.name if inv.product.brand else '',
+            category=inv.product.category or '',
+            size=inv.size,
+            color=None,
+            sku_code=inv.product.product_code,
+            defect_quantity=inv.defect_quantity or 0,
+            defect_reason=inv.defect_reason,
+            defect_image_url=inv.defect_image_url,
+        )
+        inventory_details.append(detail)
+
+    return InventoryDetailList(total=total, items=inventory_details)
+
+
+@router.post("/{inventory_id}/mark-defective")
+def mark_inventory_defective(
+    inventory_id: str,
+    request: DefectMarkRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """재고 불량 등록/해제 - 수량 단위로 처리"""
+    from datetime import datetime
+
+    inventory = db.query(Inventory).filter(Inventory.id == inventory_id).first()
+
+    if not inventory:
+        raise HTTPException(status_code=404, detail="Inventory not found")
+
+    qty = request.quantity if request.quantity else 1
+
+    if request.action == "add":
+        # 불량 등록: 정상 재고에서 불량 재고로 이동
+        if inventory.quantity < qty:
+            raise HTTPException(status_code=400, detail=f"정상 재고가 부족합니다. (현재: {inventory.quantity}개)")
+
+        inventory.quantity -= qty
+        inventory.defect_quantity = (inventory.defect_quantity or 0) + qty
+        inventory.defect_reason = request.defect_reason
+        inventory.defect_marked_at = datetime.utcnow()
+        inventory.defect_image_url = request.defect_image_url
+        message = f"불량 등록 완료 ({qty}개)"
+    else:
+        # 불량 해제: 불량 재고에서 정상 재고로 복구
+        current_defect = inventory.defect_quantity or 0
+        if current_defect < qty:
+            raise HTTPException(status_code=400, detail=f"불량 재고가 부족합니다. (현재: {current_defect}개)")
+
+        inventory.defect_quantity = current_defect - qty
+        inventory.quantity += qty
+
+        # 불량 재고가 0이 되면 사유도 초기화
+        if inventory.defect_quantity == 0:
+            inventory.defect_reason = None
+            inventory.defect_marked_at = None
+            inventory.defect_image_url = None
+        message = f"불량 해제 완료 ({qty}개)"
+
+    db.commit()
+    db.refresh(inventory)
+
+    return {
+        "message": message,
+        "id": str(inventory.id),
+        "quantity": inventory.quantity,
+        "defect_quantity": inventory.defect_quantity,
+        "defect_reason": inventory.defect_reason,
+        "defect_image_url": inventory.defect_image_url
+    }
+
+
+@router.post("/{inventory_id}/upload-defect-image")
+async def upload_defect_image(
+    inventory_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """불량 이미지 업로드"""
+    inventory = db.query(Inventory).filter(Inventory.id == inventory_id).first()
+
+    if not inventory:
+        raise HTTPException(status_code=404, detail="Inventory not found")
+
+    # 파일 확장자 검증
+    allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+    file_ext = os.path.splitext(file.filename)[1].lower()
+    if file_ext not in allowed_extensions:
+        raise HTTPException(status_code=400, detail="지원하지 않는 파일 형식입니다.")
+
+    # 업로드 폴더 생성
+    upload_dir = "uploads/defective"
+    os.makedirs(upload_dir, exist_ok=True)
+
+    # 파일명 생성
+    import uuid as uuid_module
+    filename = f"{inventory_id}_{uuid_module.uuid4().hex[:8]}{file_ext}"
+    file_path = os.path.join(upload_dir, filename)
+
+    # 파일 저장
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # URL 생성
+    file_url = f"/uploads/defective/{filename}"
+
+    return {
+        "message": "이미지 업로드 완료",
+        "file_path": file_path,
+        "url": file_url
+    }
+
+
 @router.delete("/product/{product_id}")
 def delete_product_inventory(
     product_id: str,
@@ -615,4 +781,150 @@ def delete_product_inventory(
     return {
         "message": "재고가 삭제되었습니다.",
         "deleted_count": deleted_count
+    }
+
+
+# ============ 모바일 QR 코드 업로드 관련 API ============
+
+def cleanup_expired_tokens():
+    """만료된 토큰 정리"""
+    now = datetime.utcnow()
+    expired = [token for token, data in upload_tokens.items() if data['expires_at'] < now]
+    for token in expired:
+        del upload_tokens[token]
+
+
+@router.post("/upload-token/generate")
+def generate_upload_token(
+    inventory_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """모바일 업로드용 임시 토큰 생성 (10분 유효)"""
+    # 만료된 토큰 정리
+    cleanup_expired_tokens()
+
+    # 재고 확인
+    inventory = db.query(Inventory).options(
+        joinedload(Inventory.product)
+    ).filter(Inventory.id == inventory_id).first()
+
+    if not inventory:
+        raise HTTPException(status_code=404, detail="Inventory not found")
+
+    # 토큰 생성
+    token = uuid.uuid4().hex
+    expires_at = datetime.utcnow() + timedelta(minutes=10)
+
+    # 토큰 저장
+    upload_tokens[token] = {
+        'inventory_id': inventory_id,
+        'product_name': inventory.product.product_name,
+        'size': inventory.size or '',
+        'expires_at': expires_at,
+        'uploaded_image_url': None
+    }
+
+    return {
+        "token": token,
+        "expires_at": expires_at.isoformat(),
+        "inventory_id": inventory_id
+    }
+
+
+@router.get("/upload-token/{token}/validate")
+def validate_upload_token(token: str, db: Session = Depends(get_db)):
+    """업로드 토큰 유효성 검증 (로그인 불필요)"""
+    # 만료된 토큰 정리
+    cleanup_expired_tokens()
+
+    if token not in upload_tokens:
+        return {"valid": False, "message": "Invalid or expired token"}
+
+    token_data = upload_tokens[token]
+    if token_data['expires_at'] < datetime.utcnow():
+        del upload_tokens[token]
+        return {"valid": False, "message": "Token expired"}
+
+    return {
+        "valid": True,
+        "inventory_id": token_data['inventory_id'],
+        "product_name": token_data['product_name'],
+        "size": token_data['size']
+    }
+
+
+@router.post("/upload-token/{token}/upload")
+async def upload_with_token(
+    token: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """토큰 기반 이미지 업로드 (로그인 불필요)"""
+    # 토큰 검증
+    cleanup_expired_tokens()
+
+    if token not in upload_tokens:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    token_data = upload_tokens[token]
+    if token_data['expires_at'] < datetime.utcnow():
+        del upload_tokens[token]
+        raise HTTPException(status_code=401, detail="Token expired")
+
+    inventory_id = token_data['inventory_id']
+
+    # 재고 확인
+    inventory = db.query(Inventory).filter(Inventory.id == inventory_id).first()
+    if not inventory:
+        raise HTTPException(status_code=404, detail="Inventory not found")
+
+    # 파일 확장자 검증
+    allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+    file_ext = os.path.splitext(file.filename)[1].lower()
+    if file_ext not in allowed_extensions:
+        raise HTTPException(status_code=400, detail="지원하지 않는 파일 형식입니다.")
+
+    # 업로드 폴더 생성
+    upload_dir = "uploads/defective"
+    os.makedirs(upload_dir, exist_ok=True)
+
+    # 파일명 생성
+    import uuid as uuid_module
+    filename = f"{inventory_id}_{uuid_module.uuid4().hex[:8]}{file_ext}"
+    file_path = os.path.join(upload_dir, filename)
+
+    # 파일 저장
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # URL 생성
+    file_url = f"/uploads/defective/{filename}"
+
+    # 재고에 이미지 URL 저장
+    inventory.defect_image_url = file_url
+    db.commit()
+
+    # 토큰에 업로드된 이미지 URL 저장 (PC에서 폴링용)
+    upload_tokens[token]['uploaded_image_url'] = file_url
+
+    return {
+        "message": "이미지 업로드 완료",
+        "url": file_url
+    }
+
+
+@router.get("/upload-token/{token}/status")
+def get_upload_status(token: str):
+    """업로드 상태 확인 (PC에서 폴링용)"""
+    cleanup_expired_tokens()
+
+    if token not in upload_tokens:
+        return {"valid": False, "uploaded": False}
+
+    token_data = upload_tokens[token]
+    return {
+        "valid": True,
+        "uploaded": token_data['uploaded_image_url'] is not None,
+        "image_url": token_data['uploaded_image_url']
     }

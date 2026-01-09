@@ -30,6 +30,40 @@ export interface TrendingProductStats {
   latest_upload_date?: string;
 }
 
+// KREAM API 응답 타입
+export interface KreamProductItem {
+  id: number;
+  name: string;
+  brand: {
+    id: number;
+    brand_name: string;
+  };
+  brand_name: {
+    text: string;
+  };
+  ranking: {
+    text: string;
+  };
+  fluc_ranking: {
+    text: string;
+  };
+  price: {
+    text: string;
+  };
+  product_image: {
+    url: string;
+    bgcolor: string;
+  };
+  trading_volume: number;
+}
+
+export interface KreamRankingResponse {
+  items: Array<{
+    item_type: string;
+    product_item: KreamProductItem;
+  }>;
+}
+
 export const trendingProductService = {
   // 엑셀 파일 업로드
   async uploadExcel(file: File, category: string, dataPeriod?: string): Promise<any> {
@@ -80,6 +114,15 @@ export const trendingProductService = {
   // 모든 데이터 삭제
   async deleteAll(): Promise<any> {
     const response = await api.delete('/trending-products/');
+    return response.data;
+  },
+
+  // KREAM 실시간 랭킹 조회 (API 프록시)
+  async getKreamRanking(params?: {
+    category_id?: string;
+    date_range?: 'weekly' | 'monthly';
+  }): Promise<KreamRankingResponse> {
+    const response = await api.get('/trending-products/kream-ranking/', { params });
     return response.data;
   },
 };

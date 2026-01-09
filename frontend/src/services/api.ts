@@ -4,6 +4,21 @@ import axios, { AxiosResponse } from 'axios';
 // baseURL을 사용하지 않고 모든 요청을 상대 경로로만 처리
 const api = axios.create({
   timeout: 300000, // 5분 (대량 저장을 위해 증가)
+  paramsSerializer: {
+    // 배열 파라미터를 FastAPI가 이해할 수 있는 형식으로 직렬화
+    // key[]=value1&key[]=value2 -> key=value1&key=value2
+    serialize: (params) => {
+      const searchParams = new URLSearchParams();
+      Object.entries(params).forEach(([key, value]) => {
+        if (Array.isArray(value)) {
+          value.forEach((v) => searchParams.append(key, v));
+        } else if (value !== undefined && value !== null) {
+          searchParams.append(key, String(value));
+        }
+      });
+      return searchParams.toString();
+    },
+  },
 });
 
 // 요청 인터셉터: URL 변환, 토큰 자동 첨부

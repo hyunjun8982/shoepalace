@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     # 환경 설정
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     DEBUG: bool = os.getenv("DEBUG", "true").lower() == "true"
+    SQL_ECHO: bool = os.getenv("SQL_ECHO", "false").lower() == "true"  # SQLAlchemy 쿼리 로깅
 
     # 데이터베이스 설정
     DATABASE_URL: str = os.getenv(

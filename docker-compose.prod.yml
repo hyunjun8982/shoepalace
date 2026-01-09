@@ -25,6 +25,7 @@ services:
   backend:
     image: shoepalace-backend:latest
     container_name: shoepalace_backend
+    user: "0:0"  # root 권한으로 실행하여 볼륨 쓰기 권한 문제 해결
     ports:
       - "8001:8000"
     volumes:

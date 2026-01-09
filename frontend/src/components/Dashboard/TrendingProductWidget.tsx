@@ -6,10 +6,9 @@ import { trendingProductService, KreamProductItem } from '../../services/trendin
 // 이미지 프록시 URL 생성
 const getProxyImageUrl = (originalUrl: string) => {
   if (!originalUrl) return '';
-  // KREAM 이미지인 경우 프록시 사용
+  // KREAM 이미지인 경우 프록시 사용 (상대 경로로 요청)
   if (originalUrl.includes('kream-phinf.pstatic.net')) {
-    const apiBase = process.env.REACT_APP_API_URL || 'http://localhost:8001';
-    return `${apiBase}/api/v1/trending-products/kream-image-proxy/?url=${encodeURIComponent(originalUrl)}`;
+    return `/api/v1/trending-products/kream-image-proxy/?url=${encodeURIComponent(originalUrl)}`;
   }
   return originalUrl;
 };

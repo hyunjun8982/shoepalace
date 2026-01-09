@@ -9,13 +9,16 @@ import shutil
 
 router = APIRouter()
 
-# 업로드 디렉토리 설정
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
+# 업로드 디렉토리 설정 (Docker 환경과 로컬 환경 구분)
+if os.path.exists('/app'):
+    UPLOAD_DIR = Path("/app/uploads")
+else:
+    UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # 영수증 디렉토리
 RECEIPT_DIR = UPLOAD_DIR / "receipts"
-RECEIPT_DIR.mkdir(exist_ok=True)
+RECEIPT_DIR.mkdir(parents=True, exist_ok=True)
 
 @router.post("/receipt")
 async def upload_receipt(

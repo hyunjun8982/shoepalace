@@ -409,11 +409,8 @@ const PurchaseFormPage: React.FC = () => {
 
   const handlePreview = async (file: any) => {
     if (file.url) {
-      // 상대 경로인 경우 백엔드 URL 추가
-      const fullUrl = file.url.startsWith('http')
-        ? file.url
-        : `http://localhost:8001${file.url}`;
-      window.open(fullUrl, '_blank');
+      // 상대 경로는 그대로 사용 (프록시 또는 동일 도메인)
+      window.open(file.url, '_blank');
     }
   };
 

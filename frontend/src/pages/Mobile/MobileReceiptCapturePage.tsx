@@ -8,7 +8,14 @@ import {
   DeleteOutlined,
   PlusOutlined,
 } from '@ant-design/icons';
-import api from '../../services/api';
+import axios from 'axios';
+
+// 모바일 페이지용 API (인증 없이 직접 호출)
+// 이 페이지는 QR코드로 접근하므로 로그인 없이 토큰 기반으로 작동
+const getApiBaseUrl = () => {
+  // 현재 페이지의 origin을 기반으로 API URL 결정
+  return `${window.location.origin}/api/v1`;
+};
 
 const MobileReceiptCapturePage: React.FC = () => {
   const { token } = useParams<{ token: string }>();
@@ -26,7 +33,8 @@ const MobileReceiptCapturePage: React.FC = () => {
   useEffect(() => {
     const validateToken = async () => {
       try {
-        const response = await api.get(`/purchases/receipt-upload-token/${token}/validate`);
+        const apiBase = getApiBaseUrl();
+        const response = await axios.get(`${apiBase}/purchases/receipt-upload-token/${token}/validate`);
         if (response.data.valid) {
           setValid(true);
           setUserName(response.data.user_name || '');
@@ -34,9 +42,9 @@ const MobileReceiptCapturePage: React.FC = () => {
           setValid(false);
           setErrorMessage(response.data.message || '유효하지 않은 토큰입니다.');
         }
-      } catch (error) {
+      } catch (error: any) {
         setValid(false);
-        setErrorMessage('토큰 검증에 실패했습니다.');
+        setErrorMessage(error.response?.data?.message || '토큰 검증에 실패했습니다.');
       } finally {
         setLoading(false);
       }
@@ -55,7 +63,8 @@ const MobileReceiptCapturePage: React.FC = () => {
     const fetchStatus = async () => {
       if (!valid || !token) return;
       try {
-        const response = await api.get(`/purchases/receipt-upload-token/${token}/status`);
+        const apiBase = getApiBaseUrl();
+        const response = await axios.get(`${apiBase}/purchases/receipt-upload-token/${token}/status`);
         if (response.data.uploaded_urls) {
           setUploadedUrls(response.data.uploaded_urls);
         }
@@ -92,8 +101,9 @@ const MobileReceiptCapturePage: React.FC = () => {
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await api.post(
-        `/purchases/receipt-upload-token/${token}/upload`,
+      const apiBase = getApiBaseUrl();
+      const response = await axios.post(
+        `${apiBase}/purchases/receipt-upload-token/${token}/upload`,
         formData,
         {
           headers: {
@@ -121,7 +131,8 @@ const MobileReceiptCapturePage: React.FC = () => {
   // 이미지 삭제 핸들러
   const handleDeleteImage = async (index: number) => {
     try {
-      await api.delete(`/purchases/receipt-upload-token/${token}/images/${index}`);
+      const apiBase = getApiBaseUrl();
+      await axios.delete(`${apiBase}/purchases/receipt-upload-token/${token}/images/${index}`);
       setUploadedUrls(prev => prev.filter((_, i) => i !== index));
       message.success('이미지가 삭제되었습니다.');
     } catch (error: any) {
@@ -137,9 +148,8 @@ const MobileReceiptCapturePage: React.FC = () => {
   // API URL 가져오기
   const getFullImageUrl = (url: string) => {
     if (url.startsWith('http')) return url;
-    // 상대 경로인 경우 현재 origin의 API 서버 URL 사용
-    const apiBase = window.location.origin.replace(':3000', ':8000');
-    return `${apiBase}${url}`;
+    // 상대 경로인 경우 현재 origin 사용 (nginx 프록시가 처리)
+    return `${window.location.origin}${url}`;
   };
 
   if (loading) {

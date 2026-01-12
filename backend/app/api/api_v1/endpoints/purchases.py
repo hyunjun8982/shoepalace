@@ -79,16 +79,21 @@ def get_purchases(
     from sqlalchemy import or_
     query = db.query(Purchase)
 
-    # 검색 필터링
+    # 검색 필터링 - 서브쿼리 사용 (JSON 컬럼 DISTINCT 오류 방지)
     if search:
-        # PurchaseItem과 Product를 조인하여 상품명 검색 가능하게 함
-        query = query.outerjoin(PurchaseItem).outerjoin(Product, PurchaseItem.product_id == Product.id)
-        search_filter = or_(
-            Purchase.transaction_no.ilike(f"%{search}%"),
-            Purchase.supplier.ilike(f"%{search}%"),
-            Product.product_name.ilike(f"%{search}%")
-        )
-        query = query.filter(search_filter).distinct()
+        # 검색 조건에 맞는 Purchase ID를 먼저 찾음
+        search_subquery = db.query(Purchase.id)\
+            .outerjoin(PurchaseItem)\
+            .outerjoin(Product, PurchaseItem.product_id == Product.id)\
+            .filter(or_(
+                Purchase.transaction_no.ilike(f"%{search}%"),
+                Purchase.supplier.ilike(f"%{search}%"),
+                Product.product_name.ilike(f"%{search}%"),
+                Product.product_code.ilike(f"%{search}%")
+            ))\
+            .distinct()\
+            .subquery()
+        query = query.filter(Purchase.id.in_(search_subquery))
 
     # 필터링
     if start_date:

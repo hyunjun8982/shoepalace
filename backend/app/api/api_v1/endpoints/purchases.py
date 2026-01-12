@@ -132,7 +132,7 @@ def get_purchases(
         joinedload(Purchase.items).joinedload(PurchaseItem.warehouse),
         joinedload(Purchase.buyer),
         joinedload(Purchase.receiver)
-    ).order_by(Purchase.created_at.desc()).offset(skip).limit(limit).all()
+    ).order_by(Purchase.purchase_date.desc()).offset(skip).limit(limit).all()
 
     # buyer_name, receiver_name 및 product의 brand_name 추가
     for purchase in purchases:

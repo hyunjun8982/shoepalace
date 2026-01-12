@@ -40,7 +40,6 @@ def get_sales(
 ):
     """판매 목록 조회"""
     from sqlalchemy.orm import selectinload
-    from sqlalchemy import desc, func
     from app.models.brand import Brand
 
     # Sale을 조회하면서 관련 데이터를 미리 로드
@@ -75,10 +74,10 @@ def get_sales(
     if current_user.role.value == "seller":
         query = query.filter(Sale.seller_id == current_user.id)
 
-    # 최신순 정렬 (updated_at 우선, 없으면 created_at)
-    query = query.order_by(desc(func.coalesce(Sale.updated_at, Sale.created_at)))
-
     total = query.count()
+
+    # 판매일자 최신순 정렬
+    query = query.order_by(Sale.sale_date.desc())
     sales = query.offset(skip).limit(limit).all()
 
     # seller_name 필드 추가 및 product 정보 동적 할당

@@ -60,10 +60,13 @@ def get_products(
     categories: Optional[str] = None,  # 쉼표로 구분된 category 목록
     search: Optional[str] = None,
     is_active: Optional[bool] = None,
+    only_valid: Optional[bool] = None,  # 브랜드, 상품코드, 카테고리가 모두 있는 상품만
+    order_by: Optional[str] = None,  # 정렬 기준: inventory_desc (재고량 내림차순)
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """상품 목록 조회 (브랜드명 및 재고 정보 포함)"""
+    print(f"[PRODUCTS] GET request - user: {current_user.username}, limit: {limit}, skip: {skip}, only_valid: {only_valid}")
     query = db.query(Product).options(
         joinedload(Product.brand),
         joinedload(Product.inventory)
@@ -83,6 +86,14 @@ def get_products(
     if is_active is not None:
         query = query.filter(Product.is_active == is_active)
 
+    # 유효한 상품만 필터링 (브랜드, 상품코드, 카테고리가 모두 있는 상품)
+    if only_valid:
+        query = query.filter(
+            Product.brand_id.isnot(None),
+            Product.product_code.isnot(None),
+            Product.category.isnot(None)
+        )
+
     if search:
         query = query.filter(
             Product.product_name.ilike(f"%{search}%") |
@@ -97,6 +108,18 @@ def get_products(
         if product.brand:
             product.brand_name = product.brand.name
             product.brand_icon_url = product.brand.icon_url
+
+    # 재고량 기준 정렬
+    if order_by == "inventory_desc":
+        # 각 상품의 총 재고량 계산
+        products_with_inventory = []
+        for product in products:
+            total_inventory = sum(inv.quantity for inv in product.inventory) if product.inventory else 0
+            products_with_inventory.append((product, total_inventory))
+
+        # 재고량 내림차순으로 정렬
+        products_with_inventory.sort(key=lambda x: x[1], reverse=True)
+        products = [p[0] for p in products_with_inventory]
 
     return ProductList(total=total, items=products)
 

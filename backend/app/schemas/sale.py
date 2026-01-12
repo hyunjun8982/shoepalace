@@ -10,6 +10,7 @@ class SaleItemBase(BaseModel):
     product_name: Optional[str] = None
     product_code: Optional[str] = None
     brand_name: Optional[str] = None
+    category: Optional[str] = None
     size: Optional[str] = None
     quantity: int = 1
     seller_sale_price_original: Decimal

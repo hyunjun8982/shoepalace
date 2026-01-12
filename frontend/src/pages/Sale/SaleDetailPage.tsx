@@ -52,6 +52,8 @@ const SaleDetailPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [editingPrices, setEditingPrices] = useState<{ [key: string]: number }>({});
+  const [editingSizeQuantities, setEditingSizeQuantities] = useState<{ [size: string]: number }>({});
+  const [editingSizeSellerPrices, setEditingSizeSellerPrices] = useState<{ [size: string]: number }>({});
   const [form] = Form.useForm();
 
   useEffect(() => {
@@ -203,10 +205,68 @@ const SaleDetailPage: React.FC = () => {
   // 첫 번째 상품 정보 (모든 아이템이 같은 상품)
   const firstItem = sale?.items?.[0];
 
-  // 사이즈별 정보 맵 생성
+  // 전체 사이즈 목록 (220-300만 표시)
+  const allSizes = [
+    '220', '225', '230', '235', '240', '245', '250', '255', '260', '265', '270', '275', '280', '285', '290', '295', '300'
+  ];
+
+  // 사이즈 매핑 (표시용)
+  const sizeMapping: { [key: string]: string } = {
+    '220': 'FREE',
+    '225': 'XXS',
+    '230': 'XS',
+    '235': 'S',
+    '240': 'M',
+    '245': 'L',
+    '250': 'XL',
+    '255': 'XXL',
+    '260': '170',
+    '265': '180',
+    '270': '190',
+    '275': '200',
+    '280': '210',
+    '285': '95',
+    '290': '100',
+    '295': '105',
+    '300': '110',
+  };
+
+  // 사이즈 표시 함수
+  const getSizeDisplay = (size: string): string => {
+    if (sizeMapping[size]) {
+      return `${size} (${sizeMapping[size]})`;
+    }
+    return size;
+  };
+
+  // 역매핑: 의류/신발 사이즈 -> mm 사이즈
+  const reverseSizeMapping: { [key: string]: string } = {
+    'FREE': '220',
+    'XXS': '225',
+    'XS': '230',
+    'S': '235',
+    'M': '240',
+    'L': '245',
+    'XL': '250',
+    'XXL': '255',
+    '170': '260',
+    '180': '265',
+    '190': '270',
+    '200': '275',
+    '210': '280',
+    '95': '285',
+    '100': '290',
+    '105': '295',
+    '110': '300',
+  };
+
+  // 사이즈별 정보 맵 생성 (입력된 사이즈를 mm 사이즈로 변환)
   const sizeInfoMap = new Map<string, { quantity: number; sellerPrice: number; companyPrice: number }>();
   sale?.items?.forEach(item => {
-    const size = item.size || 'FREE';
+    let size = item.size || 'FREE';
+    // 역매핑: FREE, XXS 등이 들어오면 220, 225 등으로 변환
+    size = reverseSizeMapping[size] || size;
+
     const current = sizeInfoMap.get(size) || { quantity: 0, sellerPrice: 0, companyPrice: 0 };
     sizeInfoMap.set(size, {
       quantity: current.quantity + (item.quantity || 0),
@@ -215,19 +275,31 @@ const SaleDetailPage: React.FC = () => {
     });
   });
 
-  // 사이즈 정렬
-  const sortedSizeEntries = Array.from(sizeInfoMap.entries()).sort(([a], [b]) => {
-    const aNum = parseFloat(a);
-    const bNum = parseFloat(b);
-    if (!isNaN(aNum) && !isNaN(bNum)) {
-      return aNum - bNum;
-    }
-    return a.localeCompare(b);
+  // 전체 사이즈 목록 사용 (수량 0인 사이즈 포함)
+  const sortedSizeEntries = allSizes.map(size => {
+    const info = sizeInfoMap.get(size) || { quantity: 0, sellerPrice: 0, companyPrice: 0 };
+    return [size, info] as [string, { quantity: number; sellerPrice: number; companyPrice: number }];
   });
 
-  // 총액 계산
-  const totalQuantity = sale?.items?.reduce((sum, item) => sum + (item.quantity || 0), 0) || 0;
-  const totalSellerAmount = sale?.total_seller_amount || 0;
+  // 판매가 (편집 모드에서는 첫 번째 사이즈의 가격 사용)
+  const sellerSalePrice = editMode
+    ? (editingSizeSellerPrices[sortedSizeEntries[0]?.[0]] ?? sale?.items?.[0]?.seller_sale_price_krw ?? 0)
+    : (sale?.items?.[0]?.seller_sale_price_krw || 0);
+
+  // 총액 및 수량 계산 (편집 모드 반영)
+  const totalQuantity = editMode
+    ? sortedSizeEntries.reduce((sum, [size, info]) => {
+        return sum + (editingSizeQuantities[size] || info.quantity);
+      }, 0)
+    : sale?.items?.reduce((sum, item) => sum + (item.quantity || 0), 0) || 0;
+
+  const totalSellerAmount = editMode
+    ? sortedSizeEntries.reduce((sum, [size, info]) => {
+        const qty = editingSizeQuantities[size] || info.quantity;
+        return sum + (sellerSalePrice * qty);
+      }, 0)
+    : sale?.total_seller_amount || 0;
+
   const totalCompanyAmount = sale?.total_company_amount || 0;
 
   // 파일 다운로드 핸들러
@@ -289,12 +361,21 @@ const SaleDetailPage: React.FC = () => {
                         });
                         // 가격 정보 초기화
                         const prices: { [key: string]: number } = {};
+                        const sizeQtys: { [size: string]: number } = {};
+                        const sizeSellerPrices: { [size: string]: number } = {};
+
                         sale?.items?.forEach(item => {
                           if (item.id) {
                             prices[item.id] = item.company_sale_price || 0;
                           }
+                          const size = item.size || 'FREE';
+                          sizeQtys[size] = (sizeQtys[size] || 0) + (item.quantity || 1);
+                          sizeSellerPrices[size] = item.seller_sale_price_krw || 0;
                         });
+
                         setEditingPrices(prices);
+                        setEditingSizeQuantities(sizeQtys);
+                        setEditingSizeSellerPrices(sizeSellerPrices);
                       }}
                     >
                       편집
@@ -418,6 +499,9 @@ const SaleDetailPage: React.FC = () => {
             <Descriptions.Item label="상태">
               {getStatusTag(sale.status)}
             </Descriptions.Item>
+            <Descriptions.Item label="판매가(개당)">
+              ₩{Math.floor(sellerSalePrice).toLocaleString()}
+            </Descriptions.Item>
             <Descriptions.Item label="총 판매자 판매금액">
               ₩{Math.floor(sale.total_seller_amount || 0).toLocaleString()}
             </Descriptions.Item>
@@ -459,8 +543,28 @@ const SaleDetailPage: React.FC = () => {
               <Descriptions.Item label="등록일시">
                 {sale.created_at ? dayjs(sale.created_at).format('YYYY-MM-DD HH:mm') : '-'}
               </Descriptions.Item>
+              <Descriptions.Item label="판매가(개당)">
+                <InputNumber
+                  value={sellerSalePrice}
+                  onChange={(value) => {
+                    if (value !== null) {
+                      // 모든 사이즈에 동일한 판매가 적용
+                      const newSizePrices: { [size: string]: number } = {};
+                      sortedSizeEntries.forEach(([size]) => {
+                        newSizePrices[size] = value;
+                      });
+                      setEditingSizeSellerPrices(prev => ({ ...prev, ...newSizePrices }));
+                    }
+                  }}
+                  formatter={(value) => value ? `₩${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
+                  parser={(value) => value!.replace(/₩\s?|(,*)/g, '') as any}
+                  style={{ width: '100%' }}
+                  min={0}
+                  step={1000}
+                />
+              </Descriptions.Item>
               <Descriptions.Item label="총 판매자 판매금액">
-                ₩{Math.floor(sale.total_seller_amount || 0).toLocaleString()}
+                ₩{Math.floor(totalSellerAmount).toLocaleString()}
               </Descriptions.Item>
               <Descriptions.Item label="총 회사 판매금액">
                 ₩{Math.floor(sale.total_company_amount || 0).toLocaleString()}
@@ -557,39 +661,62 @@ const SaleDetailPage: React.FC = () => {
               </div>
             </div>
 
-            {/* 사이즈별 수량 테이블 */}
-            <Table
-              size="small"
-              dataSource={sortedSizeEntries.map(([size, info]) => ({ size, ...info }))}
-              columns={[
-                {
-                  title: '사이즈',
-                  dataIndex: 'size',
-                  key: 'size',
-                  align: 'center',
-                  width: 120,
-                },
-                {
-                  title: '수량',
-                  dataIndex: 'quantity',
-                  key: 'quantity',
-                  align: 'center',
-                  width: 120,
-                  render: (qty) => `${qty}개`,
-                },
-                {
-                  title: '판매자 판매가',
-                  dataIndex: 'sellerPrice',
-                  key: 'sellerPrice',
-                  align: 'right',
-                  render: (price, record) => `₩${Math.floor(price * record.quantity).toLocaleString()}`,
-                },
-              ]}
-              pagination={false}
-              bordered
-              rowKey="size"
-              style={{ marginBottom: 16 }}
-            />
+            {/* 사이즈별 수량/가격 그리드 */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))',
+                gap: '6px'
+              }}>
+                {sortedSizeEntries.map(([size, info]) => {
+                  const currentQty = editMode ? (editingSizeQuantities[size] || info.quantity) : info.quantity;
+
+                  return (
+                    <div
+                      key={size}
+                      style={{
+                        border: '1px solid #d9d9d9',
+                        borderRadius: '4px',
+                        padding: '10px 8px',
+                        backgroundColor: currentQty > 0 ? (editMode ? '#f0f7ff' : '#fafafa') : '#fff',
+                        textAlign: 'center',
+                        opacity: currentQty === 0 ? 0.5 : 1
+                      }}
+                    >
+                      {/* 사이즈 */}
+                      <div style={{
+                        fontWeight: 600,
+                        fontSize: '14px',
+                        color: currentQty > 0 ? '#1890ff' : '#999',
+                        marginBottom: '6px'
+                      }}>
+                        {getSizeDisplay(size)}
+                      </div>
+
+                      {/* 수량 */}
+                      {editMode ? (
+                        <InputNumber
+                          min={0}
+                          value={currentQty}
+                          onChange={(value) => {
+                            if (value !== null) {
+                              setEditingSizeQuantities(prev => ({
+                                ...prev,
+                                [size]: value
+                              }));
+                            }
+                          }}
+                          size="small"
+                          style={{ width: '100%' }}
+                        />
+                      ) : (
+                        <div style={{ fontSize: '15px', fontWeight: 500, color: '#262626' }}>{currentQty}개</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
 
             {/* 총계 */}
             <div style={{

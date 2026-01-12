@@ -36,6 +36,7 @@ import { User } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
 import dayjs from 'dayjs';
 import './PurchaseListPage.css';
+import { formatCurrencyWithKoreanSeparate, roundToWon } from '../../utils/currencyUtils';
 
 const { RangePicker } = DatePicker;
 const { Option } = Select;
@@ -48,20 +49,40 @@ const PurchaseListPage: React.FC = () => {
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [allPurchases, setAllPurchases] = useState<Purchase[]>([]); // 통계용 전체 데이터
   const [total, setTotal] = useState(0);
-  const [pagination, setPagination] = useState({
-    current: 1,
-    pageSize: 10,
+  const [pagination, setPagination] = useState(() => {
+    const saved = localStorage.getItem('purchaseListPagination');
+    return saved ? JSON.parse(saved) : { current: 1, pageSize: 10 };
   });
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [users, setUsers] = useState<User[]>([]);
 
   // 필터 상태
-  const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
-  const [paymentType, setPaymentType] = useState<string[]>([]);
-  const [brandFilter, setBrandFilter] = useState<string[]>([]);
-  const [buyerFilter, setBuyerFilter] = useState<string[]>([]);
-  const [searchText, setSearchText] = useState<string>('');
+  const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(() => {
+    const saved = localStorage.getItem('purchaseListDateRange');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return [dayjs(parsed[0]), dayjs(parsed[1])];
+    }
+    return null;
+  });
+  const [paymentType, setPaymentType] = useState<string[]>(() => {
+    const saved = localStorage.getItem('purchaseListPaymentType');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [brandFilter, setBrandFilter] = useState<string[]>(() => {
+    const saved = localStorage.getItem('purchaseListBrandFilter');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [buyerFilter, setBuyerFilter] = useState<string[]>(() => {
+    const saved = localStorage.getItem('purchaseListBuyerFilter');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [searchText, setSearchText] = useState<string>(() => {
+    const saved = localStorage.getItem('purchaseListSearchText');
+    return saved || '';
+  });
+  const [statsYear, setStatsYear] = useState<number | null>(null); // null = 전체, 숫자 = 해당 연도
 
   // 전체 데이터 로드 (통계용)
   const fetchAllPurchases = async () => {
@@ -129,6 +150,38 @@ const PurchaseListPage: React.FC = () => {
   useEffect(() => {
     fetchPurchases();
   }, [pagination.current, pagination.pageSize, dateRange, paymentType, brandFilter, buyerFilter, searchText]);
+
+  // 상태를 localStorage에 저장
+  useEffect(() => {
+    localStorage.setItem('purchaseListPagination', JSON.stringify(pagination));
+  }, [pagination]);
+
+  useEffect(() => {
+    if (dateRange) {
+      localStorage.setItem('purchaseListDateRange', JSON.stringify([
+        dateRange[0].toISOString(),
+        dateRange[1].toISOString()
+      ]));
+    } else {
+      localStorage.removeItem('purchaseListDateRange');
+    }
+  }, [dateRange]);
+
+  useEffect(() => {
+    localStorage.setItem('purchaseListPaymentType', JSON.stringify(paymentType));
+  }, [paymentType]);
+
+  useEffect(() => {
+    localStorage.setItem('purchaseListBrandFilter', JSON.stringify(brandFilter));
+  }, [brandFilter]);
+
+  useEffect(() => {
+    localStorage.setItem('purchaseListBuyerFilter', JSON.stringify(buyerFilter));
+  }, [buyerFilter]);
+
+  useEffect(() => {
+    localStorage.setItem('purchaseListSearchText', searchText);
+  }, [searchText]);
 
   // 구매 삭제
   const handleDelete = async (id: string) => {
@@ -285,19 +338,24 @@ const PurchaseListPage: React.FC = () => {
   const thisMonthStart = dayjs().startOf('month');
   const thisMonthEnd = dayjs().endOf('month');
 
-  // 전체 통계
-  const totalAmount = allPurchases.reduce((sum, purchase) => {
+  // 연도 필터가 적용된 구매 데이터
+  const filteredPurchases = statsYear
+    ? allPurchases.filter(p => dayjs(p.purchase_date).year() === statsYear)
+    : allPurchases;
+
+  // 전체 통계 (연도 필터 적용)
+  const totalAmount = filteredPurchases.reduce((sum, purchase) => {
     const amount = Number(purchase.total_amount) || 0;
     return sum + amount;
   }, 0);
 
-  const totalQuantity = allPurchases.reduce((sum, purchase) => {
+  const totalQuantity = filteredPurchases.reduce((sum, purchase) => {
     const quantity = purchase.items?.reduce((itemSum, item) => itemSum + (item.quantity || 0), 0) || 0;
     return sum + quantity;
   }, 0);
 
-  // 이번달 통계
-  const thisMonthPurchases = allPurchases.filter(p => {
+  // 이번달 통계 (연도 필터 적용)
+  const thisMonthPurchases = filteredPurchases.filter(p => {
     const purchaseDate = dayjs(p.purchase_date);
     return purchaseDate.isAfter(thisMonthStart) || purchaseDate.isSame(thisMonthStart, 'day');
   });
@@ -310,8 +368,8 @@ const PurchaseListPage: React.FC = () => {
     return sum + quantity;
   }, 0);
 
-  // 이번주 통계
-  const thisWeekPurchases = allPurchases.filter(p => {
+  // 이번주 통계 (연도 필터 적용)
+  const thisWeekPurchases = filteredPurchases.filter(p => {
     const purchaseDate = dayjs(p.purchase_date);
     return purchaseDate.isAfter(thisWeekStart) || purchaseDate.isSame(thisWeekStart, 'day');
   });
@@ -324,8 +382,8 @@ const PurchaseListPage: React.FC = () => {
     return sum + quantity;
   }, 0);
 
-  // 오늘 통계
-  const todayPurchases = allPurchases.filter(p =>
+  // 오늘 통계 (연도 필터 적용)
+  const todayPurchases = filteredPurchases.filter(p =>
     dayjs(p.purchase_date).isSame(today, 'day')
   );
   const todayAmount = todayPurchases.reduce((sum, purchase) => {
@@ -336,6 +394,9 @@ const PurchaseListPage: React.FC = () => {
     const quantity = purchase.items?.reduce((itemSum, item) => itemSum + (item.quantity || 0), 0) || 0;
     return sum + quantity;
   }, 0);
+
+  // 연도 목록 생성 (구매 데이터가 있는 연도들)
+  const availableYears = Array.from(new Set(allPurchases.map(p => dayjs(p.purchase_date).year()))).sort((a, b) => b - a);
 
   return (
     <div style={{ padding: '24px' }}>
@@ -357,8 +418,20 @@ const PurchaseListPage: React.FC = () => {
               padding: '12px',
               color: 'white'
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                 <span style={{ fontSize: '14px', fontWeight: 500 }}>총 구매</span>
+                <Select
+                  size="small"
+                  value={statsYear}
+                  onChange={setStatsYear}
+                  style={{ width: 90 }}
+                  dropdownStyle={{ minWidth: 90 }}
+                >
+                  <Option value={null}>전체</Option>
+                  {availableYears.map(year => (
+                    <Option key={year} value={year}>{year}년</Option>
+                  ))}
+                </Select>
               </div>
             </div>
             <Row>
@@ -368,8 +441,11 @@ const PurchaseListPage: React.FC = () => {
                 background: 'white'
               }}>
                 <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 8, fontWeight: 500 }}>금액</div>
-                <div className="statistics-value" style={{ fontSize: '20px', fontWeight: 700, color: '#262626' }}>
-                  ₩{totalAmount.toLocaleString()}
+                <div className="statistics-value" style={{ fontSize: '20px', fontWeight: 700, color: '#262626', lineHeight: '1.3' }}>
+                  <div>{formatCurrencyWithKoreanSeparate(roundToWon(totalAmount)).amount}</div>
+                  <div style={{ fontSize: '11px', fontWeight: 400, color: '#999', marginTop: '2px' }}>
+                    ({formatCurrencyWithKoreanSeparate(roundToWon(totalAmount)).korean})
+                  </div>
                 </div>
               </Col>
               <Col span={12} style={{
@@ -411,8 +487,11 @@ const PurchaseListPage: React.FC = () => {
                 background: 'white'
               }}>
                 <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 8, fontWeight: 500 }}>금액</div>
-                <div className="statistics-value" style={{ fontSize: '20px', fontWeight: 700, color: '#262626' }}>
-                  ₩{thisMonthAmount.toLocaleString()}
+                <div className="statistics-value" style={{ fontSize: '20px', fontWeight: 700, color: '#262626', lineHeight: '1.3' }}>
+                  <div>{formatCurrencyWithKoreanSeparate(roundToWon(thisMonthAmount)).amount}</div>
+                  <div style={{ fontSize: '11px', fontWeight: 400, color: '#999', marginTop: '2px' }}>
+                    ({formatCurrencyWithKoreanSeparate(roundToWon(thisMonthAmount)).korean})
+                  </div>
                 </div>
               </Col>
               <Col span={12} style={{
@@ -454,8 +533,11 @@ const PurchaseListPage: React.FC = () => {
                 background: 'white'
               }}>
                 <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 8, fontWeight: 500 }}>금액</div>
-                <div className="statistics-value" style={{ fontSize: '20px', fontWeight: 700, color: '#262626' }}>
-                  ₩{thisWeekAmount.toLocaleString()}
+                <div className="statistics-value" style={{ fontSize: '20px', fontWeight: 700, color: '#262626', lineHeight: '1.3' }}>
+                  <div>{formatCurrencyWithKoreanSeparate(roundToWon(thisWeekAmount)).amount}</div>
+                  <div style={{ fontSize: '11px', fontWeight: 400, color: '#999', marginTop: '2px' }}>
+                    ({formatCurrencyWithKoreanSeparate(roundToWon(thisWeekAmount)).korean})
+                  </div>
                 </div>
               </Col>
               <Col span={12} style={{
@@ -497,8 +579,11 @@ const PurchaseListPage: React.FC = () => {
                 background: 'white'
               }}>
                 <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 8, fontWeight: 500 }}>금액</div>
-                <div className="statistics-value" style={{ fontSize: '20px', fontWeight: 700, color: '#262626' }}>
-                  ₩{todayAmount.toLocaleString()}
+                <div className="statistics-value" style={{ fontSize: '20px', fontWeight: 700, color: '#262626', lineHeight: '1.3' }}>
+                  <div>{formatCurrencyWithKoreanSeparate(roundToWon(todayAmount)).amount}</div>
+                  <div style={{ fontSize: '11px', fontWeight: 400, color: '#999', marginTop: '2px' }}>
+                    ({formatCurrencyWithKoreanSeparate(roundToWon(todayAmount)).korean})
+                  </div>
                 </div>
               </Col>
               <Col span={12} style={{
@@ -628,6 +713,7 @@ const PurchaseListPage: React.FC = () => {
             onClick: () => navigate(`/purchases/${record.id}`),
             style: { cursor: 'pointer' }
           })}
+          scroll={{ x: 1200 }}
           pagination={{
             ...pagination,
             total,

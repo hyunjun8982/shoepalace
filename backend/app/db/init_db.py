@@ -19,6 +19,29 @@ def run_migrations() -> None:
             conn.rollback()
             print(f"Migration skipped or failed: {e}")
 
+        # sales 테이블에 progress_status 컬럼 추가
+        try:
+            # Enum 타입 생성
+            conn.execute(text("""
+                DO $$ BEGIN
+                    CREATE TYPE saleprogressstatus AS ENUM (
+                        'partial_shipped', 'shipped', 'deposit',
+                        'refund', 'additional_payment', 'out_of_stock'
+                    );
+                EXCEPTION
+                    WHEN duplicate_object THEN null;
+                END $$;
+            """))
+
+            # 컬럼 추가
+            conn.execute(text("ALTER TABLE sales ADD COLUMN IF NOT EXISTS progress_status saleprogressstatus"))
+            conn.commit()
+            print("Migration: sales.progress_status column added")
+        except Exception as e:
+            # 이미 컬럼이 있거나 오류 발생 시 무시
+            conn.rollback()
+            print(f"Migration skipped or failed: {e}")
+
 def init_db() -> None:
     """데이터베이스 초기화"""
     # 테이블 생성 (이미 존재하면 무시)
@@ -30,38 +53,7 @@ def init_db() -> None:
 
     db = SessionLocal()
     try:
-        # 관리자 계정이 없으면 생성
-        admin = db.query(User).filter(User.username == "admin").first()
-        if not admin:
-            admin_user = User(
-                username="admin",
-                email="admin@shoepalace.com",
-                hashed_password=get_password_hash("admin123"),
-                full_name="관리자",
-                role=UserRole.admin,
-                is_active=True
-            )
-            db.add(admin_user)
-
-        # 기본 사용자들 생성
-        users_data = [
-            {"username": "inseo", "email": "inseo@shoepalace.com", "full_name": "정인서", "role": UserRole.buyer},
-            {"username": "dahee", "email": "dahee@shoepalace.com", "full_name": "김다희", "role": UserRole.buyer},
-            {"username": "honam", "email": "honam@shoepalace.com", "full_name": "호남", "role": UserRole.seller},
-        ]
-
-        for user_data in users_data:
-            existing_user = db.query(User).filter(User.username == user_data["username"]).first()
-            if not existing_user:
-                new_user = User(
-                    username=user_data["username"],
-                    email=user_data["email"],
-                    hashed_password=get_password_hash("admin123"),
-                    full_name=user_data["full_name"],
-                    role=user_data["role"],
-                    is_active=True
-                )
-                db.add(new_user)
+        # 자동 계정 생성 제거됨 - 필요 시 수동으로 생성
 
         # 기본 브랜드들 생성
         brands_data = [

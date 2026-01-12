@@ -35,6 +35,7 @@ import { brandService, Brand } from '../../services/brand';
 import { useAuth } from '../../contexts/AuthContext';
 import './SaleListPage.css';
 import { getFileUrl } from '../../utils/urlUtils';
+import { formatCurrencyWithKoreanSeparate, roundToWon } from '../../utils/currencyUtils';
 
 const { RangePicker } = DatePicker;
 const { Option } = Select;
@@ -57,12 +58,18 @@ const SaleListPage: React.FC = () => {
   const [allSales, setAllSales] = useState<Sale[]>([]); // 통계용 전체 데이터
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState(0);
-  const [pagination, setPagination] = useState({
-    current: 1,
-    pageSize: 10,
+  const [pagination, setPagination] = useState(() => {
+    const saved = localStorage.getItem('saleListPagination');
+    return saved ? JSON.parse(saved) : { current: 1, pageSize: 10 };
   });
-  const [filters, setFilters] = useState<SaleListParams>({});
-  const [searchText, setSearchText] = useState<string>('');
+  const [filters, setFilters] = useState<SaleListParams>(() => {
+    const saved = localStorage.getItem('saleListFilters');
+    return saved ? JSON.parse(saved) : {};
+  });
+  const [searchText, setSearchText] = useState<string>(() => {
+    const saved = localStorage.getItem('saleListSearchText');
+    return saved || '';
+  });
   const [brands, setBrands] = useState<Brand[]>([]);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [updating, setUpdating] = useState(false);
@@ -76,7 +83,7 @@ const SaleListPage: React.FC = () => {
     const saved = localStorage.getItem('defaultMarginPercent');
     return saved ? Number(saved) : 30;
   });
-
+  const [statsYear, setStatsYear] = useState<number | null>(null); // null = 전체, 숫자 = 해당 연도
 
   // 전체 데이터 로드 (통계용)
   const fetchAllSales = async () => {
@@ -108,6 +115,19 @@ const SaleListPage: React.FC = () => {
   useEffect(() => {
     fetchSales();
   }, [pagination.current, pagination.pageSize, filters, searchText]);
+
+  // 상태를 localStorage에 저장
+  useEffect(() => {
+    localStorage.setItem('saleListPagination', JSON.stringify(pagination));
+  }, [pagination]);
+
+  useEffect(() => {
+    localStorage.setItem('saleListFilters', JSON.stringify(filters));
+  }, [filters]);
+
+  useEffect(() => {
+    localStorage.setItem('saleListSearchText', searchText);
+  }, [searchText]);
 
   const fetchSales = async () => {
     try {
@@ -175,7 +195,7 @@ const SaleListPage: React.FC = () => {
       ...prev,
       [key]: value,
     }));
-    setPagination(prev => ({ ...prev, current: 1 }));
+    setPagination((prev: { current: number; pageSize: number }) => ({ ...prev, current: 1 }));
   };
 
   const handleDateRangeChange = (dates: any) => {
@@ -192,7 +212,7 @@ const SaleListPage: React.FC = () => {
         end_date: undefined,
       }));
     }
-    setPagination(prev => ({ ...prev, current: 1 }));
+    setPagination((prev: { current: number; pageSize: number }) => ({ ...prev, current: 1 }));
   };
 
   const getStatusTag = (status: SaleStatus) => {
@@ -475,8 +495,8 @@ const SaleListPage: React.FC = () => {
 
         return (
           <div style={{ lineHeight: '1.4' }}>
-            <div style={{ fontSize: '12px', color: '#666' }}>{currency} {totalOriginal.toLocaleString()}</div>
-            <div style={{ fontWeight: 600 }}>₩{totalKrw.toLocaleString()}</div>
+            <div style={{ fontSize: '12px', color: '#666' }}>{currency} {Math.floor(totalOriginal).toLocaleString()}</div>
+            <div style={{ fontWeight: 600 }}>₩{Math.floor(totalKrw).toLocaleString()}</div>
           </div>
         );
       },
@@ -487,7 +507,7 @@ const SaleListPage: React.FC = () => {
       width: 110,
       align: 'left',
       render: (_, record) => {
-        return record.total_company_amount ? `₩${Number(record.total_company_amount).toLocaleString()}` : '-';
+        return record.total_company_amount ? `₩${Math.floor(Number(record.total_company_amount)).toLocaleString()}` : '-';
       },
     },
     {
@@ -496,7 +516,7 @@ const SaleListPage: React.FC = () => {
       width: 110,
       align: 'left',
       render: (_, record) => {
-        return record.total_seller_margin ? `₩${Number(record.total_seller_margin).toLocaleString()}` : '-';
+        return record.total_seller_margin ? `₩${Math.floor(Number(record.total_seller_margin)).toLocaleString()}` : '-';
       },
     },
     {
@@ -574,32 +594,40 @@ const SaleListPage: React.FC = () => {
   const thisMonthStart = dayjs().startOf('month');
   const thisMonthEnd = dayjs().endOf('month');
 
-  // 전체 통계 (전체 데이터 기준)
-  const totalSellerAmount = allSales.reduce((sum, sale) => sum + Number(sale.total_seller_amount || 0), 0);
-  const totalQuantity = allSales.reduce((sum, sale) => sum + (sale.items?.reduce((itemSum, item) => itemSum + (item.quantity || 0), 0) || 0), 0);
+  // 연도 필터가 적용된 판매 데이터
+  const filteredSales = statsYear
+    ? allSales.filter(s => dayjs(s.sale_date).year() === statsYear)
+    : allSales;
 
-  // 이번달 통계
-  const thisMonthSales = allSales.filter(s => {
+  // 전체 통계 (연도 필터 적용)
+  const totalSellerAmount = filteredSales.reduce((sum, sale) => sum + Number(sale.total_seller_amount || 0), 0);
+  const totalQuantity = filteredSales.reduce((sum, sale) => sum + (sale.items?.reduce((itemSum, item) => itemSum + (item.quantity || 0), 0) || 0), 0);
+
+  // 이번달 통계 (연도 필터 적용)
+  const thisMonthSales = filteredSales.filter(s => {
     const saleDate = dayjs(s.sale_date);
     return saleDate.isAfter(thisMonthStart) || saleDate.isSame(thisMonthStart, 'day');
   });
   const thisMonthAmount = thisMonthSales.reduce((sum, sale) => sum + Number(sale.total_seller_amount || 0), 0);
   const thisMonthQuantity = thisMonthSales.reduce((sum, sale) => sum + (sale.items?.reduce((itemSum, item) => itemSum + (item.quantity || 0), 0) || 0), 0);
 
-  // 이번주 통계
-  const thisWeekSales = allSales.filter(s => {
+  // 이번주 통계 (연도 필터 적용)
+  const thisWeekSales = filteredSales.filter(s => {
     const saleDate = dayjs(s.sale_date);
     return saleDate.isAfter(thisWeekStart) || saleDate.isSame(thisWeekStart, 'day');
   });
   const thisWeekAmount = thisWeekSales.reduce((sum, sale) => sum + Number(sale.total_seller_amount || 0), 0);
   const thisWeekQuantity = thisWeekSales.reduce((sum, sale) => sum + (sale.items?.reduce((itemSum, item) => itemSum + (item.quantity || 0), 0) || 0), 0);
 
-  // 오늘 통계
-  const todaySales = allSales.filter(s =>
+  // 오늘 통계 (연도 필터 적용)
+  const todaySales = filteredSales.filter(s =>
     dayjs(s.sale_date).isSame(today, 'day')
   );
   const todayAmount = todaySales.reduce((sum, sale) => sum + Number(sale.total_seller_amount || 0), 0);
   const todayQuantity = todaySales.reduce((sum, sale) => sum + (sale.items?.reduce((itemSum, item) => itemSum + (item.quantity || 0), 0) || 0), 0);
+
+  // 연도 목록 생성 (판매 데이터가 있는 연도들)
+  const availableYears = Array.from(new Set(allSales.map(s => dayjs(s.sale_date).year()))).sort((a, b) => b - a);
 
   // 모달 내 필터링된 판매 목록
   const filteredPendingSales = pendingSales.filter(sale => {
@@ -634,8 +662,20 @@ const SaleListPage: React.FC = () => {
               padding: '12px',
               color: 'white'
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                 <span style={{ fontSize: '14px', fontWeight: 500 }}>총 판매</span>
+                <Select
+                  size="small"
+                  value={statsYear}
+                  onChange={setStatsYear}
+                  style={{ width: 90 }}
+                  dropdownStyle={{ minWidth: 90 }}
+                >
+                  <Option value={null}>전체</Option>
+                  {availableYears.map(year => (
+                    <Option key={year} value={year}>{year}년</Option>
+                  ))}
+                </Select>
               </div>
             </div>
             <Row>
@@ -645,8 +685,11 @@ const SaleListPage: React.FC = () => {
                 background: 'white'
               }}>
                 <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 8, fontWeight: 500 }}>금액</div>
-                <div className="statistics-value" style={{ fontSize: '20px', fontWeight: 700, color: '#262626' }}>
-                  ₩{totalSellerAmount.toLocaleString()}
+                <div className="statistics-value" style={{ fontSize: '20px', fontWeight: 700, color: '#262626', lineHeight: '1.3' }}>
+                  <div>{formatCurrencyWithKoreanSeparate(roundToWon(totalSellerAmount)).amount}</div>
+                  <div style={{ fontSize: '11px', fontWeight: 400, color: '#999', marginTop: '2px' }}>
+                    ({formatCurrencyWithKoreanSeparate(roundToWon(totalSellerAmount)).korean})
+                  </div>
                 </div>
               </Col>
               <Col span={12} style={{
@@ -688,8 +731,11 @@ const SaleListPage: React.FC = () => {
                 background: 'white'
               }}>
                 <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 8, fontWeight: 500 }}>금액</div>
-                <div className="statistics-value" style={{ fontSize: '20px', fontWeight: 700, color: '#262626' }}>
-                  ₩{thisMonthAmount.toLocaleString()}
+                <div className="statistics-value" style={{ fontSize: '20px', fontWeight: 700, color: '#262626', lineHeight: '1.3' }}>
+                  <div>{formatCurrencyWithKoreanSeparate(roundToWon(thisMonthAmount)).amount}</div>
+                  <div style={{ fontSize: '11px', fontWeight: 400, color: '#999', marginTop: '2px' }}>
+                    ({formatCurrencyWithKoreanSeparate(roundToWon(thisMonthAmount)).korean})
+                  </div>
                 </div>
               </Col>
               <Col span={12} style={{
@@ -731,8 +777,11 @@ const SaleListPage: React.FC = () => {
                 background: 'white'
               }}>
                 <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 8, fontWeight: 500 }}>금액</div>
-                <div className="statistics-value" style={{ fontSize: '20px', fontWeight: 700, color: '#262626' }}>
-                  ₩{thisWeekAmount.toLocaleString()}
+                <div className="statistics-value" style={{ fontSize: '20px', fontWeight: 700, color: '#262626', lineHeight: '1.3' }}>
+                  <div>{formatCurrencyWithKoreanSeparate(roundToWon(thisWeekAmount)).amount}</div>
+                  <div style={{ fontSize: '11px', fontWeight: 400, color: '#999', marginTop: '2px' }}>
+                    ({formatCurrencyWithKoreanSeparate(roundToWon(thisWeekAmount)).korean})
+                  </div>
                 </div>
               </Col>
               <Col span={12} style={{
@@ -774,8 +823,11 @@ const SaleListPage: React.FC = () => {
                 background: 'white'
               }}>
                 <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 8, fontWeight: 500 }}>금액</div>
-                <div className="statistics-value" style={{ fontSize: '20px', fontWeight: 700, color: '#262626' }}>
-                  ₩{todayAmount.toLocaleString()}
+                <div className="statistics-value" style={{ fontSize: '20px', fontWeight: 700, color: '#262626', lineHeight: '1.3' }}>
+                  <div>{formatCurrencyWithKoreanSeparate(roundToWon(todayAmount)).amount}</div>
+                  <div style={{ fontSize: '11px', fontWeight: 400, color: '#999', marginTop: '2px' }}>
+                    ({formatCurrencyWithKoreanSeparate(roundToWon(todayAmount)).korean})
+                  </div>
                 </div>
               </Col>
               <Col span={12} style={{
@@ -931,6 +983,7 @@ const SaleListPage: React.FC = () => {
           loading={loading}
           rowKey="id"
           rowSelection={rowSelection}
+          scroll={{ x: 1200 }}
           onRow={(record) => ({
             onClick: () => navigate(`/sales/${record.id}`),
             style: { cursor: 'pointer' },
@@ -1125,7 +1178,7 @@ const SaleListPage: React.FC = () => {
                 width: 120,
                 align: 'left',
                 render: (_, record) => {
-                  return <span style={{ fontSize: '13px', fontWeight: 600 }}>₩{Number(record.total_seller_amount || 0).toLocaleString()}</span>;
+                  return <span style={{ fontSize: '13px', fontWeight: 600 }}>₩{Math.floor(Number(record.total_seller_amount || 0)).toLocaleString()}</span>;
                 },
               },
               {
@@ -1160,7 +1213,7 @@ const SaleListPage: React.FC = () => {
                   const companyPrice = bulkPrices[record.id!];
                   if (!companyPrice || companyPrice <= 0) return '-';
                   const sellerAmount = Number(record.total_seller_amount || 0);
-                  const margin = sellerAmount - companyPrice;
+                  const margin = Math.floor(sellerAmount - companyPrice);
                   return <span style={{ fontSize: '12px', color: margin > 0 ? '#52c41a' : '#ff4d4f' }}>₩{margin.toLocaleString()}</span>;
                 },
               },

@@ -10,6 +10,8 @@ export const productService = {
     categories?: string;  // 쉼표로 구분된 카테고리 목록
     search?: string;
     is_active?: boolean;
+    only_valid?: boolean;  // 브랜드, 상품코드, 카테고리가 모두 있는 상품만
+    order_by?: string;  // 정렬 기준: inventory_desc (재고량 내림차순)
   }): Promise<{ total: number; items: Product[] }> {
     const response = await api.get('/products', { params });
     return response.data;

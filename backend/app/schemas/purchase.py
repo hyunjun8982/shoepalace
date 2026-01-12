@@ -124,7 +124,7 @@ class PurchaseUpdate(BaseModel):
 
 class Purchase(PurchaseBase):
     id: str
-    buyer_id: str
+    buyer_id: Optional[str] = None
     buyer_name: Optional[str] = None  # 구매자 이름
     receiver_id: Optional[str] = None  # 입고확인자 ID
     receiver_name: Optional[str] = None  # 입고확인자 이름

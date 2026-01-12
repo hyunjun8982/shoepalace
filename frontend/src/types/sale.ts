@@ -12,6 +12,7 @@ export interface SaleItem {
   product_name?: string;
   product_code?: string;
   brand_name?: string;
+  category?: string;
   product_image_url?: string;
   size?: string;
   quantity: number;

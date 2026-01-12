@@ -92,7 +92,9 @@ const SaleFormPageNew: React.FC = () => {
   const fetchInventoryItems = async () => {
     try {
       setLoading(true);
-      const response = await inventoryService.getInventoryList({ limit: 10000 });
+      const response = await inventoryService.getInventoryList({
+        limit: 10000
+      });
       // 모든 재고 아이템 사용 (재고 0개 포함)
       const allItems = response.items;
       setInventoryItems(allItems);
@@ -133,7 +135,22 @@ const SaleFormPageNew: React.FC = () => {
         }
         return acc;
       }, []);
-      setGroupedInventory(grouped);
+
+      // 정렬: 브랜드, 상품코드, 카테고리가 있는 상품 우선 + 재고량 많은 순
+      const sorted = grouped.sort((a: any, b: any) => {
+        // 1. 유효한 상품(브랜드, 상품코드, 카테고리 모두 있음) 우선
+        const aValid = a.brand_name && a.sku_code && a.category;
+        const bValid = b.brand_name && b.sku_code && b.category;
+        if (aValid && !bValid) return -1;
+        if (!aValid && bValid) return 1;
+
+        // 2. 재고량 많은 순
+        const aTotalQty = a.sizes.reduce((sum: number, s: any) => sum + s.quantity, 0);
+        const bTotalQty = b.sizes.reduce((sum: number, s: any) => sum + s.quantity, 0);
+        return bTotalQty - aTotalQty;
+      });
+
+      setGroupedInventory(sorted);
     } catch (error) {
       message.error('재고 목록을 불러오는데 실패했습니다.');
     } finally {
@@ -185,23 +202,64 @@ const SaleFormPageNew: React.FC = () => {
     setSizeQuantityMap({});
   };
 
-  // 카테고리별 전체 사이즈 목록 가져오기
-  const getSizesForCategory = (category?: string): string[] => {
-    if (!category) return [];
+  // 전체 사이즈 목록 (220-300)
+  const allSizes = [
+    '220', '225', '230', '235', '240', '245', '250', '255', '260', '265', '270', '275', '280', '285', '290', '295', '300'
+  ];
 
-    switch (category) {
-      case 'shoes':
-        return Array.from({ length: 17 }, (_, i) => (220 + i * 5).toString());
-      case 'clothing':
-        return ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', 'XXXXL', 'FREE'];
-      case 'hats':
-      case 'bags':
-      case 'accessories':
-      case 'socks':
-        return ['FREE'];
-      default:
-        return [];
+  // 사이즈 매핑 (표시용)
+  const sizeMapping: { [key: string]: string } = {
+    '220': 'FREE',
+    '225': 'XXS',
+    '230': 'XS',
+    '235': 'S',
+    '240': 'M',
+    '245': 'L',
+    '250': 'XL',
+    '255': 'XXL',
+    '260': '170',
+    '265': '180',
+    '270': '190',
+    '275': '200',
+    '280': '210',
+    '285': '95',
+    '290': '100',
+    '295': '105',
+    '300': '110',
+  };
+
+  // 사이즈 표시 함수
+  const getSizeDisplay = (size: string): string => {
+    if (sizeMapping[size]) {
+      return `${size} (${sizeMapping[size]})`;
     }
+    return size;
+  };
+
+  // 역매핑: 의류/신발 사이즈 -> mm 사이즈
+  const reverseSizeMapping: { [key: string]: string } = {
+    'FREE': '220',
+    'XXS': '225',
+    'XS': '230',
+    'S': '235',
+    'M': '240',
+    'L': '245',
+    'XL': '250',
+    'XXL': '255',
+    '170': '260',
+    '180': '265',
+    '190': '270',
+    '200': '275',
+    '210': '280',
+    '95': '285',
+    '100': '290',
+    '105': '295',
+    '110': '300',
+  };
+
+  // 카테고리별 전체 사이즈 목록 가져오기 (항상 220-300 반환)
+  const getSizesForCategory = (category?: string): string[] => {
+    return allSizes;
   };
 
   // 사이즈 정렬 함수
@@ -528,17 +586,24 @@ const SaleFormPageNew: React.FC = () => {
     const category = selectedProduct.category;
     const allSizes = getSizesForCategory(category);
 
-    // 재고 정보와 병합
+    // 재고 정보와 병합 (역매핑 적용)
     const sizesWithStock = allSizes.map(size => {
-      const stockInfo = selectedProduct.sizes.find(s => s.size === size);
+      // 재고에서 찾을 때는 원본 사이즈(220) 또는 매핑된 사이즈(FREE, XXS 등) 모두 확인
+      let stockInfo = selectedProduct.sizes.find(s => s.size === size);
+      if (!stockInfo && sizeMapping[size]) {
+        // mm 사이즈로 재고를 찾지 못하면 매핑된 사이즈로도 찾아봄
+        const mappedSize = sizeMapping[size];
+        stockInfo = selectedProduct.sizes.find(s => s.size === mappedSize);
+      }
+
       return {
         size,
         available_quantity: stockInfo?.available_quantity || 0
       };
     });
 
-    // 정렬
-    return sortSizes(sizesWithStock);
+    // 이미 220-300 순서대로 되어 있으므로 정렬 불필요
+    return sizesWithStock;
   };
 
   const availableSizes = getAllSizesWithStock();
@@ -710,7 +775,7 @@ const SaleFormPageNew: React.FC = () => {
                         backgroundColor: '#fafafa'
                       }}>
                         <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>
-                          사이즈: <span style={{ fontWeight: 600, color: '#000' }}>{sizeInfo.size}</span>
+                          사이즈: <span style={{ fontWeight: 600, color: '#000' }}>{getSizeDisplay(sizeInfo.size)}</span>
                         </div>
                         <div style={{ fontSize: 12, color: stockColor, marginBottom: 6, fontWeight: 600 }}>
                           재고: {sizeInfo.available_quantity}개

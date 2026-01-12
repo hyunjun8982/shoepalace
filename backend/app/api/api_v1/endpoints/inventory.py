@@ -43,7 +43,7 @@ def get_inventory_list(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """재고 목록 조회"""
+    """재고 목록 조회 (최적화됨)"""
     query = db.query(Inventory).join(Product).options(
         joinedload(Inventory.product).joinedload(Product.brand)
     )
@@ -73,24 +73,6 @@ def get_inventory_list(
     # 상품 정보 포함한 재고 정보 생성
     inventory_details = []
     for inv in items:
-        # 최근 구매 내역에서 창고 정보 가져오기
-        from app.models.purchase import PurchaseItem
-        from app.models.warehouse import Warehouse
-        recent_purchase_item = db.query(PurchaseItem).filter(
-            PurchaseItem.product_id == inv.product_id,
-            PurchaseItem.size == inv.size
-        ).order_by(PurchaseItem.created_at.desc()).first()
-
-        warehouse_name = None
-        warehouse_location = None
-        warehouse_image_url = None
-        if recent_purchase_item and recent_purchase_item.warehouse_id:
-            warehouse = db.query(Warehouse).filter(Warehouse.id == recent_purchase_item.warehouse_id).first()
-            if warehouse:
-                warehouse_name = warehouse.name
-                warehouse_location = warehouse.location
-                warehouse_image_url = warehouse.image_url
-
         detail = InventoryDetail(
             id=str(inv.id),
             product_id=str(inv.product_id),
@@ -109,9 +91,9 @@ def get_inventory_list(
             size=inv.size,
             color=None,
             sku_code=inv.product.product_code,
-            warehouse_name=warehouse_name,
-            warehouse_location=warehouse_location,
-            warehouse_image_url=warehouse_image_url,
+            warehouse_name=None,
+            warehouse_location=None,
+            warehouse_image_url=None,
             defect_quantity=inv.defect_quantity or 0,
             defect_reason=inv.defect_reason,
             defect_image_url=inv.defect_image_url,

@@ -10,6 +10,15 @@ class SaleStatus(str, enum.Enum):
     cancelled = "cancelled"
     returned = "returned"
 
+class SaleProgressStatus(str, enum.Enum):
+    """판매 진행 상황"""
+    partial_shipped = "partial_shipped"  # 부분출고
+    shipped = "shipped"  # 출고완료
+    deposit = "deposit"  # 계약금
+    refund = "refund"  # 환불
+    additional_payment = "additional_payment"  # 추가 입금
+    out_of_stock = "out_of_stock"  # 수량부족
+
 class Sale(BaseModel):
     __tablename__ = "sales"
 
@@ -22,6 +31,7 @@ class Sale(BaseModel):
     total_company_amount = Column(Numeric(12, 2), default=0)
     total_seller_margin = Column(Numeric(12, 2), default=0)
     status = Column(Enum(SaleStatus), default=SaleStatus.pending)
+    progress_status = Column(Enum(SaleProgressStatus), nullable=True)  # 진행 상황
     notes = Column(Text)
     transaction_statement_url = Column(String(500))  # 거래명세서 URL
     tax_invoice_url = Column(String(500))  # 세금계산서 URL

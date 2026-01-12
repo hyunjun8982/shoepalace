@@ -15,6 +15,7 @@ import {
 } from 'antd';
 import { getBrandIconUrl } from '../../utils/imageUtils';
 import { getFileUrl } from '../../utils/urlUtils';
+import { formatCurrencyWithKorean, roundToWon } from '../../utils/currencyUtils';
 import {
   ShoppingCartOutlined,
   DollarOutlined,
@@ -137,32 +138,25 @@ const DashboardPage: React.FC = () => {
       let inventory: any[] = [];
 
       try {
-        const purchasesResponse = await purchaseService.getPurchases({ limit: 1000 });
+        const purchasesResponse = await purchaseService.getPurchases({ limit: 100 }); // 1000 -> 100으로 감소
         purchases = purchasesResponse.items;
       } catch (error) {
         console.error('Failed to fetch purchases:', error);
       }
 
       try {
-        const salesResponse = await saleService.getSales({ limit: 1000 });
+        const salesResponse = await saleService.getSales({ limit: 100 }); // 1000 -> 100
         sales = salesResponse.items;
       } catch (error) {
         console.error('Failed to fetch sales:', error);
       }
 
-      try {
-        const inventoryResponse = await inventoryService.getInventoryList({ limit: 1000 });
-        inventory = inventoryResponse.items;
-      } catch (error) {
-        console.error('Failed to fetch inventory:', error);
-      }
-
       const todayPurchases = purchases.filter(p => dayjs(p.purchase_date).isSame(today, 'day'));
       const todaySales = sales.filter(s => dayjs(s.sale_date).isSame(today, 'day'));
 
-      const todayPurchaseAmount = todayPurchases.reduce((sum, p) => sum + Number(p.total_amount || 0), 0);
+      const todayPurchaseAmount = roundToWon(todayPurchases.reduce((sum, p) => sum + Number(p.total_amount || 0), 0));
       const todayPurchaseCount = todayPurchases.reduce((sum, p) => sum + (p.items?.reduce((s: number, i: any) => s + (i.quantity || 0), 0) || 0), 0);
-      const todaySaleAmount = todaySales.reduce((sum, s) => sum + Number(s.total_seller_amount || 0), 0);
+      const todaySaleAmount = roundToWon(todaySales.reduce((sum, s) => sum + Number(s.total_seller_amount || 0), 0));
       const todaySaleCount = todaySales.length;
 
       // 판매된 상품의 실제 구매가 계산
@@ -198,15 +192,15 @@ const DashboardPage: React.FC = () => {
         return sum + saleCost;
       }, 0);
 
-      const todayProfit = todaySaleAmount - todaySaleCost;
+      const todayProfit = roundToWon(todaySaleAmount - todaySaleCost);
       const todayProfitRate = todaySaleAmount > 0 ? (todayProfit / todaySaleAmount * 100) : 0;
 
       const weekPurchases = purchases.filter(p => dayjs(p.purchase_date).isAfter(weekStart) || dayjs(p.purchase_date).isSame(weekStart, 'day'));
       const weekSales = sales.filter(s => dayjs(s.sale_date).isAfter(weekStart) || dayjs(s.sale_date).isSame(weekStart, 'day'));
 
-      const weekPurchaseAmount = weekPurchases.reduce((sum, p) => sum + Number(p.total_amount || 0), 0);
+      const weekPurchaseAmount = roundToWon(weekPurchases.reduce((sum, p) => sum + Number(p.total_amount || 0), 0));
       const weekPurchaseCount = weekPurchases.reduce((sum, p) => sum + (p.items?.reduce((s: number, i: any) => s + (i.quantity || 0), 0) || 0), 0);
-      const weekSaleAmount = weekSales.reduce((sum, s) => sum + Number(s.total_seller_amount || 0), 0);
+      const weekSaleAmount = roundToWon(weekSales.reduce((sum, s) => sum + Number(s.total_seller_amount || 0), 0));
       const weekSaleCount = weekSales.length;
 
       // 이번주 판매된 상품의 실제 구매가 계산
@@ -240,15 +234,15 @@ const DashboardPage: React.FC = () => {
         return sum + saleCost;
       }, 0);
 
-      const weekProfit = weekSaleAmount - weekSaleCost;
+      const weekProfit = roundToWon(weekSaleAmount - weekSaleCost);
       const weekProfitRate = weekSaleAmount > 0 ? (weekProfit / weekSaleAmount * 100) : 0;
 
       const monthPurchases = purchases.filter(p => dayjs(p.purchase_date).isAfter(monthStart) || dayjs(p.purchase_date).isSame(monthStart, 'day'));
       const monthSales = sales.filter(s => dayjs(s.sale_date).isAfter(monthStart) || dayjs(s.sale_date).isSame(monthStart, 'day'));
 
-      const monthPurchaseAmount = monthPurchases.reduce((sum, p) => sum + Number(p.total_amount || 0), 0);
+      const monthPurchaseAmount = roundToWon(monthPurchases.reduce((sum, p) => sum + Number(p.total_amount || 0), 0));
       const monthPurchaseCount = monthPurchases.reduce((sum, p) => sum + (p.items?.reduce((s: number, i: any) => s + (i.quantity || 0), 0) || 0), 0);
-      const monthSaleAmount = monthSales.reduce((sum, s) => sum + Number(s.total_seller_amount || 0), 0);
+      const monthSaleAmount = roundToWon(monthSales.reduce((sum, s) => sum + Number(s.total_seller_amount || 0), 0));
       const monthSaleCount = monthSales.length;
 
       // 이번달 판매된 상품의 실제 구매가 계산
@@ -282,11 +276,12 @@ const DashboardPage: React.FC = () => {
         return sum + saleCost;
       }, 0);
 
-      const monthProfit = monthSaleAmount - monthSaleCost;
+      const monthProfit = roundToWon(monthSaleAmount - monthSaleCost);
       const monthProfitRate = monthSaleAmount > 0 ? (monthProfit / monthSaleAmount * 100) : 0;
 
-      const lowStockCount = inventory.filter(i => i.is_low_stock).length;
-      const outOfStockCount = inventory.filter(i => (i.available_quantity || 0) <= 0).length;
+      // 재고 정보는 대시보드에서 사용하지 않으므로 제거
+      const lowStockCount = 0;
+      const outOfStockCount = 0;
 
       const pendingPurchaseCount = purchases.filter(p => p.status === 'pending').length;
       const pendingSaleCount = sales.filter(s => s.status === 'pending').length;
@@ -476,8 +471,8 @@ const DashboardPage: React.FC = () => {
 
       if (!purchaseData || !saleData) {
         const [purchasesResponse, salesResponse] = await Promise.all([
-          purchaseService.getPurchases({ limit: 10000 }),
-          saleService.getSales({ limit: 10000 }),
+          purchaseService.getPurchases({ limit: 500 }), // 10000 -> 500으로 감소
+          saleService.getSales({ limit: 500 }), // 10000 -> 500
         ]);
         purchaseData = purchasesResponse.items;
         saleData = salesResponse.items;
@@ -677,7 +672,7 @@ const DashboardPage: React.FC = () => {
       align: 'center',
       render: (amount: number) => (
         <div style={{ textAlign: 'right', fontSize: 11 }}>
-          ₩{amount.toLocaleString()}
+          ₩{Math.floor(amount).toLocaleString()}
         </div>
       ),
     },
@@ -710,28 +705,34 @@ const DashboardPage: React.FC = () => {
   return (
     <div style={{ padding: '24px', background: '#f0f2f5' }}>
       {/* 구매, 판매, 순이익 카드 + 그래프 통합 */}
-      <Row gutter={16} style={{ marginBottom: 16 }}>
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         {/* 구매 카드 */}
         <Col xs={24} lg={8}>
           <Card
             title="🛒 구매"
-            style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}
+            style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', height: '100%', minHeight: 360 }}
           >
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'space-between', marginBottom: 12 }}>
-              <div style={{ flex: 1, padding: '6px 8px', background: '#e6f7ff', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 11, color: '#8c8c8c' }}>오늘</span>
-                <span style={{ fontSize: 13, fontWeight: 'bold', color: '#1890ff' }}>₩{stats?.today_purchase_amount.toLocaleString()}</span>
-                <span style={{ fontSize: 10, color: '#595959' }}>{stats?.today_purchase_count}개</span>
+              <div style={{ flex: 1, padding: '6px 8px', background: '#e6f7ff', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 11, color: '#8c8c8c' }}>오늘</span>
+                  <span style={{ fontSize: 10, color: '#595959' }}>{stats?.today_purchase_count}개</span>
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 'bold', color: '#1890ff' }}>{formatCurrencyWithKorean(stats?.today_purchase_amount || 0)}</span>
               </div>
-              <div style={{ flex: 1, padding: '6px 8px', background: '#f5f5f5', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 11, color: '#8c8c8c' }}>이번주</span>
-                <span style={{ fontSize: 13, fontWeight: 'bold', color: '#1890ff' }}>₩{stats?.week_purchase_amount.toLocaleString()}</span>
-                <span style={{ fontSize: 10, color: '#595959' }}>{stats?.week_purchase_count}개</span>
+              <div style={{ flex: 1, padding: '6px 8px', background: '#f5f5f5', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 11, color: '#8c8c8c' }}>이번주</span>
+                  <span style={{ fontSize: 10, color: '#595959' }}>{stats?.week_purchase_count}개</span>
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 'bold', color: '#1890ff' }}>{formatCurrencyWithKorean(stats?.week_purchase_amount || 0)}</span>
               </div>
-              <div style={{ flex: 1, padding: '6px 8px', background: '#f5f5f5', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 11, color: '#8c8c8c' }}>이번달</span>
-                <span style={{ fontSize: 13, fontWeight: 'bold', color: '#1890ff' }}>₩{stats?.month_purchase_amount.toLocaleString()}</span>
-                <span style={{ fontSize: 10, color: '#595959' }}>{stats?.month_purchase_count}개</span>
+              <div style={{ flex: 1, padding: '6px 8px', background: '#f5f5f5', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 11, color: '#8c8c8c' }}>이번달</span>
+                  <span style={{ fontSize: 10, color: '#595959' }}>{stats?.month_purchase_count}개</span>
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 'bold', color: '#1890ff' }}>{formatCurrencyWithKorean(stats?.month_purchase_amount || 0)}</span>
               </div>
             </div>
             <ResponsiveContainer width="100%" height={200}>
@@ -775,23 +776,29 @@ const DashboardPage: React.FC = () => {
         <Col xs={24} lg={8}>
           <Card
             title="💰 판매"
-            style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}
+            style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', height: '100%', minHeight: 360 }}
           >
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'space-between', marginBottom: 12 }}>
-              <div style={{ flex: 1, padding: '6px 8px', background: '#f6ffed', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 11, color: '#8c8c8c' }}>오늘</span>
-                <span style={{ fontSize: 13, fontWeight: 'bold', color: '#52c41a' }}>₩{stats?.today_sale_amount.toLocaleString()}</span>
-                <span style={{ fontSize: 10, color: '#595959' }}>{stats?.today_sale_count}건</span>
+              <div style={{ flex: 1, padding: '6px 8px', background: '#f6ffed', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 11, color: '#8c8c8c' }}>오늘</span>
+                  <span style={{ fontSize: 10, color: '#595959' }}>{stats?.today_sale_count}건</span>
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 'bold', color: '#52c41a' }}>{formatCurrencyWithKorean(stats?.today_sale_amount || 0)}</span>
               </div>
-              <div style={{ flex: 1, padding: '6px 8px', background: '#f5f5f5', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 11, color: '#8c8c8c' }}>이번주</span>
-                <span style={{ fontSize: 13, fontWeight: 'bold', color: '#52c41a' }}>₩{stats?.week_sale_amount.toLocaleString()}</span>
-                <span style={{ fontSize: 10, color: '#595959' }}>{stats?.week_sale_count}건</span>
+              <div style={{ flex: 1, padding: '6px 8px', background: '#f5f5f5', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 11, color: '#8c8c8c' }}>이번주</span>
+                  <span style={{ fontSize: 10, color: '#595959' }}>{stats?.week_sale_count}건</span>
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 'bold', color: '#52c41a' }}>{formatCurrencyWithKorean(stats?.week_sale_amount || 0)}</span>
               </div>
-              <div style={{ flex: 1, padding: '6px 8px', background: '#f5f5f5', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 11, color: '#8c8c8c' }}>이번달</span>
-                <span style={{ fontSize: 13, fontWeight: 'bold', color: '#52c41a' }}>₩{stats?.month_sale_amount.toLocaleString()}</span>
-                <span style={{ fontSize: 10, color: '#595959' }}>{stats?.month_sale_count}건</span>
+              <div style={{ flex: 1, padding: '6px 8px', background: '#f5f5f5', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 11, color: '#8c8c8c' }}>이번달</span>
+                  <span style={{ fontSize: 10, color: '#595959' }}>{stats?.month_sale_count}건</span>
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 'bold', color: '#52c41a' }}>{formatCurrencyWithKorean(stats?.month_sale_amount || 0)}</span>
               </div>
             </div>
             <ResponsiveContainer width="100%" height={200}>
@@ -844,23 +851,29 @@ const DashboardPage: React.FC = () => {
                 size="small"
               />
             }
-            style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}
+            style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', height: '100%', minHeight: 360 }}
           >
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'space-between', marginBottom: 12 }}>
-              <div style={{ flex: 1, padding: '6px 8px', background: stats?.today_profit && stats.today_profit < 0 ? '#fff1f0' : '#fff7e6', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 11, color: '#8c8c8c' }}>오늘</span>
-                <span style={{ fontSize: 13, fontWeight: 'bold', color: stats?.today_profit && stats.today_profit < 0 ? '#cf1322' : '#faad14' }}>₩{stats?.today_profit.toLocaleString()}</span>
-                <span style={{ fontSize: 10, color: '#595959' }}>{stats?.today_profit_rate.toFixed(1)}%</span>
+              <div style={{ flex: 1, padding: '6px 8px', background: stats?.today_profit && stats.today_profit < 0 ? '#fff1f0' : '#fff7e6', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 11, color: '#8c8c8c' }}>오늘</span>
+                  <span style={{ fontSize: 10, color: '#595959' }}>{stats?.today_profit_rate.toFixed(1)}%</span>
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 'bold', color: stats?.today_profit && stats.today_profit < 0 ? '#cf1322' : '#faad14' }}>{formatCurrencyWithKorean(stats?.today_profit || 0)}</span>
               </div>
-              <div style={{ flex: 1, padding: '6px 8px', background: stats?.week_profit && stats.week_profit < 0 ? '#fff1f0' : '#f5f5f5', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 11, color: '#8c8c8c' }}>이번주</span>
-                <span style={{ fontSize: 13, fontWeight: 'bold', color: stats?.week_profit && stats.week_profit < 0 ? '#cf1322' : '#faad14' }}>₩{stats?.week_profit.toLocaleString()}</span>
-                <span style={{ fontSize: 10, color: '#595959' }}>{stats?.week_profit_rate.toFixed(1)}%</span>
+              <div style={{ flex: 1, padding: '6px 8px', background: stats?.week_profit && stats.week_profit < 0 ? '#fff1f0' : '#f5f5f5', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 11, color: '#8c8c8c' }}>이번주</span>
+                  <span style={{ fontSize: 10, color: '#595959' }}>{stats?.week_profit_rate.toFixed(1)}%</span>
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 'bold', color: stats?.week_profit && stats.week_profit < 0 ? '#cf1322' : '#faad14' }}>{formatCurrencyWithKorean(stats?.week_profit || 0)}</span>
               </div>
-              <div style={{ flex: 1, padding: '6px 8px', background: stats?.month_profit && stats.month_profit < 0 ? '#fff1f0' : '#f5f5f5', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 11, color: '#8c8c8c' }}>이번달</span>
-                <span style={{ fontSize: 13, fontWeight: 'bold', color: stats?.month_profit && stats.month_profit < 0 ? '#cf1322' : '#faad14' }}>₩{stats?.month_profit.toLocaleString()}</span>
-                <span style={{ fontSize: 10, color: '#595959' }}>{stats?.month_profit_rate.toFixed(1)}%</span>
+              <div style={{ flex: 1, padding: '6px 8px', background: stats?.month_profit && stats.month_profit < 0 ? '#fff1f0' : '#f5f5f5', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 11, color: '#8c8c8c' }}>이번달</span>
+                  <span style={{ fontSize: 10, color: '#595959' }}>{stats?.month_profit_rate.toFixed(1)}%</span>
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 'bold', color: stats?.month_profit && stats.month_profit < 0 ? '#cf1322' : '#faad14' }}>{formatCurrencyWithKorean(stats?.month_profit || 0)}</span>
               </div>
             </div>
             <ResponsiveContainer width="100%" height={200}>

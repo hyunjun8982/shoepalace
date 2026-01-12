@@ -89,12 +89,18 @@ const PurchaseFormPage: React.FC = () => {
 
   const loadProducts = async () => {
     try {
-      const response = await productService.getProducts({ limit: 1000 });
+      const response = await productService.getProducts({
+        limit: 1000,
+        only_valid: true,  // 브랜드, 상품코드, 카테고리가 모두 있는 상품만
+        order_by: 'inventory_desc'  // 재고량 많은 순으로 정렬
+      });
       console.log('Loaded products:', response.items); // 디버깅용
       setProducts(response.items || []);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load products:', error);
-      message.error('상품 목록 조회 실패');
+      console.error('Error details:', error.response?.data);
+      const errorMsg = error.response?.data?.detail || error.message || '상품 목록 조회 실패';
+      message.error(`상품 목록 조회 실패: ${errorMsg}`);
     }
   };
 
@@ -259,23 +265,43 @@ const PurchaseFormPage: React.FC = () => {
     setSizeQuantityMap({});
   };
 
-  // 카테고리별 사이즈 목록 가져오기
-  const getSizesForCategory = (category?: string): string[] => {
-    if (!category) return [];
+  // 전체 사이즈 목록 (220-300)
+  const allSizes = [
+    '220', '225', '230', '235', '240', '245', '250', '255', '260', '265', '270', '275', '280', '285', '290', '295', '300'
+  ];
 
-    switch (category) {
-      case 'shoes':
-        return Array.from({ length: 17 }, (_, i) => (220 + i * 5).toString());
-      case 'clothing':
-        return ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', 'XXXXL', 'FREE'];
-      case 'hats':
-      case 'bags':
-      case 'accessories':
-      case 'socks':
-        return ['FREE'];
-      default:
-        return [];
+  // 사이즈 매핑 (표시용)
+  const sizeMapping: { [key: string]: string } = {
+    '220': 'FREE',
+    '225': 'XXS',
+    '230': 'XS',
+    '235': 'S',
+    '240': 'M',
+    '245': 'L',
+    '250': 'XL',
+    '255': 'XXL',
+    '260': '170',
+    '265': '180',
+    '270': '190',
+    '275': '200',
+    '280': '210',
+    '285': '95',
+    '290': '100',
+    '295': '105',
+    '300': '110',
+  };
+
+  // 사이즈 표시 함수
+  const getSizeDisplay = (size: string): string => {
+    if (sizeMapping[size]) {
+      return `${size} (${sizeMapping[size]})`;
     }
+    return size;
+  };
+
+  // 카테고리별 사이즈 목록 가져오기 (항상 220-300 반환)
+  const getSizesForCategory = (category?: string): string[] => {
+    return allSizes;
   };
 
   // 사이즈별 수량 변경 핸들러
@@ -988,7 +1014,7 @@ const PurchaseFormPage: React.FC = () => {
                           borderRadius: '4px',
                           backgroundColor: sizeQuantityMap[size] > 0 ? '#e6f7ff' : '#fff'
                         }}>
-                          <div style={{ fontWeight: 500, marginBottom: 4, fontSize: '13px' }}>{size}</div>
+                          <div style={{ fontWeight: 500, marginBottom: 4, fontSize: '13px' }}>{getSizeDisplay(size)}</div>
                           <InputNumber
                             min={0}
                             value={sizeQuantityMap[size] || 0}

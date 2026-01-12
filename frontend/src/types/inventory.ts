@@ -48,6 +48,7 @@ export interface InventoryListParams {
   search?: string;
   category?: string;
   low_stock_only?: boolean;
+  include_warehouse?: boolean;  // 창고 정보 포함 여부 (성능 최적화)
 }
 
 export enum AdjustmentType {

@@ -623,9 +623,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             />
           </Space>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, height: '100%' }}>
-            {/* 아디다스 쿠폰 프로그램 다운로드 버튼 */}
-            {user?.role === 'admin' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, height: '100%' }}>
+            {/* 아디다스 쿠폰 프로그램 다운로드 버튼 - 비활성화 */}
+            {/* {user?.role === 'admin' && (
               <Button
                 type="primary"
                 icon={<DownloadOutlined />}
@@ -652,32 +652,33 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 <GiftOutlined style={{ fontSize: 14 }} />
                 <span style={{ fontSize: 13 }}>아디다스 쿠폰 프로그램</span>
               </Button>
-            )}
+            )} */}
 
             {sessionTimeRemaining !== null && (
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: 6,
-                padding: '5px 10px',
-                background: sessionTimeRemaining < 300000 ? '#fff2e8' : '#e6f7ff',
-                borderRadius: 4,
-                height: 32,
+                gap: 8,
+                padding: '6px 12px',
+                background: sessionTimeRemaining < 300000 ? '#fff1f0' : '#f0f5ff',
+                border: `1px solid ${sessionTimeRemaining < 300000 ? '#ffccc7' : '#d6e4ff'}`,
+                borderRadius: 6,
+                height: 36,
+                transition: 'all 0.2s',
               }}>
                 <span style={{
-                  fontSize: 14,
-                  color: sessionTimeRemaining < 300000 ? '#fa541c' : '#1890ff',
-                  fontWeight: 500,
+                  fontSize: 13,
+                  color: sessionTimeRemaining < 300000 ? '#cf1322' : '#1890ff',
+                  fontWeight: 600,
                   fontFamily: 'monospace',
-                  lineHeight: '22px',
+                  minWidth: 45,
                 }}>
                   {formatSessionTime(sessionTimeRemaining)}
                 </span>
                 <div style={{
                   width: 1,
-                  height: 16,
-                  background: sessionTimeRemaining < 300000 ? '#ffd8bf' : '#bae7ff',
-                  margin: '0 2px',
+                  height: 18,
+                  background: sessionTimeRemaining < 300000 ? '#ffccc7' : '#d6e4ff',
                 }} />
                 <button
                   onClick={(e) => {
@@ -685,17 +686,23 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                     handleExtendSession();
                   }}
                   style={{
-                    fontSize: 13,
-                    color: '#8c8c8c',
+                    fontSize: 12,
+                    color: sessionTimeRemaining < 300000 ? '#cf1322' : '#1890ff',
                     cursor: 'pointer',
-                    lineHeight: '22px',
-                    padding: '0 6px',
+                    padding: '2px 6px',
                     border: 'none',
                     background: 'transparent',
                     outline: 'none',
+                    fontWeight: 500,
+                    borderRadius: 4,
+                    transition: 'all 0.2s',
                   }}
-                  onMouseEnter={(e) => e.currentTarget.style.color = '#262626'}
-                  onMouseLeave={(e) => e.currentTarget.style.color = '#8c8c8c'}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = sessionTimeRemaining < 300000 ? 'rgba(207, 19, 34, 0.1)' : 'rgba(24, 144, 255, 0.1)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'transparent';
+                  }}
                 >
                   연장
                 </button>
@@ -706,17 +713,15 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
 
             <Badge
               count={unreadCount}
-              offset={[-2, 2]}
+              offset={[-4, 4]}
               style={{
                 backgroundColor: '#ff4d4f',
-                fontSize: 10,
-                height: 18,
-                minWidth: 18,
-                lineHeight: '18px',
-                padding: 0,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
+                fontSize: 11,
+                fontWeight: 600,
+                height: 20,
+                minWidth: 20,
+                lineHeight: '20px',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.15)',
               }}
             >
               <div
@@ -728,16 +733,23 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  width: 36,
-                  height: 36,
-                  borderRadius: 4,
+                  width: 40,
+                  height: 40,
+                  borderRadius: 8,
                   cursor: 'pointer',
-                  transition: 'background 0.2s',
+                  transition: 'all 0.2s',
+                  background: 'transparent',
                 }}
-                onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
-                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = '#f5f5f5';
+                  e.currentTarget.style.transform = 'scale(1.05)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'transparent';
+                  e.currentTarget.style.transform = 'scale(1)';
+                }}
               >
-                <BellOutlined style={{ fontSize: 18, color: '#595959' }} />
+                <BellOutlined style={{ fontSize: 19, color: '#595959' }} />
               </div>
             </Badge>
 
@@ -748,21 +760,28 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             >
               <div style={{
                 cursor: 'pointer',
-                padding: '4px 10px',
-                borderRadius: 4,
-                transition: 'background 0.2s',
+                padding: '6px 12px',
+                borderRadius: 8,
+                transition: 'all 0.2s',
                 display: 'flex',
                 alignItems: 'center',
-                gap: 8,
+                gap: 10,
                 height: 40,
+                border: '1px solid transparent',
               }}
-              onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
-              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = '#f5f5f5';
+                e.currentTarget.style.borderColor = '#e8e8e8';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.borderColor = 'transparent';
+              }}
               >
-                <Avatar size={28} style={{ backgroundColor: '#1890ff', fontSize: 14 }}>
+                <Avatar size={32} style={{ backgroundColor: '#1890ff', fontSize: 15, fontWeight: 600 }}>
                   {user?.full_name?.charAt(0)}
                 </Avatar>
-                <span style={{ fontSize: 14, color: '#262626', lineHeight: '22px' }}>{user?.full_name}</span>
+                <span style={{ fontSize: 14, color: '#262626', fontWeight: 500 }}>{user?.full_name}</span>
               </div>
             </Dropdown>
           </div>

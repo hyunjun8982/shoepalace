@@ -26,11 +26,12 @@ class InventorySchema(BaseModel):
         from_attributes = True
 
 class ProductBase(BaseModel):
-    brand_id: str
+    brand_id: Optional[str] = None
     product_code: str
     product_name: str
     category: Optional[str] = None
     description: Optional[str] = None
+    is_active: Optional[bool] = True
 
 class ProductCreate(ProductBase):
     pass

@@ -53,6 +53,8 @@ const PurchaseDetailPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [editingPrices, setEditingPrices] = useState<{ [key: string]: number }>({});
+  const [editingSizeQuantities, setEditingSizeQuantities] = useState<{ [size: string]: number }>({});
+  const [editingSizePrices, setEditingSizePrices] = useState<{ [size: string]: number }>({});
   const [form] = Form.useForm();
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [uploadLoading, setUploadLoading] = useState(false);
@@ -277,40 +279,102 @@ const PurchaseDetailPage: React.FC = () => {
     return <div>구매 정보를 찾을 수 없습니다.</div>;
   }
 
-  // 총액 계산
-  const totalAmount = purchase.items?.reduce((sum, item) => {
-    const price = editMode && editingPrices[item.id!] !== undefined
-      ? editingPrices[item.id!]
-      : item.purchase_price;
-    return sum + (price * item.quantity);
-  }, 0) || 0;
-
-  // 총 수량 계산
-  const totalQuantity = purchase.items?.reduce((sum, item) => sum + item.quantity, 0) || 0;
-
   // 첫 번째 상품 정보 (모든 아이템이 같은 상품)
   const firstProduct = purchase.items?.[0]?.product;
 
-  // 사이즈별 수량 맵 생성
+  // 전체 사이즈 목록 (220-300만 표시)
+  const allSizes = [
+    '220', '225', '230', '235', '240', '245', '250', '255', '260', '265', '270', '275', '280', '285', '290', '295', '300'
+  ];
+
+  // 사이즈 매핑 (표시용)
+  const sizeMapping: { [key: string]: string } = {
+    '220': 'FREE',
+    '225': 'XXS',
+    '230': 'XS',
+    '235': 'S',
+    '240': 'M',
+    '245': 'L',
+    '250': 'XL',
+    '255': 'XXL',
+    '260': '170',
+    '265': '180',
+    '270': '190',
+    '275': '200',
+    '280': '210',
+    '285': '95',
+    '290': '100',
+    '295': '105',
+    '300': '110',
+  };
+
+  // 사이즈 표시 함수
+  const getSizeDisplay = (size: string): string => {
+    if (sizeMapping[size]) {
+      return `${size} (${sizeMapping[size]})`;
+    }
+    return size;
+  };
+
+  // 역매핑: 의류/신발 사이즈 -> mm 사이즈
+  const reverseSizeMapping: { [key: string]: string } = {
+    'FREE': '220',
+    'XXS': '225',
+    'XS': '230',
+    'S': '235',
+    'M': '240',
+    'L': '245',
+    'XL': '250',
+    'XXL': '255',
+    '170': '260',
+    '180': '265',
+    '190': '270',
+    '200': '275',
+    '210': '280',
+    '95': '285',
+    '100': '290',
+    '105': '295',
+    '110': '300',
+  };
+
+  // 사이즈별 수량 맵 생성 (입력된 사이즈를 mm 사이즈로 변환)
   const sizeQuantityMap = new Map<string, number>();
   purchase.items?.forEach(item => {
-    const size = item.size || 'FREE';
+    let size = item.size || 'FREE';
+    // 역매핑: FREE, XXS 등이 들어오면 220, 225 등으로 변환
+    size = reverseSizeMapping[size] || size;
+
     const current = sizeQuantityMap.get(size) || 0;
     sizeQuantityMap.set(size, current + (item.quantity || 1));
   });
 
-  // 사이즈 정렬
-  const sortedSizeEntries = Array.from(sizeQuantityMap.entries()).sort(([a], [b]) => {
-    const aNum = parseFloat(a);
-    const bNum = parseFloat(b);
-    if (!isNaN(aNum) && !isNaN(bNum)) {
-      return aNum - bNum;
-    }
-    return a.localeCompare(b);
+  // 전체 사이즈 목록 사용 (수량 0인 사이즈 포함)
+  const sortedSizeEntries = allSizes.map(size => {
+    const quantity = sizeQuantityMap.get(size) || 0;
+    return [size, quantity] as [string, number];
   });
 
-  // 구매가 (모든 아이템이 같은 구매가)
-  const purchasePrice = purchase.items?.[0]?.purchase_price || 0;
+  // 구매가 (편집 모드에서는 첫 번째 사이즈의 가격 사용)
+  const purchasePrice = editMode
+    ? (editingSizePrices[sortedSizeEntries[0]?.[0]] ?? purchase.items?.[0]?.purchase_price ?? 0)
+    : (purchase.items?.[0]?.purchase_price || 0);
+
+  // 총액 및 수량 계산 (편집 모드 반영)
+  const totalAmount = editMode
+    ? sortedSizeEntries.reduce((sum, [size, qty]) => {
+        const currentQty = editingSizeQuantities[size] || qty;
+        return sum + (purchasePrice * currentQty);
+      }, 0)
+    : purchase.items?.reduce((sum, item) => {
+        const price = item.purchase_price;
+        return sum + (price * item.quantity);
+      }, 0) || 0;
+
+  const totalQuantity = editMode
+    ? sortedSizeEntries.reduce((sum, [size, qty]) => {
+        return sum + (editingSizeQuantities[size] || qty);
+      }, 0)
+    : purchase.items?.reduce((sum, item) => sum + item.quantity, 0) || 0;
 
   return (
     <div style={{ padding: '24px' }}>
@@ -344,12 +408,21 @@ const PurchaseDetailPage: React.FC = () => {
                   });
                   // 가격 정보 초기화
                   const prices: { [key: string]: number } = {};
+                  const sizeQtys: { [size: string]: number } = {};
+                  const sizePrices: { [size: string]: number } = {};
+
                   purchase.items?.forEach(item => {
                     if (item.id) {
                       prices[item.id] = item.purchase_price || 0;
                     }
+                    const size = item.size || 'FREE';
+                    sizeQtys[size] = (sizeQtys[size] || 0) + (item.quantity || 1);
+                    sizePrices[size] = item.purchase_price || 0;
                   });
+
                   setEditingPrices(prices);
+                  setEditingSizeQuantities(sizeQtys);
+                  setEditingSizePrices(sizePrices);
                 }}
                 style={{ backgroundColor: '#0d1117', borderColor: '#0d1117' }}
               >
@@ -365,20 +438,25 @@ const PurchaseDetailPage: React.FC = () => {
                     try {
                       const values = await form.validateFields();
 
+                      // 편집된 사이즈별 수량을 기반으로 아이템 생성
+                      const items = [];
+                      for (const [size, qty] of Object.entries(editingSizeQuantities)) {
+                        if (qty > 0) {  // 수량이 0보다 큰 것만 저장
+                          items.push({
+                            product_id: firstProduct?.id,
+                            size: size,
+                            quantity: qty,
+                            purchase_price: purchasePrice,  // 통일된 구매가 사용
+                            selling_price: 0,  // 판매가는 별도 설정
+                          });
+                        }
+                      }
+
                       // 구매 정보 업데이트
                       await purchaseService.updatePurchase(purchase.id!, {
                         ...values,
                         purchase_date: values.purchase_date.format('YYYY-MM-DD'),
-                        items: purchase.items?.map(item => ({
-                          ...item,
-                          warehouse_id: values.warehouse_id || null,
-                          product_id: item.product_id,
-                          size: item.size,
-                          quantity: item.quantity,
-                          purchase_price: editingPrices[item.id!] || item.purchase_price,
-                          selling_price: item.selling_price,
-                          notes: item.notes,
-                        })),
+                        items: items,
                       });
 
                       message.success('저장되었습니다.');
@@ -421,16 +499,13 @@ const PurchaseDetailPage: React.FC = () => {
               {getPaymentTypeText(purchase.payment_type)}
             </Descriptions.Item>
             <Descriptions.Item label="구매가">
-              ₩{purchasePrice.toLocaleString()}
+              ₩{Math.floor(purchasePrice).toLocaleString()}
             </Descriptions.Item>
             <Descriptions.Item label="구매처">
               {purchase.supplier || '-'}
             </Descriptions.Item>
             <Descriptions.Item label="구매자">
               {purchase.buyer_name || '-'}
-            </Descriptions.Item>
-            <Descriptions.Item label="입고 창고">
-              {purchase.items?.[0]?.warehouse ? `[${purchase.items[0].warehouse.name}] ${purchase.items[0].warehouse.location || ''}` : '미지정'}
             </Descriptions.Item>
             <Descriptions.Item label="등록일시">
               {purchase.created_at ? dayjs(purchase.created_at).format('YYYY-MM-DD HH:mm') : '-'}
@@ -466,7 +541,28 @@ const PurchaseDetailPage: React.FC = () => {
                 </Form.Item>
               </Descriptions.Item>
               <Descriptions.Item label="구매가">
-                ₩{purchasePrice.toLocaleString()}
+                {editMode ? (
+                  <InputNumber
+                    value={purchasePrice}
+                    onChange={(value) => {
+                      if (value !== null) {
+                        // 모든 사이즈에 동일한 구매가 적용
+                        const newSizePrices: { [size: string]: number } = {};
+                        sortedSizeEntries.forEach(([size]) => {
+                          newSizePrices[size] = value;
+                        });
+                        setEditingSizePrices(prev => ({ ...prev, ...newSizePrices }));
+                      }
+                    }}
+                    formatter={(value) => value ? `₩${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
+                    parser={(value) => value!.replace(/₩\s?|(,*)/g, '') as any}
+                    style={{ width: '100%' }}
+                    min={0}
+                    step={1000}
+                  />
+                ) : (
+                  `₩${Math.floor(purchasePrice).toLocaleString()}`
+                )}
               </Descriptions.Item>
               <Descriptions.Item label="구매처">
                 <Form.Item name="supplier" style={{ margin: 0 }}>
@@ -475,21 +571,6 @@ const PurchaseDetailPage: React.FC = () => {
               </Descriptions.Item>
               <Descriptions.Item label="구매자">
                 {purchase.buyer_name || '-'}
-              </Descriptions.Item>
-              <Descriptions.Item label="입고 창고">
-                <Form.Item name="warehouse_id" style={{ margin: 0 }}>
-                  <Select
-                    placeholder="창고 선택"
-                    allowClear
-                    style={{ width: '100%' }}
-                  >
-                    {warehouses.map(warehouse => (
-                      <Option key={warehouse.id} value={warehouse.id}>
-                        [{warehouse.name}] {warehouse.location || ''}
-                      </Option>
-                    ))}
-                  </Select>
-                </Form.Item>
               </Descriptions.Item>
               <Descriptions.Item label="등록일시">
                 {purchase.created_at ? dayjs(purchase.created_at).format('YYYY-MM-DD HH:mm') : '-'}
@@ -567,38 +648,63 @@ const PurchaseDetailPage: React.FC = () => {
               </div>
             </div>
 
-            {/* 사이즈별 수량 테이블 */}
-            <Table
-              size="small"
-              dataSource={sortedSizeEntries.map(([size, qty]) => ({ size, quantity: qty }))}
-              columns={[
-                {
-                  title: '사이즈',
-                  dataIndex: 'size',
-                  key: 'size',
-                  align: 'center',
-                  width: 120,
-                },
-                {
-                  title: '수량',
-                  dataIndex: 'quantity',
-                  key: 'quantity',
-                  align: 'center',
-                  width: 120,
-                  render: (qty) => `${qty}개`,
-                },
-                {
-                  title: '금액',
-                  key: 'amount',
-                  align: 'right',
-                  render: (_, record) => `₩${(purchasePrice * record.quantity).toLocaleString()}`,
-                },
-              ]}
-              pagination={false}
-              bordered
-              rowKey="size"
-              style={{ marginBottom: 16 }}
-            />
+            {/* 사이즈별 수량/가격 그리드 */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))',
+                gap: '6px'
+              }}>
+                {sortedSizeEntries.map(([size, qty]) => {
+                  const currentQty = editMode ? (editingSizeQuantities[size] || qty) : qty;
+                  const currentPrice = editMode ? (editingSizePrices[size] || purchasePrice) : purchasePrice;
+
+                  return (
+                    <div
+                      key={size}
+                      style={{
+                        border: '1px solid #d9d9d9',
+                        borderRadius: '4px',
+                        padding: '10px 8px',
+                        backgroundColor: currentQty > 0 ? (editMode ? '#f0f7ff' : '#fafafa') : '#fff',
+                        textAlign: 'center',
+                        opacity: currentQty === 0 ? 0.5 : 1
+                      }}
+                    >
+                      {/* 사이즈 */}
+                      <div style={{
+                        fontWeight: 600,
+                        fontSize: '14px',
+                        color: currentQty > 0 ? '#1890ff' : '#999',
+                        marginBottom: '6px'
+                      }}>
+                        {getSizeDisplay(size)}
+                      </div>
+
+                      {/* 수량 */}
+                      {editMode ? (
+                        <InputNumber
+                          min={0}
+                          value={currentQty}
+                          onChange={(value) => {
+                            if (value !== null) {
+                              setEditingSizeQuantities(prev => ({
+                                ...prev,
+                                [size]: value
+                              }));
+                            }
+                          }}
+                          size="small"
+                          style={{ width: '100%' }}
+                        />
+                      ) : (
+                        <div style={{ fontSize: '15px', fontWeight: 500, color: '#262626' }}>{currentQty}개</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
 
             {/* 총계 */}
             <div style={{
@@ -618,7 +724,7 @@ const PurchaseDetailPage: React.FC = () => {
               <div>
                 <div style={{ fontSize: '14px', color: '#666', textAlign: 'right' }}>총 금액</div>
                 <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#1890ff' }}>
-                  ₩{totalAmount.toLocaleString()}
+                  ₩{Math.floor(totalAmount).toLocaleString()}
                 </div>
               </div>
             </div>

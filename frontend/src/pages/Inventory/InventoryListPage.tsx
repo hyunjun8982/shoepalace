@@ -981,6 +981,7 @@ const InventoryListPage: React.FC = () => {
           dataSource={groupedInventory}
           loading={loading}
           rowKey="product_id"
+          scroll={{ x: 1400 }}
           pagination={{
             current: pagination.current,
             pageSize: pagination.pageSize,
@@ -1592,6 +1593,7 @@ const InventoryListPage: React.FC = () => {
           }
           pagination={{ pageSize: 10 }}
           size="small"
+          scroll={{ x: 800 }}
           columns={[
             {
               title: '상품코드',

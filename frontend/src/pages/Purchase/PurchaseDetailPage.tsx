@@ -93,12 +93,14 @@ const PurchaseDetailPage: React.FC = () => {
   };
 
   const getPaymentTypeText = (type: PaymentType) => {
-    const config = {
+    const config: Record<string, string> = {
       [PaymentType.CORP_CARD]: '법인카드',
       [PaymentType.CORP_ACCOUNT]: '법인계좌',
       [PaymentType.PERSONAL_CARD]: '개인카드',
+      [PaymentType.PERSONAL_CARD_INSER]: '개인카드(인서)',
+      [PaymentType.PERSONAL_CARD_DAHEE]: '개인카드(다희)',
     };
-    return config[type];
+    return config[type] || type;
   };
 
   // 영수증 업로드
@@ -458,6 +460,8 @@ const PurchaseDetailPage: React.FC = () => {
                     <Option value="corp_card">법인카드</Option>
                     <Option value="corp_account">법인계좌</Option>
                     <Option value="personal_card">개인카드</Option>
+                    <Option value="personal_card_inser">개인카드(인서)</Option>
+                    <Option value="personal_card_dahee">개인카드(다희)</Option>
                   </Select>
                 </Form.Item>
               </Descriptions.Item>

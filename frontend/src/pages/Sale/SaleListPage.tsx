@@ -59,7 +59,7 @@ const SaleListPage: React.FC = () => {
   const [total, setTotal] = useState(0);
   const [pagination, setPagination] = useState({
     current: 1,
-    pageSize: 5,
+    pageSize: 10,
   });
   const [filters, setFilters] = useState<SaleListParams>({});
   const [searchText, setSearchText] = useState<string>('');
@@ -945,7 +945,7 @@ const SaleListPage: React.FC = () => {
             pageSize: pagination.pageSize,
             total: total,
             showSizeChanger: true,
-            pageSizeOptions: ['5', '10', '50'],
+            pageSizeOptions: ['10', '20', '50', '100'],
             showTotal: (total) => `총 ${total}건`,
             onChange: (page, pageSize) => {
               setPagination({ current: page, pageSize: pageSize || 10 });

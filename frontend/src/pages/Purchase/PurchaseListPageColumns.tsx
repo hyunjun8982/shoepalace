@@ -206,10 +206,12 @@ export const getColumns = (
     key: 'payment_info',
     width: 70,
     render: (_, record) => {
-      const typeMap = {
+      const typeMap: Record<string, { text: string; color: string }> = {
         [PaymentType.CORP_CARD]: { text: '법인카드', color: 'blue' },
         [PaymentType.CORP_ACCOUNT]: { text: '법인계좌', color: 'green' },
         [PaymentType.PERSONAL_CARD]: { text: '개인카드', color: 'orange' },
+        [PaymentType.PERSONAL_CARD_INSER]: { text: '개인(인서)', color: 'purple' },
+        [PaymentType.PERSONAL_CARD_DAHEE]: { text: '개인(다희)', color: 'magenta' },
       };
       const config = typeMap[record.payment_type];
       return (

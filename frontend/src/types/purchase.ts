@@ -2,6 +2,8 @@ export enum PaymentType {
   CORP_CARD = 'corp_card',
   CORP_ACCOUNT = 'corp_account',
   PERSONAL_CARD = 'personal_card',
+  PERSONAL_CARD_INSER = 'personal_card_inser',
+  PERSONAL_CARD_DAHEE = 'personal_card_dahee',
 }
 
 export enum PurchaseStatus {

@@ -50,7 +50,7 @@ const PurchaseListPage: React.FC = () => {
   const [total, setTotal] = useState(0);
   const [pagination, setPagination] = useState({
     current: 1,
-    pageSize: 5,
+    pageSize: 10,
   });
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
@@ -570,6 +570,8 @@ const PurchaseListPage: React.FC = () => {
               <Option value="corp_card">법인카드</Option>
               <Option value="corp_account">법인계좌</Option>
               <Option value="personal_card">개인카드</Option>
+              <Option value="personal_card_inser">개인카드(인서)</Option>
+              <Option value="personal_card_dahee">개인카드(다희)</Option>
             </Select>
           </Col>
           <Col span={3}>
@@ -630,10 +632,10 @@ const PurchaseListPage: React.FC = () => {
             ...pagination,
             total,
             showSizeChanger: true,
-            pageSizeOptions: ['5', '10', '50'],
+            pageSizeOptions: ['10', '20', '50', '100'],
             showTotal: (total) => `총 ${total}건`,
             onChange: (page, pageSize) => {
-              setPagination({ current: page, pageSize: pageSize || 5 });
+              setPagination({ current: page, pageSize: pageSize || 10 });
             },
           }}
         />

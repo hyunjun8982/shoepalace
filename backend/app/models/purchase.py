@@ -8,6 +8,8 @@ class PaymentType(str, enum.Enum):
     corp_card = "corp_card"
     corp_account = "corp_account"
     personal_card = "personal_card"
+    personal_card_inser = "personal_card_inser"  # 개인카드(인서)
+    personal_card_dahee = "personal_card_dahee"  # 개인카드(다희)
 
 class PurchaseStatus(str, enum.Enum):
     pending = "pending"

@@ -678,6 +678,8 @@ const PurchaseFormPage: React.FC = () => {
                     <Option value={PaymentType.CORP_CARD}>법인카드</Option>
                     <Option value={PaymentType.CORP_ACCOUNT}>법인계좌</Option>
                     <Option value={PaymentType.PERSONAL_CARD}>개인카드</Option>
+                    <Option value={PaymentType.PERSONAL_CARD_INSER}>개인카드(인서)</Option>
+                    <Option value={PaymentType.PERSONAL_CARD_DAHEE}>개인카드(다희)</Option>
                   </Select>
                 </Form.Item>
 
@@ -1071,6 +1073,8 @@ const PurchaseFormPage: React.FC = () => {
               {form.getFieldValue('payment_type') === PaymentType.CORP_CARD && '법인카드'}
               {form.getFieldValue('payment_type') === PaymentType.CORP_ACCOUNT && '법인계좌'}
               {form.getFieldValue('payment_type') === PaymentType.PERSONAL_CARD && '개인카드'}
+              {form.getFieldValue('payment_type') === PaymentType.PERSONAL_CARD_INSER && '개인카드(인서)'}
+              {form.getFieldValue('payment_type') === PaymentType.PERSONAL_CARD_DAHEE && '개인카드(다희)'}
             </div>
 
             <div style={{ color: '#666' }}>구매가:</div>

@@ -3,13 +3,9 @@ import { Card, Spin, Alert, Button, Space, Pagination } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { trendingProductService, KreamProductItem } from '../../services/trendingProduct';
 
-// 이미지 프록시 URL 생성
-const getProxyImageUrl = (originalUrl: string) => {
+// 이미지 URL (KREAM 이미지는 직접 로드 - CORS 허용됨)
+const getImageUrl = (originalUrl: string) => {
   if (!originalUrl) return '';
-  // KREAM 이미지인 경우 프록시 사용 (상대 경로로 요청)
-  if (originalUrl.includes('kream-phinf.pstatic.net')) {
-    return `/api/v1/trending-products/kream-image-proxy/?url=${encodeURIComponent(originalUrl)}`;
-  }
   return originalUrl;
 };
 
@@ -239,7 +235,7 @@ const TrendingProductWidget: React.FC = () => {
                     overflow: 'hidden',
                   }}>
                     <img
-                      src={getProxyImageUrl(imageUrl)}
+                      src={getImageUrl(imageUrl)}
                       alt={productName}
                       style={{
                         position: 'absolute',

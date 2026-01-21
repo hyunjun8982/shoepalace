@@ -26,15 +26,18 @@ async def get_kream_ranking(
     - category_id: KREAM 카테고리 ID (직접 지정)
     - date_range: 기간 필터 (weekly, monthly) - 없으면 실시간
     """
+    import os
+    import urllib.parse
+
     category_filter = category_id
     request_key = str(uuid.uuid4())
     now = datetime.now()
     client_datetime = now.strftime("%Y%m%d%H%M%S") + "+0900"
 
-    url = f"https://api.kream.co.kr/api/h/tabs/ranking/?category_filter={category_filter}&request_key={request_key}"
-
+    # KREAM API 직접 호출 URL
+    kream_url = f"https://api.kream.co.kr/api/h/tabs/ranking/?category_filter={category_filter}&request_key={request_key}"
     if date_range:
-        url += f"&date_range_filter={date_range}"
+        kream_url += f"&date_range_filter={date_range}"
 
     headers = {
         "accept": "*/*",
@@ -55,15 +58,27 @@ async def get_kream_ranking(
         "x-kream-web-request-secret": "kream-djscjsghdkd",
     }
 
+    # Cloudflare Workers URL (무료, 월 100,000회)
+    cf_worker_url = os.getenv("CF_WORKER_URL", "")
+
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(url, headers=headers)
+        async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+            if cf_worker_url:
+                # Render 프록시를 통해 호출
+                encoded_url = urllib.parse.quote(kream_url, safe='')
+                proxy_url = f"{cf_worker_url}?url={encoded_url}"
+                response = await client.get(proxy_url, timeout=30.0)
+            else:
+                # 직접 호출 시도
+                response = await client.get(kream_url, headers=headers)
+
             response.raise_for_status()
             return response.json()
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=f"KREAM API 오류: {str(e)}")
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=500, detail=f"KREAM API 요청 실패: {str(e)}")
+    except Exception as e:
+        import traceback
+        raise HTTPException(status_code=500, detail=f"KREAM API 요청 실패: {type(e).__name__}: {str(e)}")
 
 
 @router.get("/kream-image-proxy/")

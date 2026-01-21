@@ -3,9 +3,12 @@ import { Card, Spin, Alert, Button, Space, Pagination } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { trendingProductService, KreamProductItem } from '../../services/trendingProduct';
 
-// 이미지 URL (KREAM 이미지는 직접 로드 - CORS 허용됨)
+// 이미지 프록시 URL (Render 프록시 사용 - KREAM Referer 체크 우회)
 const getImageUrl = (originalUrl: string) => {
   if (!originalUrl) return '';
+  if (originalUrl.includes('kream-phinf.pstatic.net')) {
+    return `https://shoepalace-pxos.onrender.com/image?url=${encodeURIComponent(originalUrl)}`;
+  }
   return originalUrl;
 };
 

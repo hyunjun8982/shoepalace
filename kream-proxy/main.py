@@ -56,6 +56,36 @@ async def proxy_kream(url: str = Query(..., description="KREAM API URL")):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/image")
+async def proxy_image(url: str = Query(..., description="KREAM Image URL")):
+    """KREAM 이미지 프록시"""
+    from fastapi.responses import Response
+
+    decoded_url = unquote(url)
+
+    if "kream-phinf.pstatic.net" not in decoded_url:
+        raise HTTPException(status_code=400, detail="Only KREAM image URLs allowed")
+
+    headers = {
+        "referer": "https://kream.co.kr/",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(decoded_url, headers=headers)
+            response.raise_for_status()
+
+            content_type = response.headers.get("content-type", "image/png")
+            return Response(
+                content=response.content,
+                media_type=content_type,
+                headers={"Cache-Control": "public, max-age=86400"}
+            )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

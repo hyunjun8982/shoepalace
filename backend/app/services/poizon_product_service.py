@@ -3,12 +3,11 @@
 """
 import logging
 from typing import List, Dict, Optional
-import sys
-import os
+from app.utils.poizon.poizon_api import PoizonAPI
 
-# test 디렉토리의 poizon_api를 import하기 위한 경로 추가
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../test'))
-from poizon_api import PoizonAPI, APP_KEY, APP_SECRET
+# Poizon API 인증 정보 (poizon_service.py와 동일)
+APP_KEY = "5acc0257eeb54da09d2d90382e805621"
+APP_SECRET = "f5eecdadd2f94afb9e0351d52ae9c5140272d01d35da42b098ffd00f9c4504ee"
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +111,66 @@ class PoizonProductService:
 
         logger.info(f"브랜드 '{brand_name}' 조회 완료: 총 {len(all_products)}개 상품")
         return all_products
+
+    def get_products_by_brand_page(
+        self,
+        brand_key: str,
+        page_num: int
+    ) -> List[Dict]:
+        """
+        브랜드별 상품 단일 페이지 조회
+
+        Args:
+            brand_key: 브랜드 키 ("adidas", "nike", "jordan", "adidas_originals")
+            page_num: 페이지 번호
+
+        Returns:
+            상품 정보 리스트 (해당 페이지)
+        """
+        if brand_key not in BRANDS:
+            raise ValueError(f"Invalid brand_key: {brand_key}")
+
+        brand_info = BRANDS[brand_key]
+        brand_id = brand_info["id"]
+        brand_name = brand_info["name"]
+
+        try:
+            params = {
+                "language": "ko",
+                "brandIdList": [brand_id],
+                "pageNum": page_num,
+                "pageSize": self.page_size,
+                "region": "KR"
+            }
+
+            response = self.client.send_request(ENDPOINT, params)
+
+            if response.get("code") == 200:
+                data = response.get("data", {})
+                contents = data.get("contents", [])
+
+                products = []
+                for item in contents:
+                    product = {
+                        "brand_key": brand_key,
+                        "brand_name": brand_name,
+                        "level1CategoryName": item.get("level1CategoryName"),
+                        "title": item.get("title"),
+                        "articleNumber": item.get("articleNumber"),
+                        "logoUrl": item.get("logoUrl"),
+                        "spuId": item.get("spuId")
+                    }
+                    products.append(product)
+
+                logger.info(f"[{brand_name}] {page_num}페이지: {len(products)}개 상품 조회")
+                return products
+            else:
+                logger.error(f"[{brand_name}] API 오류: {response.get('msg')}")
+                return []
+
+        except Exception as e:
+            logger.error(f"[{brand_name}] {page_num}페이지 조회 실패: {e}")
+            return []
 
     def get_all_brands_products(
         self,

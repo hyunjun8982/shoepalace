@@ -2,7 +2,7 @@
 포이즌 상품 정보 API
 """
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
@@ -15,6 +15,10 @@ from app.services.poizon_product_service import get_poizon_product_service, BRAN
 from app.services.poizon_service import get_poizon_service
 
 logger = logging.getLogger(__name__)
+
+# ========== 동기화 진행 상황 관리 ==========
+# 브랜드별 동기화 상태 저장 (메모리)
+_sync_status: Dict[str, Dict[str, Any]] = {}
 
 router = APIRouter()
 
@@ -88,6 +92,50 @@ class BatchPricesResponse(BaseModel):
     prices: dict  # { spu_id: [PriceInfo, ...] }
 
 
+class SyncStatusResponse(BaseModel):
+    """동기화 진행 상황 응답"""
+    brand_key: str
+    brand_name: str
+    is_syncing: bool
+    current_page: int
+    total_pages: int
+    products_synced: int
+    prices_synced: int
+    message: str
+    started_at: Optional[datetime] = None
+
+
+def _update_sync_status(
+    brand_key: str,
+    is_syncing: bool = True,
+    current_page: int = 0,
+    total_pages: int = 0,
+    products_synced: int = 0,
+    prices_synced: int = 0,
+    message: str = ""
+):
+    """동기화 상태 업데이트"""
+    global _sync_status
+    if brand_key not in _sync_status:
+        _sync_status[brand_key] = {
+            "started_at": datetime.now() if is_syncing else None
+        }
+
+    _sync_status[brand_key].update({
+        "is_syncing": is_syncing,
+        "current_page": current_page,
+        "total_pages": total_pages,
+        "products_synced": products_synced,
+        "prices_synced": prices_synced,
+        "message": message
+    })
+
+    if is_syncing and "started_at" not in _sync_status[brand_key]:
+        _sync_status[brand_key]["started_at"] = datetime.now()
+    elif not is_syncing:
+        _sync_status[brand_key]["started_at"] = None
+
+
 # ========== API 엔드포인트 ==========
 
 @router.get("/brands/{brand_key}", response_model=BrandProductsResponse)
@@ -152,105 +200,144 @@ def _calculate_avg_price(sizes: list, size_type: str) -> Optional[int]:
 
 
 def _sync_brand_products_background(brand_key: str, end_page: int, db: Session):
-    """백그라운드에서 실행되는 동기화 함수"""
+    """백그라운드에서 실행되는 동기화 함수 (페이지 단위 점진적 업데이트)"""
     try:
         logger.info(f"[BACKGROUND SYNC] 브랜드 상품 업데이트 시작: brand_key={brand_key}, pages=1-{end_page}")
 
         brand_name = BRANDS[brand_key]["name"]
+        brand_id = BRANDS[brand_key]["id"]
         product_service = get_poizon_product_service()
         poizon_service = get_poizon_service()
 
-        # 1단계: Poizon API에서 상품 정보 가져오기 (SPU ID 수집)
-        products = product_service.get_products_by_brand(
+        # 동기화 시작 상태 업데이트
+        _update_sync_status(
             brand_key,
-            1,  # 항상 1페이지부터 시작
-            end_page
+            is_syncing=True,
+            current_page=0,
+            total_pages=end_page,
+            products_synced=0,
+            prices_synced=0,
+            message="동기화 시작..."
         )
 
-        logger.info(f"[BACKGROUND SYNC] Poizon API에서 {len(products)}개 상품 조회 완료")
+        # 첫 페이지 처리 전에 기존 데이터 삭제
+        crud_poizon_product.delete_products_by_brand(db, brand_key)
+        logger.info(f"[BACKGROUND SYNC] 기존 {brand_name} 상품 삭제 완료")
 
-        # 필드명을 DB 모델에 맞게 변환 + SPU ID → 상품 인덱스 매핑
-        db_products_data = []
-        spu_to_product_idx = {}  # SPU ID → 상품 인덱스
-
-        for idx, product_data in enumerate(products):
-            db_product_data = {
-                "brand_key": product_data["brand_key"],
-                "brand_name": product_data["brand_name"],
-                "level1_category_name": product_data.get("level1CategoryName"),
-                "title": product_data["title"],
-                "article_number": product_data["articleNumber"],
-                "logo_url": product_data.get("logoUrl"),
-                "spu_id": product_data.get("spuId"),
-                # 평균가 필드 (나중에 채움)
-                "avg_price_small": None,
-                "avg_price_large": None,
-                "avg_price_apparel": None,
-            }
-            db_products_data.append(db_product_data)
-
-            # SPU ID → 인덱스 매핑
-            if product_data.get("spuId"):
-                spu_to_product_idx[product_data["spuId"]] = idx
-
-        spu_ids = list(spu_to_product_idx.keys())
-
-        # 2단계: SPU ID로 사이즈 + 평균가 한번에 조회 (statisticsDataQry 사용)
+        total_products_synced = 0
         total_prices_synced = 0
-        if spu_ids:
-            logger.info(f"[BACKGROUND SYNC] 사이즈+가격 조회 시작: {len(spu_ids)}개 상품")
 
-            # 배치 크기 설정 (API 권장: 5개)
-            batch_size = 5
-            total_batches = (len(spu_ids) + batch_size - 1) // batch_size
+        # 페이지 단위로 처리
+        for page_num in range(1, end_page + 1):
+            try:
+                # 상태 업데이트
+                _update_sync_status(
+                    brand_key,
+                    is_syncing=True,
+                    current_page=page_num,
+                    total_pages=end_page,
+                    products_synced=total_products_synced,
+                    prices_synced=total_prices_synced,
+                    message=f"{page_num}/{end_page} 페이지 처리 중..."
+                )
 
-            for i in range(0, len(spu_ids), batch_size):
-                batch_spu_ids = spu_ids[i:i + batch_size]
-                batch_num = i // batch_size + 1
+                # 1. 해당 페이지 상품 조회
+                page_products = product_service.get_products_by_brand_page(brand_key, page_num)
 
-                try:
-                    # 사이즈 + 평균가 한번에 조회 (API 1회)
-                    sizes_with_prices = poizon_service.get_sizes_with_prices(batch_spu_ids)
+                if not page_products:
+                    logger.info(f"[BACKGROUND SYNC] {page_num}페이지 데이터 없음, 동기화 종료")
+                    break
 
-                    # 각 SPU별로 가격 정보 저장 + 평균가 계산
-                    for spu_id, sizes in sizes_with_prices.items():
-                        prices_data = []
+                # 2. DB 모델에 맞게 변환 + SPU ID 수집
+                db_products_data = []
+                spu_to_product_idx = {}
 
-                        for size in sizes:
-                            prices_data.append({
-                                "sku_id": size["sku_id"],
-                                "size_kr": size["size_kr"],
-                                "size_us": size["size_us"],
-                                "average_price": size.get("average_price")
-                            })
+                for idx, product_data in enumerate(page_products):
+                    db_product_data = {
+                        "brand_key": product_data["brand_key"],
+                        "brand_name": product_data["brand_name"],
+                        "level1_category_name": product_data.get("level1CategoryName"),
+                        "title": product_data["title"],
+                        "article_number": product_data["articleNumber"],
+                        "logo_url": product_data.get("logoUrl"),
+                        "spu_id": product_data.get("spuId"),
+                        "avg_price_small": None,
+                        "avg_price_large": None,
+                        "avg_price_apparel": None,
+                    }
+                    db_products_data.append(db_product_data)
 
-                        # DB에 가격 정보 저장
-                        count = crud_poizon_product_price.upsert_prices(db, spu_id, prices_data)
-                        total_prices_synced += count
+                    if product_data.get("spuId"):
+                        spu_to_product_idx[product_data["spuId"]] = idx
 
-                        # 상품 데이터에 평균가 추가
-                        if spu_id in spu_to_product_idx:
-                            product_idx = spu_to_product_idx[spu_id]
-                            db_products_data[product_idx]["avg_price_small"] = _calculate_avg_price(sizes, 'small')
-                            db_products_data[product_idx]["avg_price_large"] = _calculate_avg_price(sizes, 'large')
-                            db_products_data[product_idx]["avg_price_apparel"] = _calculate_avg_price(sizes, 'apparel')
+                spu_ids = list(spu_to_product_idx.keys())
 
-                    logger.info(f"[BACKGROUND SYNC] 배치 {batch_num}/{total_batches} 완료")
+                # 3. 해당 페이지 상품들의 가격 정보 조회 (5개씩 배치)
+                if spu_ids:
+                    batch_size = 5
+                    for i in range(0, len(spu_ids), batch_size):
+                        batch_spu_ids = spu_ids[i:i + batch_size]
 
-                except Exception as e:
-                    logger.error(f"[BACKGROUND SYNC] 배치 {batch_num} 처리 실패: {e}", exc_info=True)
-                    continue
+                        try:
+                            sizes_with_prices = poizon_service.get_sizes_with_prices(batch_spu_ids)
 
-            logger.info(f"[BACKGROUND SYNC] 사이즈+가격 조회 완료: {total_prices_synced}개 가격 정보")
+                            for spu_id, sizes in sizes_with_prices.items():
+                                prices_data = []
+                                for size in sizes:
+                                    prices_data.append({
+                                        "sku_id": size["sku_id"],
+                                        "size_kr": size["size_kr"],
+                                        "size_us": size["size_us"],
+                                        "average_price": size.get("average_price")
+                                    })
 
-        # 3단계: DB에 상품 저장 (기존 데이터 교체, 평균가 포함)
-        synced_count = crud_poizon_product.replace_brand_products(db, brand_key, db_products_data)
-        logger.info(f"[BACKGROUND SYNC] DB 상품 업데이트 완료: {synced_count}개")
+                                # 가격 DB 저장
+                                count = crud_poizon_product_price.upsert_prices(db, spu_id, prices_data)
+                                total_prices_synced += count
 
-        logger.info(f"[BACKGROUND SYNC] 전체 동기화 완료 - 상품: {synced_count}개, 가격: {total_prices_synced}개")
+                                # 상품에 평균가 추가
+                                if spu_id in spu_to_product_idx:
+                                    product_idx = spu_to_product_idx[spu_id]
+                                    db_products_data[product_idx]["avg_price_small"] = _calculate_avg_price(sizes, 'small')
+                                    db_products_data[product_idx]["avg_price_large"] = _calculate_avg_price(sizes, 'large')
+                                    db_products_data[product_idx]["avg_price_apparel"] = _calculate_avg_price(sizes, 'apparel')
+
+                        except Exception as e:
+                            logger.error(f"[BACKGROUND SYNC] 가격 조회 실패: {e}")
+                            continue
+
+                # 4. 해당 페이지 상품들 DB에 저장 (즉시 반영)
+                for product_data in db_products_data:
+                    crud_poizon_product.upsert_product(db, product_data)
+
+                total_products_synced += len(db_products_data)
+
+                logger.info(f"[BACKGROUND SYNC] {page_num}/{end_page} 페이지 완료 - 상품: {len(db_products_data)}개")
+
+            except Exception as e:
+                logger.error(f"[BACKGROUND SYNC] {page_num}페이지 처리 실패: {e}", exc_info=True)
+                continue
+
+        # 동기화 완료 상태 업데이트
+        _update_sync_status(
+            brand_key,
+            is_syncing=False,
+            current_page=end_page,
+            total_pages=end_page,
+            products_synced=total_products_synced,
+            prices_synced=total_prices_synced,
+            message=f"동기화 완료! 상품: {total_products_synced}개, 가격: {total_prices_synced}개"
+        )
+
+        logger.info(f"[BACKGROUND SYNC] 전체 동기화 완료 - 상품: {total_products_synced}개, 가격: {total_prices_synced}개")
 
     except Exception as e:
         logger.error(f"[BACKGROUND SYNC] 브랜드 상품 업데이트 실패: {e}", exc_info=True)
+        _update_sync_status(
+            brand_key,
+            is_syncing=False,
+            message=f"동기화 실패: {str(e)}"
+        )
 
 
 @router.post("/brands/{brand_key}/sync", response_model=SyncResponse)
@@ -297,6 +384,45 @@ async def sync_brand_products(
     except Exception as e:
         logger.error(f"브랜드 상품 업데이트 요청 실패: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"업데이트 요청 중 오류가 발생했습니다: {str(e)}")
+
+
+@router.get("/sync-status/{brand_key}", response_model=SyncStatusResponse)
+async def get_sync_status(brand_key: str):
+    """
+    브랜드의 동기화 진행 상황 조회
+    """
+    if brand_key not in BRANDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid brand_key. Must be one of: {', '.join(BRANDS.keys())}"
+        )
+
+    brand_name = BRANDS[brand_key]["name"]
+
+    if brand_key in _sync_status:
+        status = _sync_status[brand_key]
+        return SyncStatusResponse(
+            brand_key=brand_key,
+            brand_name=brand_name,
+            is_syncing=status.get("is_syncing", False),
+            current_page=status.get("current_page", 0),
+            total_pages=status.get("total_pages", 0),
+            products_synced=status.get("products_synced", 0),
+            prices_synced=status.get("prices_synced", 0),
+            message=status.get("message", ""),
+            started_at=status.get("started_at")
+        )
+    else:
+        return SyncStatusResponse(
+            brand_key=brand_key,
+            brand_name=brand_name,
+            is_syncing=False,
+            current_page=0,
+            total_pages=0,
+            products_synced=0,
+            prices_synced=0,
+            message="대기 중"
+        )
 
 
 @router.get("/brands/{brand_key}/last-update")

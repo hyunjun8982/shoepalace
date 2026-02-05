@@ -23,7 +23,7 @@ import {
   Table,
 } from 'antd';
 import { ShopOutlined, SwapOutlined } from '@ant-design/icons';
-import { poizonProductsService, PoizonProduct, PriceInfo } from '../../services/poizonProducts';
+import { poizonProductsService, PoizonProduct, PriceInfo, SyncStatus } from '../../services/poizonProducts';
 import { naverShoppingService, NaverSeller } from '../../services/naverShopping';
 import { naverShoppingFilterService, NaverFilter } from '../../services/naverShoppingFilter';
 import { poizonService, SizeWithPrice } from '../../services/poizon';
@@ -94,6 +94,9 @@ const ProductSellerFinderPage: React.FC = () => {
   const [sizeDetailModalVisible, setSizeDetailModalVisible] = useState(false);
   const [sizeDetailProduct, setSizeDetailProduct] = useState<PoizonProduct | null>(null);
 
+  // 동기화 상태
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+
   const pageSize = 20;
 
   // 평균가 계산 함수
@@ -140,7 +143,37 @@ const ProductSellerFinderPage: React.FC = () => {
     // 네이버쇼핑 검색 결과 및 가격 정보 초기화
     setNaverSellerData(new Map());
     setPriceData(new Map());
+    // 동기화 상태 확인
+    checkSyncStatus(activeBrand);
   }, [activeBrand]);
+
+  // 동기화 상태 폴링
+  useEffect(() => {
+    if (!syncStatus?.is_syncing) return;
+
+    const interval = setInterval(async () => {
+      const status = await poizonProductsService.getSyncStatus(activeBrand);
+      setSyncStatus(status);
+
+      // 동기화 완료 시 상품 목록 새로고침
+      if (!status.is_syncing) {
+        message.success(status.message);
+        loadProducts(activeBrand);
+        loadLastUpdate(activeBrand);
+      }
+    }, 2000); // 2초마다 폴링
+
+    return () => clearInterval(interval);
+  }, [syncStatus?.is_syncing, activeBrand]);
+
+  const checkSyncStatus = async (brandKey: BrandKey) => {
+    try {
+      const status = await poizonProductsService.getSyncStatus(brandKey);
+      setSyncStatus(status);
+    } catch (error) {
+      console.error('동기화 상태 확인 실패:', error);
+    }
+  };
 
   // 페이지 변경 시 또는 상품 로드 완료 시 자동으로 네이버쇼핑 검색
   useEffect(() => {
@@ -287,15 +320,15 @@ const ProductSellerFinderPage: React.FC = () => {
         values.endPage
       );
 
-      message.success(response.message);
+      message.info(response.message);
       setSyncModalVisible(false);
       form.resetFields();
 
-      // 백그라운드에서 처리 중이므로 잠시 후 새로고침
-      setTimeout(() => {
-        loadProducts(activeBrand);
-        loadLastUpdate(activeBrand);
-      }, 2000);
+      // 동기화 상태 폴링 시작
+      setTimeout(async () => {
+        const status = await poizonProductsService.getSyncStatus(activeBrand);
+        setSyncStatus(status);
+      }, 500);
     } catch (error: any) {
       console.error('업데이트 실패:', error);
       message.error(error.response?.data?.detail || '업데이트에 실패했습니다.');
@@ -553,7 +586,51 @@ const ProductSellerFinderPage: React.FC = () => {
   }));
 
   return (
-    <div style={{ padding: 24, background: '#f0f2f5', minHeight: '100vh' }}>
+    <div style={{ padding: 24, background: '#f0f2f5', minHeight: '100vh', position: 'relative' }}>
+      {/* 동기화 진행 상황 표시 (우측 상단 고정) */}
+      {syncStatus?.is_syncing && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 16,
+            right: 16,
+            zIndex: 1000,
+            background: '#d4a017',
+            color: 'white',
+            padding: '12px 16px',
+            borderRadius: 8,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            minWidth: 200,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <Spin size="small" style={{ filter: 'brightness(0) invert(1)' }} />
+            <Text strong style={{ color: 'white', fontSize: 13 }}>
+              {syncStatus.brand_name} 업데이트 중
+            </Text>
+          </div>
+          <div style={{ marginBottom: 6 }}>
+            <div style={{
+              background: 'rgba(255,255,255,0.3)',
+              borderRadius: 4,
+              height: 6,
+              overflow: 'hidden',
+            }}>
+              <div style={{
+                background: 'white',
+                height: '100%',
+                width: `${Math.round((syncStatus.current_page / syncStatus.total_pages) * 100)}%`,
+                transition: 'width 0.3s ease',
+              }} />
+            </div>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+            <span>{syncStatus.current_page} / {syncStatus.total_pages} 페이지</span>
+            <span>{syncStatus.products_synced.toLocaleString()}개 상품</span>
+          </div>
+        </div>
+      )}
+
       <Card bodyStyle={{ padding: '4px 24px 24px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           <Tabs
@@ -573,8 +650,9 @@ const ProductSellerFinderPage: React.FC = () => {
               <Button
                 onClick={() => setSyncModalVisible(true)}
                 type="primary"
+                disabled={syncStatus?.is_syncing}
               >
-                업데이트
+                {syncStatus?.is_syncing ? '업데이트 중...' : '업데이트'}
               </Button>
               <Button
                 onClick={handleReload}

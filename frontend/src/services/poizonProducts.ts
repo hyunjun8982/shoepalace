@@ -55,6 +55,18 @@ export interface BatchPricesResponse {
   prices: Record<number, PriceInfo[]>;
 }
 
+export interface SyncStatus {
+  brand_key: string;
+  brand_name: string;
+  is_syncing: boolean;
+  current_page: number;
+  total_pages: number;
+  products_synced: number;
+  prices_synced: number;
+  message: string;
+  started_at: string | null;
+}
+
 export const poizonProductsService = {
   /**
    * DB에서 브랜드별 상품 조회
@@ -117,6 +129,16 @@ export const poizonProductsService = {
     const response = await axios.post(
       `${API_BASE_URL}/api/v1/poizon-products/prices/batch`,
       { spu_ids: spuIds }
+    );
+    return response.data;
+  },
+
+  /**
+   * 동기화 진행 상황 조회
+   */
+  async getSyncStatus(brandKey: string): Promise<SyncStatus> {
+    const response = await axios.get(
+      `${API_BASE_URL}/api/v1/poizon-products/sync-status/${brandKey}`
     );
     return response.data;
   },

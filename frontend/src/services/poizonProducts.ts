@@ -1,6 +1,4 @@
-import axios from 'axios';
-
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+import api from './api';
 
 export interface PoizonProduct {
   id: string;
@@ -72,9 +70,7 @@ export const poizonProductsService = {
    * DB에서 브랜드별 상품 조회
    */
   async getProductsByBrand(brandKey: string): Promise<BrandProductsResponse> {
-    const response = await axios.get(
-      `${API_BASE_URL}/api/v1/poizon-products/brands/${brandKey}`
-    );
+    const response = await api.get(`/poizon-products/brands/${brandKey}`);
     return response.data;
   },
 
@@ -85,12 +81,9 @@ export const poizonProductsService = {
     brandKey: string,
     endPage: number = 495
   ): Promise<SyncResponse> {
-    const response = await axios.post(
-      `${API_BASE_URL}/api/v1/poizon-products/brands/${brandKey}/sync`,
-      {
-        end_page: endPage,
-      }
-    );
+    const response = await api.post(`/poizon-products/brands/${brandKey}/sync`, {
+      end_page: endPage,
+    });
     return response.data;
   },
 
@@ -98,9 +91,7 @@ export const poizonProductsService = {
    * 브랜드의 마지막 업데이트 시간 조회
    */
   async getLastUpdate(brandKey: string) {
-    const response = await axios.get(
-      `${API_BASE_URL}/api/v1/poizon-products/brands/${brandKey}/last-update`
-    );
+    const response = await api.get(`/poizon-products/brands/${brandKey}/last-update`);
     return response.data;
   },
 
@@ -108,7 +99,7 @@ export const poizonProductsService = {
    * 전체 상품 통계 조회
    */
   async getStats() {
-    const response = await axios.get(`${API_BASE_URL}/api/v1/poizon-products/stats`);
+    const response = await api.get('/poizon-products/stats');
     return response.data;
   },
 
@@ -116,9 +107,7 @@ export const poizonProductsService = {
    * SPU ID로 가격 정보 조회
    */
   async getPricesBySpuId(spuId: number): Promise<ProductPricesResponse> {
-    const response = await axios.get(
-      `${API_BASE_URL}/api/v1/poizon-products/prices/${spuId}`
-    );
+    const response = await api.get(`/poizon-products/prices/${spuId}`);
     return response.data;
   },
 
@@ -126,10 +115,7 @@ export const poizonProductsService = {
    * 여러 SPU ID의 가격 정보 일괄 조회
    */
   async getBatchPrices(spuIds: number[]): Promise<BatchPricesResponse> {
-    const response = await axios.post(
-      `${API_BASE_URL}/api/v1/poizon-products/prices/batch`,
-      { spu_ids: spuIds }
-    );
+    const response = await api.post('/poizon-products/prices/batch', { spu_ids: spuIds });
     return response.data;
   },
 
@@ -137,9 +123,7 @@ export const poizonProductsService = {
    * 동기화 진행 상황 조회
    */
   async getSyncStatus(brandKey: string): Promise<SyncStatus> {
-    const response = await axios.get(
-      `${API_BASE_URL}/api/v1/poizon-products/sync-status/${brandKey}`
-    );
+    const response = await api.get(`/poizon-products/sync-status/${brandKey}`);
     return response.data;
   },
 };

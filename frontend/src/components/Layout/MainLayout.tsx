@@ -20,6 +20,7 @@ import {
   SearchOutlined,
   GiftOutlined,
   DownloadOutlined,
+  ShopOutlined,
   BulbOutlined,
   ExclamationCircleOutlined,
 } from '@ant-design/icons';
@@ -62,6 +63,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     '/dashboard': '대시보드',
     '/products': '상품 관리',
     '/products/new': '상품 등록',
+    '/products/seller-finder': '상품판매처 찾기',
     '/purchases': '구매 관리',
     '/purchases/new': '구매 등록',
     '/sales': '판매 관리',
@@ -320,6 +322,11 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           key: '/products',
           icon: <TeamOutlined />,
           label: '상품 목록',
+        },
+        {
+          key: '/products/seller-finder',
+          icon: <ShopOutlined />,
+          label: '상품판매처 찾기',
         },
         {
           key: '/product-importer',

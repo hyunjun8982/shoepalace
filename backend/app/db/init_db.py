@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.db.database import SessionLocal, engine
-from app.models import User, Brand, Product
+from app.models import User, Brand, Product, NaverShoppingFilter
 from app.core.security import get_password_hash
 from app.models.user import UserRole
 import uuid
@@ -39,6 +39,60 @@ def run_migrations() -> None:
             print("Migration: sales.progress_status column added")
         except Exception as e:
             # 이미 컬럼이 있거나 오류 발생 시 무시
+            conn.rollback()
+            print(f"Migration skipped or failed: {e}")
+
+        # poizon_products 테이블에 spu_id 컬럼 추가
+        try:
+            conn.execute(text("ALTER TABLE poizon_products ADD COLUMN IF NOT EXISTS spu_id BIGINT"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_poizon_products_spu_id ON poizon_products(spu_id)"))
+            conn.commit()
+            print("Migration: poizon_products.spu_id column added")
+        except Exception as e:
+            conn.rollback()
+            print(f"Migration skipped or failed: {e}")
+
+        # poizon_product_prices 테이블 생성
+        try:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS poizon_product_prices (
+                    id BIGSERIAL PRIMARY KEY,
+                    spu_id BIGINT NOT NULL,
+                    sku_id VARCHAR(50) NOT NULL UNIQUE,
+                    size_kr VARCHAR(10) NOT NULL,
+                    size_us VARCHAR(10),
+                    average_price INTEGER,
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_poizon_product_prices_spu_id ON poizon_product_prices(spu_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_poizon_product_prices_sku_id ON poizon_product_prices(sku_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_spu_id_size ON poizon_product_prices(spu_id, size_kr)"))
+            conn.commit()
+            print("Migration: poizon_product_prices table created")
+        except Exception as e:
+            # 이미 컬럼이 있거나 오류 발생 시 무시
+            conn.rollback()
+            print(f"Migration skipped or failed: {e}")
+
+        # poizon_products 테이블에 평균가 컬럼 추가 (페이지 로드 성능 향상)
+        try:
+            conn.execute(text("ALTER TABLE poizon_products ADD COLUMN IF NOT EXISTS avg_price_small INTEGER"))
+            conn.execute(text("ALTER TABLE poizon_products ADD COLUMN IF NOT EXISTS avg_price_large INTEGER"))
+            conn.execute(text("ALTER TABLE poizon_products ADD COLUMN IF NOT EXISTS avg_price_apparel INTEGER"))
+            conn.commit()
+            print("Migration: poizon_products average price columns added")
+        except Exception as e:
+            conn.rollback()
+            print(f"Migration skipped or failed: {e}")
+
+        # poizon_product_prices.size_kr 컬럼 크기 증가 (10 -> 20)
+        try:
+            conn.execute(text("ALTER TABLE poizon_product_prices ALTER COLUMN size_kr TYPE VARCHAR(20)"))
+            conn.commit()
+            print("Migration: poizon_product_prices.size_kr column size increased to 20")
+        except Exception as e:
             conn.rollback()
             print(f"Migration skipped or failed: {e}")
 
@@ -103,6 +157,16 @@ def init_db() -> None:
         #                 category=product_data["category"],
         #             )
         #             db.add(new_product)
+
+        # 기본 네이버쇼핑 필터 생성
+        default_filters = ["4910", "KREAM"]
+        for filter_name in default_filters:
+            existing_filter = db.query(NaverShoppingFilter).filter(
+                NaverShoppingFilter.mall_name == filter_name
+            ).first()
+            if not existing_filter:
+                new_filter = NaverShoppingFilter(mall_name=filter_name)
+                db.add(new_filter)
 
         db.commit()
     finally:

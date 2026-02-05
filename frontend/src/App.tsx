@@ -19,6 +19,8 @@ import InventoryListPage from './pages/Inventory/InventoryListPage';
 import DefectiveItemsPage from './pages/Inventory/DefectiveItemsPage';
 import ProductListPage from './pages/Product/ProductListPage';
 import ProductFormPage from './pages/Product/ProductFormPage';
+import ProductSellerFinderPage from './pages/Product/ProductSellerFinderPage';
+import ProductSellerFinderTablePage from './pages/Product/ProductSellerFinderTablePage';
 import SettlementListPage from './pages/Settlement/SettlementListPage';
 import UserListPage from './pages/User/UserListPage';
 import UserFormPage from './pages/User/UserFormPage';
@@ -90,6 +92,8 @@ const App: React.FC = () => {
                       <Route path="/products" element={<ProductListPage />} />
                       <Route path="/products/new" element={<ProductFormPage />} />
                       <Route path="/products/edit/:productId" element={<ProductFormPage />} />
+                      <Route path="/products/seller-finder" element={<ProductSellerFinderPage />} />
+                      <Route path="/products/seller-finder-table" element={<ProductSellerFinderTablePage />} />
 
                       {/* 구매 관리 */}
                       <Route

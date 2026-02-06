@@ -11,8 +11,7 @@ from sqlalchemy.orm import Session
 from app.api import deps
 from app.crud import crud_poizon_product
 from app.crud import crud_poizon_product_price
-from app.services.poizon_product_service import get_poizon_product_service, BRANDS
-from app.services.poizon_service import get_poizon_service
+from app.services.poizon_service import get_poizon_service, get_poizon_product_service, BRANDS
 
 logger = logging.getLogger(__name__)
 

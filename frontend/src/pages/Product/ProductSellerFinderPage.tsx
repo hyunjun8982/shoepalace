@@ -22,7 +22,7 @@ import {
   Tag,
   Table,
 } from 'antd';
-import { ShopOutlined, SwapOutlined } from '@ant-design/icons';
+import { ShopOutlined, SwapOutlined, SearchOutlined } from '@ant-design/icons';
 import { poizonProductsService, PoizonProduct, PriceInfo, SyncStatus } from '../../services/poizonProducts';
 import { naverShoppingService, NaverSeller } from '../../services/naverShopping';
 import { naverShoppingFilterService, NaverFilter } from '../../services/naverShoppingFilter';
@@ -97,6 +97,9 @@ const ProductSellerFinderPage: React.FC = () => {
   // 동기화 상태
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
 
+  // 검색
+  const [searchKeyword, setSearchKeyword] = useState('');
+
   const pageSize = 20;
 
   // 평균가 계산 함수
@@ -143,6 +146,8 @@ const ProductSellerFinderPage: React.FC = () => {
     // 네이버쇼핑 검색 결과 및 가격 정보 초기화
     setNaverSellerData(new Map());
     setPriceData(new Map());
+    // 검색어 초기화
+    setSearchKeyword('');
     // 동기화 상태 확인
     checkSyncStatus(activeBrand);
   }, [activeBrand]);
@@ -419,10 +424,18 @@ const ProductSellerFinderPage: React.FC = () => {
     }
   };
 
+  // 검색어로 필터링된 상품 목록
+  const filteredProducts = searchKeyword.trim()
+    ? products.filter(p =>
+        p.article_number.toLowerCase().includes(searchKeyword.toLowerCase()) ||
+        p.title.toLowerCase().includes(searchKeyword.toLowerCase())
+      )
+    : products;
+
   // 현재 페이지의 상품들
   const startIdx = (currentPage - 1) * pageSize;
   const endIdx = startIdx + pageSize;
-  const currentProducts = products.slice(startIdx, endIdx);
+  const currentProducts = filteredProducts.slice(startIdx, endIdx);
 
   // 포이즌 평균가 표시 (상품 데이터에서 바로 사용) - 항상 2줄로 고정
   const renderPriceInfo = (product: PoizonProduct) => {
@@ -642,6 +655,17 @@ const ProductSellerFinderPage: React.FC = () => {
           />
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', marginLeft: 24 }}>
             <Space>
+              <Input
+                placeholder="상품코드 또는 상품명 검색"
+                prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
+                value={searchKeyword}
+                onChange={(e) => {
+                  setSearchKeyword(e.target.value);
+                  setCurrentPage(1); // 검색 시 첫 페이지로 이동
+                }}
+                allowClear
+                style={{ width: 220 }}
+              />
               <Button
                 onClick={handleOpenFilterModal}
               >
@@ -677,6 +701,12 @@ const ProductSellerFinderPage: React.FC = () => {
             <div style={{ marginTop: 16 }}>
               <Text type="secondary">상품 정보를 불러오는 중...</Text>
             </div>
+          </div>
+        ) : currentProducts.length === 0 && searchKeyword.trim() ? (
+          <div style={{ textAlign: 'center', padding: '80px 0' }}>
+            <Text type="secondary" style={{ fontSize: 16 }}>
+              "{searchKeyword}"에 대한 검색 결과가 없습니다.
+            </Text>
           </div>
         ) : (
           <>
@@ -748,9 +778,13 @@ const ProductSellerFinderPage: React.FC = () => {
               <Pagination
                 current={currentPage}
                 pageSize={pageSize}
-                total={totalFetched}
+                total={filteredProducts.length}
                 showSizeChanger={false}
-                showTotal={(total) => `총 ${total.toLocaleString()}개의 상품`}
+                showTotal={(total) => (
+                  searchKeyword.trim()
+                    ? `검색 결과: ${total.toLocaleString()}개 (전체 ${totalFetched.toLocaleString()}개)`
+                    : `총 ${total.toLocaleString()}개의 상품`
+                )}
                 onChange={(page) => setCurrentPage(page)}
               />
             </div>

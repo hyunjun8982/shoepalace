@@ -36,7 +36,7 @@ dayjs.locale('ko');
 
 const { Text, Link } = Typography;
 
-type BrandKey = 'adidas' | 'nike' | 'jordan' | 'adidas_originals';
+type BrandKey = 'adidas' | 'nike' | 'jordan' | 'adidas_originals' | 'arcteryx' | 'kolon_sport' | 'the_north_face' | 'new_balance' | 'salomon' | 'stussy' | 'supreme';
 
 interface BrandInfo {
   key: BrandKey;
@@ -49,6 +49,13 @@ const BRANDS: BrandInfo[] = [
   { key: 'nike', label: '나이키', color: '#111111' },
   { key: 'jordan', label: '조던', color: '#E4002B' },
   { key: 'adidas_originals', label: '아디다스 오리지널', color: '#0D4BA3' },
+  { key: 'arcteryx', label: '아크테릭스', color: '#1a1a1a' },
+  { key: 'kolon_sport', label: '코오롱스포츠', color: '#e60012' },
+  { key: 'the_north_face', label: '노스페이스', color: '#000000' },
+  { key: 'new_balance', label: '뉴발란스', color: '#cf0a2c' },
+  { key: 'salomon', label: '살로몬', color: '#0033a0' },
+  { key: 'stussy', label: '스투시', color: '#000000' },
+  { key: 'supreme', label: '슈프림', color: '#e60012' },
 ];
 
 const ProductSellerFinderPage: React.FC = () => {
@@ -589,9 +596,10 @@ const ProductSellerFinderPage: React.FC = () => {
     key: brand.key,
     label: (
       <span style={{
-        fontSize: 15,
+        fontSize: 11,
         fontWeight: activeBrand === brand.key ? 600 : 400,
-        color: activeBrand === brand.key ? brand.color : '#595959'
+        color: activeBrand === brand.key ? brand.color : '#8c8c8c',
+        padding: '0 2px',
       }}>
         {brand.label}
       </span>
@@ -645,13 +653,15 @@ const ProductSellerFinderPage: React.FC = () => {
       )}
 
       <Card bodyStyle={{ padding: '4px 24px 24px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
           <Tabs
             activeKey={activeBrand}
             items={tabItems}
             onChange={(key) => setActiveBrand(key as BrandKey)}
-            size="large"
+            size="small"
+            tabBarGutter={8}
             style={{ flex: 1, marginBottom: 0 }}
+            tabBarStyle={{ marginBottom: 0, height: 32 }}
           />
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', marginLeft: 24 }}>
             <Space>

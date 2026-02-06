@@ -20,7 +20,14 @@ BRANDS = {
     "adidas": {"id": 3, "name": "아디다스"},
     "nike": {"id": 144, "name": "나이키"},
     "jordan": {"id": 13, "name": "조던"},
-    "adidas_originals": {"id": 494, "name": "아디다스 오리지널"}
+    "adidas_originals": {"id": 494, "name": "아디다스 오리지널"},
+    "arcteryx": {"id": 10429, "name": "아크테릭스"},
+    "kolon_sport": {"id": 1000444, "name": "코오롱스포츠"},
+    "the_north_face": {"id": 45, "name": "노스페이스"},
+    "new_balance": {"id": 4, "name": "뉴발란스"},
+    "salomon": {"id": 1000079, "name": "살로몬"},
+    "stussy": {"id": 10087, "name": "스투시"},
+    "supreme": {"id": 439, "name": "슈프림"},
 }
 
 

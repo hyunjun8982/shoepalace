@@ -127,37 +127,33 @@ const AdidasComparisonPage: React.FC = () => {
       render: (qty: number) => qty > 0 ? `${qty.toLocaleString()}개` : '-',
     },
     {
-      title: '차이',
-      dataIndex: 'difference',
-      key: 'difference',
+      title: '재고',
+      dataIndex: 'inventory_qty',
+      key: 'inventory_qty',
       width: 70,
       align: 'right' as const,
-      sorter: (a: AdidasComparisonSummary, b: AdidasComparisonSummary) =>
-        a.difference - b.difference,
-      render: (diff: number) => {
-        if (diff === 0) return '0';
-        return (
-          <span style={{ color: '#cf1322', fontWeight: 'bold' }}>
-            {diff > 0 ? '+' : ''}{diff.toLocaleString()}
-          </span>
-        );
-      },
+      render: (qty: number | null) => qty !== null ? `${qty.toLocaleString()}개` : '-',
     },
     {
       title: '상태',
       key: 'status',
-      width: 120,
+      width: 130,
       render: (_: any, record: AdidasComparisonSummary) => {
-        if (record.total_purchased_qty === 0)
-          return <span style={{ color: '#d48806' }}>구매없음</span>;
-        if (record.total_sales_qty === 0)
-          return <span style={{ color: '#d48806' }}>판매없음</span>;
+        // 재고 있으면 구매-판매 vs 재고 비교, 없으면 구매 vs 판매 비교
+        if (record.inventory_qty !== null) {
+          if (record.inventory_match)
+            return <span style={{ color: '#389e0d' }}>일치</span>;
+          const gap = record.difference - record.inventory_qty;
+          if (gap > 0)
+            return <span style={{ color: '#d48806', fontWeight: 'bold' }}>구매가 {gap.toLocaleString()}개 많음</span>;
+          return <span style={{ color: '#cf1322', fontWeight: 'bold' }}>판매가 {Math.abs(gap).toLocaleString()}개 많음</span>;
+        }
+        // 재고 없을 때: 구매 vs 판매 비교
         if (record.difference === 0)
           return <span style={{ color: '#389e0d' }}>일치</span>;
-        const abs = Math.abs(record.difference);
         if (record.difference > 0)
-          return <span style={{ color: '#cf1322' }}>구매가 {abs.toLocaleString()}개 많음</span>;
-        return <span style={{ color: '#cf1322' }}>판매가 {abs.toLocaleString()}개 많음</span>;
+          return <span style={{ color: '#d48806', fontWeight: 'bold' }}>구매가 {record.difference.toLocaleString()}개 많음</span>;
+        return <span style={{ color: '#cf1322', fontWeight: 'bold' }}>판매가 {Math.abs(record.difference).toLocaleString()}개 많음</span>;
       },
     },
   ];
@@ -284,12 +280,7 @@ const AdidasComparisonPage: React.FC = () => {
                 <Table.Summary.Cell index={3} align="right">
                   <strong>{totalSold.toLocaleString()}개</strong>
                 </Table.Summary.Cell>
-                <Table.Summary.Cell index={4} align="right">
-                  <strong style={{ color: totalPurchased - totalSold !== 0 ? '#cf1322' : undefined }}>
-                    {totalPurchased - totalSold > 0 ? '+' : ''}
-                    {(totalPurchased - totalSold).toLocaleString()}
-                  </strong>
-                </Table.Summary.Cell>
+                <Table.Summary.Cell index={4} />
                 <Table.Summary.Cell index={5} />
               </Table.Summary.Row>
             </Table.Summary>

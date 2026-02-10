@@ -4,6 +4,7 @@ import {
   AdidasComparisonPurchase,
   AdidasComparisonSale,
   AdidasComparisonPurchaseCreate,
+  AdidasComparisonInventoryUpsert,
   AdidasComparisonStats,
 } from '../types/adidasComparison';
 
@@ -43,6 +44,15 @@ export const adidasComparisonService = {
 
   async deletePurchase(id: string): Promise<void> {
     await api.delete(`/adidas-comparison/purchases/${id}`);
+  },
+
+  async upsertInventory(data: AdidasComparisonInventoryUpsert): Promise<any> {
+    const response = await api.post('/adidas-comparison/inventory', data);
+    return response.data;
+  },
+
+  async deleteInventory(productCode: string): Promise<void> {
+    await api.delete(`/adidas-comparison/inventory/${productCode}`);
   },
 
   async deleteAll(): Promise<{ message: string }> {

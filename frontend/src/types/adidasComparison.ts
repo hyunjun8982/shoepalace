@@ -3,6 +3,8 @@ export interface AdidasComparisonSummary {
   total_purchased_qty: number;
   total_sales_qty: number;
   difference: number;
+  inventory_qty: number | null;
+  inventory_match: boolean | null;
 }
 
 export interface AdidasComparisonSummaryResponse {
@@ -43,6 +45,12 @@ export interface AdidasComparisonPurchaseCreate {
   quantity: number;
   size?: string;
   unit_price?: number;
+  note?: string;
+}
+
+export interface AdidasComparisonInventoryUpsert {
+  product_code: string;
+  quantity: number;
   note?: string;
 }
 

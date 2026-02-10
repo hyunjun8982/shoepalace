@@ -6,11 +6,13 @@ from typing import Optional
 from uuid import UUID
 
 from app.db.database import get_db
-from app.models.adidas_comparison import AdidasComparisonPurchase, AdidasComparisonSale
+from app.models.adidas_comparison import AdidasComparisonPurchase, AdidasComparisonSale, AdidasComparisonInventory
 from app.schemas.adidas_comparison import (
     AdidasComparisonPurchaseCreate,
     AdidasComparisonPurchaseInDB,
     AdidasComparisonSaleInDB,
+    AdidasComparisonInventoryUpsert,
+    AdidasComparisonInventoryInDB,
     AdidasComparisonSummary,
     AdidasComparisonSummaryResponse,
     AdidasComparisonStatsResponse,
@@ -53,8 +55,17 @@ def get_comparison_summary(
         )
     sale_map = {row.product_code: row.total_qty for row in sale_agg.all()}
 
+    # 재고 조회
+    inventory_rows = db.query(
+        AdidasComparisonInventory.product_code,
+        AdidasComparisonInventory.quantity,
+    ).all()
+    inventory_map = {row.product_code: row.quantity for row in inventory_rows}
+
     # 합치기
-    all_codes = sorted(set(list(purchase_map.keys()) + list(sale_map.keys())))
+    all_codes = sorted(set(
+        list(purchase_map.keys()) + list(sale_map.keys()) + list(inventory_map.keys())
+    ))
     items = []
     total_purchased = 0
     total_sold = 0
@@ -64,11 +75,17 @@ def get_comparison_summary(
         s_qty = sale_map.get(code, 0)
         total_purchased += p_qty
         total_sold += s_qty
+        inv_qty = inventory_map.get(code)
+        inv_match = None
+        if inv_qty is not None:
+            inv_match = (p_qty - s_qty) == inv_qty
         items.append(AdidasComparisonSummary(
             product_code=code,
             total_purchased_qty=p_qty,
             total_sales_qty=s_qty,
             difference=p_qty - s_qty,
+            inventory_qty=inv_qty,
+            inventory_match=inv_match,
         ))
 
     return AdidasComparisonSummaryResponse(
@@ -168,10 +185,49 @@ def delete_purchase(purchase_id: UUID, db: Session = Depends(get_db)):
     return {"message": "삭제 완료"}
 
 
+@router.post("/inventory", response_model=AdidasComparisonInventoryInDB)
+def upsert_inventory(
+    data: AdidasComparisonInventoryUpsert,
+    db: Session = Depends(get_db),
+):
+    """재고 입력/수정 (품번 기준 upsert)"""
+    code = data.product_code.strip().upper()
+    record = db.query(AdidasComparisonInventory).filter(
+        AdidasComparisonInventory.product_code == code
+    ).first()
+    if record:
+        record.quantity = data.quantity
+        record.note = data.note
+    else:
+        record = AdidasComparisonInventory(
+            product_code=code,
+            quantity=data.quantity,
+            note=data.note,
+        )
+        db.add(record)
+    db.commit()
+    db.refresh(record)
+    return AdidasComparisonInventoryInDB.model_validate(record)
+
+
+@router.delete("/inventory/{product_code}")
+def delete_inventory(product_code: str, db: Session = Depends(get_db)):
+    """재고 삭제"""
+    record = db.query(AdidasComparisonInventory).filter(
+        AdidasComparisonInventory.product_code == product_code.upper()
+    ).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="재고 정보를 찾을 수 없습니다")
+    db.delete(record)
+    db.commit()
+    return {"message": "삭제 완료"}
+
+
 @router.delete("/all")
 def delete_all(db: Session = Depends(get_db)):
     """전체 데이터 초기화"""
     p_count = db.query(AdidasComparisonPurchase).delete()
     s_count = db.query(AdidasComparisonSale).delete()
+    i_count = db.query(AdidasComparisonInventory).delete()
     db.commit()
-    return {"message": f"구매 {p_count}건, 판매 {s_count}건 삭제 완료"}
+    return {"message": f"구매 {p_count}건, 판매 {s_count}건, 재고 {i_count}건 삭제 완료"}

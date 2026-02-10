@@ -17,6 +17,15 @@ class AdidasComparisonPurchase(BaseModel):
     note = Column(String(200), nullable=True)
 
 
+class AdidasComparisonInventory(BaseModel):
+    """재고 내역"""
+    __tablename__ = "adidas_comparison_inventory"
+
+    product_code = Column(String(100), nullable=False, unique=True, index=True)
+    quantity = Column(Integer, default=0)
+    note = Column(String(200), nullable=True)
+
+
 class AdidasComparisonSale(BaseModel):
     """판매 내역"""
     __tablename__ = "adidas_comparison_sales"

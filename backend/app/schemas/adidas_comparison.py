@@ -55,12 +55,37 @@ class AdidasComparisonSaleInDB(BaseModel):
         from_attributes = True
 
 
+class AdidasComparisonInventoryUpsert(BaseModel):
+    """재고 입력/수정"""
+    product_code: str = Field(..., min_length=1, max_length=100)
+    quantity: int = Field(..., ge=0)
+    note: Optional[str] = Field(None, max_length=200)
+
+
+class AdidasComparisonInventoryInDB(BaseModel):
+    """재고 DB 스키마"""
+    id: UUID
+    product_code: str
+    quantity: int
+    note: Optional[str] = None
+    created_at: datetime
+
+    @field_serializer('id')
+    def serialize_uuid(self, value: UUID) -> str:
+        return str(value)
+
+    class Config:
+        from_attributes = True
+
+
 class AdidasComparisonSummary(BaseModel):
     """품번별 비교 요약"""
     product_code: str
     total_purchased_qty: int = 0
     total_sales_qty: int = 0
     difference: int = 0
+    inventory_qty: Optional[int] = None
+    inventory_match: Optional[bool] = None
 
 
 class AdidasComparisonSummaryResponse(BaseModel):

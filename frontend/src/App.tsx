@@ -35,6 +35,7 @@ import ChatWindowPage from './pages/Chat/ChatWindowPage';
 import AdidasAccountListPage from './pages/Adidas/AdidasAccountListPage';
 import AdidasCouponPage from './pages/Adidas/AdidasCouponPage';
 import FeatureRequestPage from './pages/FeatureRequest/FeatureRequestPage';
+import AdidasComparisonPage from './pages/AdidasComparison/AdidasComparisonPage';
 import MobilePhotoCapturePage from './pages/Mobile/MobilePhotoCapturePage';
 import MobileReceiptCapturePage from './pages/Mobile/MobileReceiptCapturePage';
 
@@ -233,6 +234,16 @@ const App: React.FC = () => {
 
                       {/* 요청사항 */}
                       <Route path="/feature-requests" element={<FeatureRequestPage />} />
+
+                      {/* 아디다스 구매/판매 비교 (임시) */}
+                      <Route
+                        path="/adidas-comparison"
+                        element={
+                          <ProtectedRoute requiredRole="admin">
+                            <AdidasComparisonPage />
+                          </ProtectedRoute>
+                        }
+                      />
 
                       {/* 기본 리다이렉트 */}
                       <Route path="/" element={<Navigate to="/dashboard" replace />} />

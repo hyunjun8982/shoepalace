@@ -81,6 +81,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     '/settings': '설정',
     '/profile': '프로필',
     '/feature-requests': '요청사항',
+    '/adidas-comparison': '아디다스 구매/판매 비교',
   };
 
   // 브레드크럼 아이템 생성
@@ -357,6 +358,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           key: '/users',
           icon: <UserOutlined />,
           label: '사용자 관리',
+          roles: ['admin'],
+        },
+        {
+          key: '/adidas-comparison',
+          icon: <CalculatorOutlined />,
+          label: '아디다스 구매비교 (임시)',
           roles: ['admin'],
         },
         // 아디다스 쿠폰 메뉴 비활성화

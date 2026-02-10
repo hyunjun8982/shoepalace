@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.api_v1.endpoints import auth, products, purchases, sales, inventory, settlements, uploads, users, files, test_upload, admin, brands, categories, trending_products, warehouses, notifications, product_importer, chat, kream_scraper, adidas_accounts, feature_requests, poizon_products, naver_shopping, poizon
+from app.api.api_v1.endpoints import auth, products, purchases, sales, inventory, settlements, uploads, users, files, test_upload, admin, brands, categories, trending_products, warehouses, notifications, product_importer, chat, kream_scraper, adidas_accounts, feature_requests, poizon_products, naver_shopping, poizon, adidas_comparison
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["인증"])
@@ -26,3 +26,4 @@ api_router.include_router(feature_requests.router, prefix="/feature-requests", t
 api_router.include_router(poizon_products.router, prefix="/poizon-products", tags=["포이즌상품"])
 api_router.include_router(naver_shopping.router, prefix="/naver-shopping", tags=["네이버쇼핑"])
 api_router.include_router(poizon.router, prefix="/poizon", tags=["포이즌API"])
+api_router.include_router(adidas_comparison.router, prefix="/adidas-comparison", tags=["아디다스구매비교"])

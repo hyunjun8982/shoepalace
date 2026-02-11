@@ -58,18 +58,18 @@ function closeMonitor() {
 function hideMonitorPopup() {
     // 모니터 active를 false로 하면 팝업이 렌더링되지 않음
     // 하지만 폴링은 계속 유지
-    const wasActive = state.monitor.active;
     const items = state.monitor.items;
     const type = state.monitor.type;
     const title = state.monitor.title;
     const startTime = state.monitor.startTime;
     const pollInterval = state.monitor.pollInterval;
+    const selectedIds = state.monitor.selectedIds;
 
-    // 팝업만 숨기고 폴링은 유지
-    state.monitor.active = false;
-    render();
+    // 스크롤 위치 저장 (나중에 복원용)
+    const monitorBody = document.querySelector('.monitor-body');
+    const savedScrollTop = monitorBody ? monitorBody.scrollTop : 0;
 
-    // 상태 복원 (폴링 유지를 위해)
+    // 상태 변경 (한 번에)
     state.monitor = {
         active: false,  // 팝업은 숨긴 상태
         type,
@@ -77,12 +77,14 @@ function hideMonitorPopup() {
         items,
         startTime,
         pollInterval,
+        selectedIds,
         hidden: true,  // 숨김 상태 플래그
+        savedScrollTop,  // 스크롤 위치 저장
     };
 
     // 배치 상태 폴링 시작 (상단 바 업데이트용)
     startBatchStatusPolling();
-    checkBatchStatus().then(() => render());
+    checkBatchStatus().then(() => render());  // 한 번만 렌더링
 
     notifyInfo('백그라운드에서 계속 진행됩니다. 상단 바에서 상태를 확인하세요.');
 }
@@ -91,9 +93,22 @@ function hideMonitorPopup() {
 function reopenMonitor() {
     // 숨겨진 모니터가 있으면 다시 표시
     if (state.monitor.hidden && state.monitor.items.length > 0) {
+        const savedScrollTop = state.monitor.savedScrollTop || 0;
         state.monitor.active = true;
         state.monitor.hidden = false;
         render();
+
+        // 저장된 스크롤 위치 복원
+        if (savedScrollTop > 0) {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    const monitorBody = document.querySelector('.monitor-body');
+                    if (monitorBody) {
+                        monitorBody.scrollTop = savedScrollTop;
+                    }
+                });
+            });
+        }
 
         // 폴링이 중지되었으면 다시 시작
         if (!state.monitor.pollInterval) {
@@ -135,39 +150,50 @@ async function pollMonitorStatus() {
             body: { ids, type: state.monitor.type }
         });
 
+        let hasChanges = false;
         result.items.forEach(update => {
             const item = state.monitor.items.find(i => i.id === update.id);
             if (item) {
-                const prevStatus = item.status;
-                item.status = update.status;
-                item.message = update.message;
+                // 실제 변경이 있을 때만 업데이트
+                if (item.status !== update.status || item.message !== update.message) {
+                    hasChanges = true;
+                    const prevStatus = item.status;
+                    item.status = update.status;
+                    item.message = update.message;
 
-                if (update.status === 'processing' && prevStatus === 'waiting') {
-                    item.startTime = new Date();
-                }
-                // warning도 완료 상태로 처리 (1달 미경과 등)
-                if ((update.status === 'success' || update.status === 'error' || update.status === 'warning') && !item.endTime) {
-                    item.endTime = new Date();
+                    if (update.status === 'processing' && prevStatus === 'waiting') {
+                        item.startTime = new Date();
+                    }
+                    // warning, password_wrong도 완료 상태로 처리
+                    if ((update.status === 'success' || update.status === 'error' || update.status === 'warning' || update.status === 'password_wrong') && !item.endTime) {
+                        item.endTime = new Date();
+                    }
                 }
             }
         });
 
-        // 스크롤 위치 저장 후 렌더링, 복원
-        const monitorBody = document.querySelector('.monitor-body');
-        const scrollTop = monitorBody ? monitorBody.scrollTop : 0;
+        // 팝업이 활성 상태이고 변경사항이 있을 때만 렌더링
+        if (state.monitor.active && hasChanges) {
+            // 스크롤 위치 저장 후 렌더링, 복원
+            const monitorBody = document.querySelector('.monitor-body');
+            const scrollTop = monitorBody ? monitorBody.scrollTop : 0;
 
-        render();
+            render();
 
-        // 스크롤 위치 복원
-        requestAnimationFrame(() => {
-            const newMonitorBody = document.querySelector('.monitor-body');
-            if (newMonitorBody && scrollTop > 0) {
-                newMonitorBody.scrollTop = scrollTop;
-            }
-        });
+            // 스크롤 위치 복원 (더 안정적인 복원)
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    const newMonitorBody = document.querySelector('.monitor-body');
+                    if (newMonitorBody && scrollTop > 0) {
+                        newMonitorBody.scrollTop = scrollTop;
+                    }
+                });
+            });
+        }
+        // 백그라운드(hidden) 상태일 때는 상태만 업데이트하고 render() 호출 안함
 
         const allDone = state.monitor.items.every(
-            item => item.status === 'success' || item.status === 'error' || item.status === 'warning'
+            item => item.status === 'success' || item.status === 'error' || item.status === 'warning' || item.status === 'password_wrong'
         );
         if (allDone && state.monitor.pollInterval) {
             clearInterval(state.monitor.pollInterval);
@@ -186,12 +212,88 @@ function getMonitorStats() {
     const success = items.filter(i => i.status === 'success').length;
     const warning = items.filter(i => i.status === 'warning').length;
     const error = items.filter(i => i.status === 'error').length;
+    const passwordWrong = items.filter(i => i.status === 'password_wrong').length;
     const processing = items.filter(i => i.status === 'processing').length;
     const waiting = items.filter(i => i.status === 'waiting').length;
-    const completed = success + warning + error;  // warning도 완료에 포함
+    const completed = success + warning + error + passwordWrong;  // password_wrong도 완료에 포함
     const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
 
-    return { total, success, warning, error, processing, waiting, completed, progress };
+    return { total, success, warning, error, passwordWrong, processing, waiting, completed, progress };
+}
+
+// 모니터 항목 개별 선택
+function toggleMonitorSelect(id) {
+    if (!state.monitor.selectedIds) {
+        state.monitor.selectedIds = new Set();
+    }
+    if (state.monitor.selectedIds.has(id)) {
+        state.monitor.selectedIds.delete(id);
+    } else {
+        state.monitor.selectedIds.add(id);
+    }
+    render();
+}
+
+// 모니터 전체 선택/해제
+function toggleMonitorSelectAll(checked) {
+    if (!state.monitor.selectedIds) {
+        state.monitor.selectedIds = new Set();
+    }
+    if (checked) {
+        state.monitor.items.forEach(item => state.monitor.selectedIds.add(item.id));
+    } else {
+        state.monitor.selectedIds.clear();
+    }
+    render();
+}
+
+// 실패한 항목만 선택
+function selectFailedItems() {
+    if (!state.monitor.selectedIds) {
+        state.monitor.selectedIds = new Set();
+    }
+    state.monitor.selectedIds.clear();
+    state.monitor.items
+        .filter(i => i.status === 'error')
+        .forEach(item => state.monitor.selectedIds.add(item.id));
+    render();
+}
+
+// 선택한 항목 재처리
+async function retrySelectedItems() {
+    if (!state.monitor.selectedIds || state.monitor.selectedIds.size === 0) {
+        notifyWarning('재처리할 항목을 선택하세요.');
+        return;
+    }
+
+    const selectedIds = Array.from(state.monitor.selectedIds);
+    const selectedItems = state.monitor.items.filter(i => selectedIds.includes(i.id));
+    const accounts = selectedItems.map(i => ({ id: i.id, email: i.email }));
+
+    const type = state.monitor.type;
+    const title = state.monitor.title;
+
+    // 모니터 닫기
+    closeMonitor();
+
+    // 타입에 따라 재처리
+    if (type === 'extract') {
+        try {
+            const response = await api('/extract/bulk', {
+                method: 'POST',
+                body: { ids: selectedIds }
+            });
+            if (response.message) {
+                await openMonitor('extract', `${title} (재처리)`, accounts);
+            }
+        } catch (error) {
+            notifyError('재처리 시작 실패: ' + error.message);
+        }
+    } else if (type === 'issue') {
+        state.selectedIds = new Set(selectedIds);
+        state.modal = 'issue-coupon';
+        render();
+    }
 }
 
 // ========== 로그 뷰어 (WebSocket) ==========

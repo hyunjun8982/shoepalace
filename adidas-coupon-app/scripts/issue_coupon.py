@@ -70,10 +70,13 @@ def get_account_vouchers(access_token: str) -> list:
 
 
 def parse_vouchers(vouchers: list) -> list:
-    """API 응답에서 쿠폰 정보 파싱"""
+    """API 응답에서 쿠폰 정보 파싱 (사용된 쿠폰 제외)"""
     import re
     coupon_list = []
     for v in vouchers:
+        # 사용된 쿠폰은 제외 (redeemed=true 또는 status가 'REDEEMED')
+        if v.get('redeemed') == True or v.get('status') == 'REDEEMED':
+            continue
         # 쿠폰 이름 - couponLabel 우선, 없으면 name
         raw_name = v.get('couponLabel') or v.get('name', '')
 
@@ -96,10 +99,20 @@ def parse_vouchers(vouchers: list) -> list:
         display_name = raw_name
         if value and str(value).isdigit():
             amount = int(value)
-            if amount >= 10000:
+            # 할인권 체크 (value가 1~20 범위이고, 이름에 할인/discount/% 포함)
+            is_discount = amount <= 20 and ('할인' in raw_name.lower() or 'discount' in raw_name.lower() or '%' in raw_name)
+            if is_discount:
+                # 할인권은 원래 이름 유지 또는 퍼센트로 표시
+                if '%' not in raw_name:
+                    display_name = f"{amount * 5}% 할인권" if amount <= 2 else f"{amount}% 할인권"
+                # else: 원래 이름 유지
+            elif amount >= 10000:
                 display_name = f"{amount // 10000}만원 상품권"
-            else:
+            elif amount >= 1000:
                 display_name = f"{amount}원 상품권"
+            else:
+                # 1~999 범위인데 할인권이 아닌 경우 - 원래 이름 유지
+                pass  # display_name = raw_name 유지
 
         # 유효기간 - available.to에서 가져오기
         available = v.get('available', {})
@@ -214,48 +227,67 @@ def web_login_and_issue_coupon(email: str, password: str, coupon_type: str):
 
     try:
         print("\n[1/5] 브라우저 시작...")
-        # Chrome 143+ 호환성을 위해 매 시도마다 새 옵션 객체 생성
+        # Chrome 옵션 설정 (최소한의 옵션으로 안정성 확보)
         max_retries = 3
         for attempt in range(max_retries):
             try:
+                print(f"  [시도 {attempt+1}/{max_retries}] Chrome 초기화 중...")
                 options = uc.ChromeOptions()
-                options.add_argument('--incognito')
+                options.add_argument('--incognito')  # 시크릿 모드
                 options.add_argument('--window-size=1280,900')
                 options.add_argument('--lang=ko-KR')
                 options.add_argument('--disable-blink-features=AutomationControlled')
                 options.add_argument('--no-first-run')
                 options.add_argument('--no-default-browser-check')
                 options.add_argument('--disable-popup-blocking')
-                options.add_argument('--disable-extensions')
-                options.add_argument('--disable-gpu')
-                options.add_argument('--disable-dev-shm-usage')
-                options.add_argument('--no-sandbox')
 
-                driver = uc.Chrome(options=options, use_subprocess=True)
-                time.sleep(3)  # 브라우저 안정화 대기
+                # 로그 레벨 설정으로 Chrome 내부 오류 확인
+                options.add_argument('--log-level=3')
+                options.add_argument('--silent')
+
+                print("  ChromeDriver 시작 중...")
+                # driver_executable_path=None으로 설정하여 올바른 버전 자동 다운로드
+                driver = uc.Chrome(
+                    options=options,
+                    use_subprocess=True,
+                    driver_executable_path=None,
+                    version_main=144  # Chrome 144 버전 명시
+                )
+                print("  ChromeDriver 시작 완료")
+
+                time.sleep(2)  # 브라우저 안정화 대기
 
                 # 윈도우 핸들 확인 (브라우저 살아있는지)
-                for hc in range(3):
+                print("  브라우저 핸들 확인 중...")
+                for hc in range(5):
                     try:
-                        _ = driver.current_window_handle
+                        handle = driver.current_window_handle
+                        print(f"  브라우저 핸들 확인 성공: {handle[:20]}...")
                         break
-                    except Exception:
-                        if hc < 2:
+                    except Exception as he:
+                        if hc < 4:
+                            print(f"    핸들 확인 재시도 {hc+1}/5...")
                             time.sleep(1)
                         else:
-                            raise Exception("윈도우 핸들 확인 실패")
+                            raise Exception(f"윈도우 핸들 확인 실패: {he}")
+
+                print("  브라우저 초기화 성공")
                 break  # 성공
             except Exception as e:
-                print(f"  [시도 {attempt+1}/{max_retries}] 드라이버 초기화 실패: {e}")
+                print(f"  [오류] 드라이버 초기화 실패: {e}")
+                import traceback
+                traceback.print_exc()
                 try:
-                    driver.quit()
+                    if driver:
+                        driver.quit()
                 except:
                     pass
                 driver = None
                 if attempt < max_retries - 1:
+                    print(f"  3초 후 재시도...")
                     time.sleep(3)
                 else:
-                    raise Exception(f"브라우저 시작 실패: {e}")
+                    raise Exception(f"브라우저 시작 실패 ({max_retries}회 시도): {e}")
 
         if driver is None:
             raise Exception("브라우저 시작 실패")

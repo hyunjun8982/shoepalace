@@ -82,6 +82,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     '/profile': '프로필',
     '/feature-requests': '요청사항',
     '/adidas-comparison': '아디다스 구매/판매 비교',
+    '/poizon-price-comparison': '포이즌 가격비교',
   };
 
   // 브레드크럼 아이템 생성
@@ -328,6 +329,11 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           key: '/products/seller-finder',
           icon: <ShopOutlined />,
           label: '상품판매처 찾기',
+        },
+        {
+          key: '/poizon-price-comparison',
+          icon: <CalculatorOutlined />,
+          label: '포이즌 가격비교',
         },
         {
           key: '/product-importer',

@@ -102,53 +102,24 @@ function startAppium() {
             PATH: `C:\\platform-tools;${process.env.PATH}`
         };
 
-        if (DEV_MODE) {
-            // 개발 모드: 터미널 창 표시
-            const cmd = 'cmd.exe';
-            const args = [
-                '/c', 'start', 'Appium Server', 'cmd', '/k',
-                'set ANDROID_HOME=C:\\platform-tools&& set ANDROID_SDK_ROOT=C:\\platform-tools&& set PATH=%ANDROID_HOME%;%PATH%&& appium --allow-insecure=uiautomator2:chromedriver_autodownload --relaxed-security'
-            ];
+        // 항상 터미널 창으로 Appium 실행 (사용자가 로그 확인 가능)
+        const cmd = 'cmd.exe';
+        const args = [
+            '/c', 'start', 'Appium Server', 'cmd', '/k',
+            'set ANDROID_HOME=C:\\platform-tools&& set ANDROID_SDK_ROOT=C:\\platform-tools&& set PATH=%ANDROID_HOME%;%PATH%&& appium --allow-insecure=uiautomator2:chromedriver_autodownload --relaxed-security'
+        ];
 
-            appiumProcess = spawn(cmd, args, { shell: false, detached: true });
-            appiumProcess.unref();
+        appiumProcess = spawn(cmd, args, { shell: false, detached: true });
+        appiumProcess.unref();
 
-            setTimeout(() => {
-                if (mainWindow && mainWindow.webContents) {
-                    mainWindow.webContents.send('appium-status', {
-                        running: true,
-                        message: 'Appium 서버가 시작되었습니다. (개발 모드)'
-                    });
-                }
-            }, 2000);
-        } else {
-            // 운영 모드: 백그라운드로 실행 (터미널 창 없이)
-            // Appium JS 파일을 node로 직접 실행 (콘솔 창 없음)
-            const path = require('path');
-            const appiumPath = path.join(process.env.APPDATA, 'npm', 'node_modules', 'appium', 'build', 'lib', 'main.js');
-
-            appiumProcess = spawn('node', [
-                appiumPath,
-                '--allow-insecure=uiautomator2:chromedriver_autodownload',
-                '--relaxed-security'
-            ], {
-                detached: true,
-                stdio: 'ignore',
-                env: env,
-                windowsHide: true
-            });
-
-            appiumProcess.unref();
-
-            setTimeout(() => {
-                if (mainWindow && mainWindow.webContents) {
-                    mainWindow.webContents.send('appium-status', {
-                        running: true,
-                        message: 'Appium 서버가 백그라운드로 동작 중입니다.'
-                    });
-                }
-            }, 2000);
-        }
+        setTimeout(() => {
+            if (mainWindow && mainWindow.webContents) {
+                mainWindow.webContents.send('appium-status', {
+                    running: true,
+                    message: 'Appium 서버가 시작되었습니다.'
+                });
+            }
+        }, 2000);
     } catch (error) {
         if (mainWindow && mainWindow.webContents) {
             mainWindow.webContents.send('appium-status', {
@@ -533,7 +504,7 @@ ipcMain.handle('check-install-status', async () => {
     return result;
 });
 
-// 모바일 연결 (에뮬레이터 + ADB + Appium 통합)
+// 모바일 연결 (실제 폰 / 에뮬레이터 + ADB + Appium 통합)
 ipcMain.handle('connect-mobile', async (event) => {
     const { spawnSync, spawn } = require('child_process');
     const fs = require('fs');
@@ -559,22 +530,110 @@ ipcMain.handle('connect-mobile', async (event) => {
         }
     }
 
+    // USB 연결된 실제 폰 감지 함수
+    function detectRealPhone() {
+        if (!fs.existsSync(ADB_PATH)) return null;
+        try {
+            const devices = runCommand(ADB_PATH, ['devices']);
+            const lines = devices.split('\n');
+            for (const line of lines) {
+                const trimmed = line.trim();
+                // 에뮬레이터(127.0.0.1:포트)가 아닌, 'device' 상태인 실제 기기 찾기
+                if (trimmed.endsWith('device') && !trimmed.startsWith('127.0.0.1:') && !trimmed.startsWith('List')) {
+                    const udid = trimmed.split(/\s+/)[0];
+                    if (udid && udid.length > 0) {
+                        return udid;
+                    }
+                }
+            }
+        } catch (e) {
+            console.log('[Mobile Connect] Real phone detection error:', e.message);
+        }
+        return null;
+    }
+
     try {
+        if (!fs.existsSync(ADB_PATH)) {
+            return { success: false, error: '모바일 연결 필요 (ADB 미설치)' };
+        }
+
+        // ===== 실제 폰 감지 =====
+        sendProgress(1, '연결된 기기 확인 중...');
+        const realPhoneUdid = detectRealPhone();
+
+        if (realPhoneUdid) {
+            // ===== 실제 폰 모드 =====
+            console.log(`[Mobile Connect] 실제 폰 감지: ${realPhoneUdid}`);
+            sendProgress(1, `실제 폰 감지: ${realPhoneUdid}`);
+
+            // ADB 연결 확인
+            sendProgress(2, '실제 폰 ADB 연결 확인 중...');
+            try {
+                const shellResult = runCommand(ADB_PATH, ['-s', realPhoneUdid, 'shell', 'echo', 'ok']);
+                if (!shellResult.includes('ok')) {
+                    return { success: false, error: `실제 폰 ADB 연결 실패: ${realPhoneUdid}` };
+                }
+            } catch (e) {
+                return { success: false, error: `실제 폰 ADB 연결 오류: ${realPhoneUdid}` };
+            }
+            sendProgress(2, `실제 폰 ADB 연결 완료: ${realPhoneUdid}`);
+
+            // Appium 서버 확인 및 시작
+            sendProgress(3, 'Appium 서버 확인 중...');
+
+            const appiumRunning = await new Promise((resolve) => {
+                const req = http.get('http://localhost:4723/status', { timeout: 2000 }, (res) => {
+                    resolve(res.statusCode === 200);
+                });
+                req.on('error', () => resolve(false));
+                req.on('timeout', () => { req.destroy(); resolve(false); });
+            });
+
+            if (!appiumRunning) {
+                sendProgress(3, 'Appium 서버 시작 중...');
+                const whereResult = spawnSync('where', ['appium'], { windowsHide: true });
+                if (whereResult.status !== 0) {
+                    return { success: false, error: '모바일 연결 필요 (Appium 미설치)' };
+                }
+                startAppium();
+
+                let appiumStarted = false;
+                for (let t = 0; t < 15; t++) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    const running = await new Promise((resolve) => {
+                        const req = http.get('http://localhost:4723/status', { timeout: 2000 }, (res) => {
+                            resolve(res.statusCode === 200);
+                        });
+                        req.on('error', () => resolve(false));
+                        req.on('timeout', () => { req.destroy(); resolve(false); });
+                    });
+                    if (running) { appiumStarted = true; break; }
+                }
+                if (!appiumStarted) {
+                    return { success: false, error: '모바일 연결 필요 (Appium 서버 시작 실패)' };
+                }
+            }
+
+            sendProgress(3, 'Appium 서버 실행 완료');
+            return { success: true, deviceType: 'real_phone', udid: realPhoneUdid };
+        }
+
+        // ===== 에뮬레이터 모드 (실제 폰 미감지 시) =====
         // ===== Step 1: 에뮬레이터 확인 및 시작 =====
         sendProgress(1, '에뮬레이터 확인 중...');
 
         if (!fs.existsSync(MUMU_MANAGER)) {
-            return { success: false, error: '모바일 연결 필요 (MuMu Player 미설치)' };
+            return { success: false, error: '모바일 연결 필요 (MuMu Player 미설치)\n\n실제 폰을 사용하려면 USB 디버깅을 활성화하고 USB로 연결하세요.' };
         }
 
         // 디바이스 인덱스 찾기 (이름으로 검색)
         let deviceIndex = null;
         let isRunning = false;
 
-        // 실행 상태 확인 함수 (정확한 패턴 매칭)
+        // 실행 상태 확인 함수 (is_process_started로 변경 - is_android_started 버그 우회)
         function checkAndroidStarted(info) {
-            // "is_android_started":true 또는 "is_android_started": true 패턴 체크
-            return /"is_android_started"\s*:\s*true/.test(info);
+            // is_process_started가 true면 실행 중으로 판단
+            return /"is_process_started"\s*:\s*true/.test(info);
         }
 
         for (let i = 0; i <= 5; i++) {
@@ -611,17 +670,25 @@ ipcMain.handle('connect-mobile', async (event) => {
                 return { success: false, error: '모바일 연결 필요 (에뮬레이터 시작 실패)' };
             }
 
-            // 에뮬레이터 부팅 대기 (최대 60초)
+            // 에뮬레이터 부팅 대기 (최대 60초) - ADB 연결로 확인
             sendProgress(1, '에뮬레이터 부팅 대기 중...');
             let bootSuccess = false;
             for (let t = 0; t < 12; t++) {
                 await new Promise(resolve => setTimeout(resolve, 5000)); // 5초 대기
                 try {
+                    // 방법 1: is_process_started 체크
                     const info = runCommand(MUMU_MANAGER, ['info', '-v', String(deviceIndex)]);
                     if (checkAndroidStarted(info)) {
-                        bootSuccess = true;
-                        console.log(`[Mobile Connect] Boot success at attempt ${t + 1}`);
-                        break;
+                        // 방법 2: ADB 연결 가능한지 추가 확인
+                        const adbPort = info.match(/"adb_port"\s*:\s*(\d+)/)?.[1] || (deviceIndex === 0 ? '16384' : '16416');
+                        runCommand(ADB_PATH, ['connect', `127.0.0.1:${adbPort}`]);
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        const devices = runCommand(ADB_PATH, ['devices']);
+                        if (devices.includes('127.0.0.1:') && devices.includes('device') && !devices.includes('offline')) {
+                            bootSuccess = true;
+                            console.log(`[Mobile Connect] Boot success at attempt ${t + 1} (ADB connected)`);
+                            break;
+                        }
                     }
                 } catch (e) {}
                 sendProgress(1, `에뮬레이터 부팅 대기 중... (${t + 1}/12)`);
@@ -647,10 +714,6 @@ ipcMain.handle('connect-mobile', async (event) => {
 
         // ===== Step 2: ADB 연결 =====
         sendProgress(2, 'ADB 연결 중...');
-
-        if (!fs.existsSync(ADB_PATH)) {
-            return { success: false, error: '모바일 연결 필요 (ADB 미설치)' };
-        }
 
         // ADB 포트 가져오기
         let adbPort = null;
@@ -751,7 +814,7 @@ ipcMain.handle('connect-mobile', async (event) => {
         sendProgress(3, 'Appium 서버 실행 완료');
 
         // 모든 연결 성공
-        return { success: true };
+        return { success: true, deviceType: 'emulator' };
 
     } catch (error) {
         console.error('[Mobile Connect] Error:', error.message);
@@ -765,7 +828,7 @@ ipcMain.handle('disconnect-mobile', async () => {
     return { success: true };
 });
 
-// 모바일 전체 연결 상태 확인 (에뮬레이터 + ADB + Appium)
+// 모바일 전체 연결 상태 확인 (실제 폰 / 에뮬레이터 + ADB + Appium)
 ipcMain.handle('check-mobile-status', async () => {
     const { spawnSync } = require('child_process');
     const fs = require('fs');
@@ -773,61 +836,77 @@ ipcMain.handle('check-mobile-status', async () => {
 
     const MUMU_MANAGER = 'C:\\Program Files\\Netease\\MuMuPlayer\\nx_main\\MuMuManager.exe';
     const ADB_PATH = 'C:\\platform-tools\\adb.exe';
-    const TARGET_DEVICE = 'android_20251228_01';
 
     const result = {
         emulator: false,
         adb: false,
         appium: false,
-        allConnected: false
+        allConnected: false,
+        deviceType: null,  // 'real_phone' 또는 'emulator'
+        udid: null
     };
 
     // spawnSync 래퍼 (windowsHide 적용)
     function runCommand(cmd, args) {
         try {
-            const result = spawnSync(cmd, args, {
+            const r = spawnSync(cmd, args, {
                 encoding: 'utf-8',
                 timeout: 3000,
                 windowsHide: true
             });
-            return result.stdout || '';
+            return r.stdout || '';
         } catch (e) {
             return '';
         }
     }
 
     try {
-        // 1. 에뮬레이터 실행 상태 확인
-        if (fs.existsSync(MUMU_MANAGER)) {
+        // 1. ADB 연결 상태 확인 (실제 폰 우선, 에뮬레이터 포함)
+        if (fs.existsSync(ADB_PATH)) {
+            try {
+                const devices = runCommand(ADB_PATH, ['devices']);
+                const lines = devices.split('\n');
+                let hasRealPhone = false;
+                let hasEmulator = false;
+
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (trimmed.endsWith('device') && !trimmed.startsWith('List')) {
+                        const udid = trimmed.split(/\s+/)[0];
+                        if (udid.startsWith('127.0.0.1:')) {
+                            hasEmulator = true;
+                        } else if (udid.length > 0) {
+                            hasRealPhone = true;
+                            result.udid = udid;
+                        }
+                    }
+                }
+
+                if (hasRealPhone) {
+                    result.adb = true;
+                    result.emulator = true;  // 호환성: emulator=true로 처리
+                    result.deviceType = 'real_phone';
+                } else if (hasEmulator) {
+                    result.adb = true;
+                    result.emulator = true;
+                    result.deviceType = 'emulator';
+                }
+            } catch (e) {}
+        }
+
+        // 2. MuMu 에뮬레이터 추가 확인 (ADB 연결 안 됐을 때만)
+        if (!result.emulator && fs.existsSync(MUMU_MANAGER)) {
             for (let i = 0; i <= 5; i++) {
                 try {
                     const info = runCommand(MUMU_MANAGER, ['info', '-v', String(i)]);
-                    if (info.includes(TARGET_DEVICE) && /"is_android_started"\s*:\s*true/.test(info)) {
+                    // is_process_started가 true면 에뮬레이터 실행 중으로 판단
+                    if (/"is_process_started"\s*:\s*true/.test(info)) {
                         result.emulator = true;
+                        result.deviceType = 'emulator';
                         break;
                     }
                 } catch (e) {}
             }
-            // 폴백: 인덱스 1 확인
-            if (!result.emulator) {
-                try {
-                    const info = runCommand(MUMU_MANAGER, ['info', '-v', '1']);
-                    if (/"is_android_started"\s*:\s*true/.test(info)) {
-                        result.emulator = true;
-                    }
-                } catch (e) {}
-            }
-        }
-
-        // 2. ADB 연결 상태 확인
-        if (fs.existsSync(ADB_PATH)) {
-            try {
-                const devices = runCommand(ADB_PATH, ['devices']);
-                // 127.0.0.1:포트 device 형태로 연결되어 있는지 확인
-                if (devices.includes('127.0.0.1:') && devices.includes('device') && !devices.includes('offline')) {
-                    result.adb = true;
-                }
-            } catch (e) {}
         }
 
         // 3. Appium 서버 상태 확인

@@ -87,8 +87,10 @@ def test_api_with_token(access_token: str):
         if resp.status_code == 200:
             data = resp.json()
             if isinstance(data, list):
-                print(f"  쿠폰 수: {len(data)}개")
-                for v in data:
+                # 사용된 쿠폰 제외 (redeemed=true 또는 status='REDEEMED')
+                available_vouchers = [v for v in data if not v.get('redeemed') and v.get('status') != 'REDEEMED']
+                print(f"  쿠폰 수: {len(available_vouchers)}개")
+                for v in available_vouchers:
                     name = v.get('couponLabel') or v.get('name', 'N/A')
                     code = v.get('code', 'N/A')
                     # 유효기간 - available.to에서 가져오기

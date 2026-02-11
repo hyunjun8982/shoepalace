@@ -30,7 +30,7 @@
       "icon": "adidas.png",
       "target": [
         {
-          "target": "nsis",
+          "target": "zip",
           "arch": ["x64"]
         }
       ]
@@ -45,7 +45,9 @@
     },
     "files": [
       "**/*",
-      "!node_modules/.cache"
+      "!node_modules/.cache",
+      "!install_files/**/*",
+      "!scripts/**/*"
     ],
     "extraResources": [
       {
@@ -56,7 +58,7 @@
       {
         "from": "install_files/",
         "to": "install_files/",
-        "filter": ["**/*"]
+        "filter": ["**/*", "!MuMu_*.exe", "!*.mumudata"]
       },
       {
         "from": "install_web_crawler.bat",

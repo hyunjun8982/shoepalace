@@ -1,8 +1,11 @@
 import hashlib
+import logging
 import requests
 from urllib.parse import quote_plus
 import time
 import json
+
+logger = logging.getLogger(__name__)
 
 # 포이즌 API 인증 정보
 APP_KEY = "5acc0257eeb54da09d2d90382e805621"
@@ -64,9 +67,18 @@ class PoizonAPI:
 
         # API 요청 (POST 요청)
         url = f"{self.base_url}/{endpoint}"
-        print(url)
-        response = requests.post(url, json=params)  # JSON 형식으로 전송
-        return response.json()
+
+        # 요청 로깅 (sign, timestamp, app_key 제외)
+        log_params = {k: v for k, v in params.items() if k not in ("sign", "timestamp", "app_key")}
+        logger.info(f"[Poizon API] → {endpoint} | params={json.dumps(log_params, ensure_ascii=False, default=str)}")
+
+        response = requests.post(url, json=params)
+        result = response.json()
+
+        # 응답 로깅 (전문)
+        logger.info(f"[Poizon API] ← {endpoint} | {json.dumps(result, ensure_ascii=False, default=str)}")
+
+        return result
 
 
 # === 유틸리티 함수들 ===

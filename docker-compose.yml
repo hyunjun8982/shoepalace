@@ -47,7 +47,7 @@ services:
       - ./backend:/app
       - ./uploads:/app/uploads
     environment:
-      - DATABASE_URL=postgresql://shoepalace_user:shoepalace_pass@133.186.221.84:5433/shoepalace
+      - DATABASE_URL=postgresql://shoepalace_user:shoepalace_pass@129.212.227.252:5433/shoepalace
       - ENVIRONMENT=development
       - APPIUM_URL=http://host.docker.internal:4723/wd/hub
       # 로컬 웹 서버 URL (로컬 GUI 모드용)
@@ -60,7 +60,7 @@ services:
 
   # Frontend React (개발 모드 - 핫리로드)
   frontend:
-    build:
+    build:  
       context: ./frontend
       dockerfile: Dockerfile.dev
     container_name: shoepalace_dev_frontend

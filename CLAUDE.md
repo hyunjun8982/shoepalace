@@ -4,6 +4,27 @@
 - 프로젝트명: 입출고관리시스템
 - 작업 범위: 이 폴더(소스코드) 내부로 제한
 
+## 시스템 구성 (IMPORTANT - 별개 시스템)
+
+이 폴더에는 **두 개의 완전히 별개인 시스템**이 존재함:
+
+### 1. 입출고관리시스템 (backend/, frontend/)
+- `backend/` - FastAPI + PostgreSQL 백엔드 (운영 서버: 133.186.221.84)
+- `frontend/` - React 프론트엔드
+- Docker 기반 배포
+
+### 2. 아디다스 쿠폰 관리 앱 (adidas-coupon-app/)
+- `adidas-coupon-app/` - Electron 데스크톱 앱 (독립 시스템)
+- 자체 Express 서버 + SQLite DB 사용 (`server.js`)
+- 모바일 자동화: `scripts/extract_account.py` (Appium)
+- 웹 자동화: `scripts/extract_hybrid.py`
+- **backend/ 폴더와 무관함 - 절대 혼동하지 말 것**
+
+### 작업 시 주의사항
+- `adidas-coupon-app` 작업 시 → `backend/` 폴더 수정 금지
+- 두 시스템은 DB, API, 인프라가 완전히 분리됨
+- 아디다스 쿠폰 앱은 PostgreSQL을 사용하지 않음 (SQLite만 사용)
+
 ## 절대 금지 사항 (CRITICAL)
 
 ### 삭제 관련

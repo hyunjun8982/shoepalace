@@ -20,7 +20,7 @@ const state = {
     loading: false,
     modal: null,
     editingAccount: null,
-    extractMode: 'web', // 'web' 또는 'mobile' - 정보조회와 쿠폰발급 모두 이 모드 사용
+    extractMode: 'mobile', // 'web' 또는 'mobile' - 정보조회와 쿠폰발급 모두 이 모드 사용 (기본값: mobile)
     // 필터링
     filterPanelOpen: false, // 필터 패널 열림 상태
     filters: {
@@ -29,12 +29,19 @@ const state = {
         birthdayMonths: [], // [1, 2, 3, ...]
         couponTypes: [], // ['naver', 'starbucks', 'tier', ...]
         hasCoupon: null, // true, false, null(전체)
-        status: null, // true(활성), false(비활성), null(전체)
+        status: true, // true(활성), false(비활성), null(전체) - 기본값: 활성화만
         fetchStatus: null, // 'completed', 'pending', 'error', 'password_wrong', null(전체)
         issueStatus: null, // 'success', 'error', 'warning', 'pending', null(전체)
         expiringCoupon: false, // 만료 예정 쿠폰 보유 계정만
         has100kCoupon: false, // 10만원 쿠폰 보유 계정만
+        has100kCoupon2Plus: false, // 10만원 쿠폰 2장 이상 보유 계정만
+        no100kCoupon: false, // 10만원 쿠폰 없는 계정만
+        coupon100kCount: null, // 10만원권 수량 필터 (1, 2, 3, null=전체)
+        coupon50kCount: null, // 5만원권 수량 필터 (1, 2, 3, null=전체)
+        coupon100kExpiryBefore: '', // 10만원 쿠폰 만료일이 이 날짜 이전인 건 (YYYY-MM-DD)
+        coupon100kExpiryAfter: '', // 10만원 쿠폰 만료일이 이 날짜 이후인 건 (YYYY-MM-DD)
         fetchBefore: '', // 조회 완료일이 이 날짜 이전인 건 (YYYY-MM-DD)
+        fetchAfter: '', // 조회 완료일이 이 날짜 이후인 건 (YYYY-MM-DD)
         issueBefore: '', // 발급 완료일이 이 날짜 이전인 건 (YYYY-MM-DD)
     },
     // 정렬
@@ -57,9 +64,13 @@ const state = {
     },
     // 전체 활성 계정 쿠폰 발급 모드
     bulkIssueAllActive: false,
+    // 발급할 쿠폰 타입 선택 순서 (배열: 선택 순서대로 발급)
+    selectedIssueCouponTypes: [],
     // 모바일 연결 상태 (에뮬레이터 + ADB + Appium)
     mobileConnected: false,
     mobileConnecting: false,
+    mobileDeviceType: null,  // 'real_phone' 또는 'emulator'
+    mobileUdid: null,
     // 설치 패널 표시 여부
     showInstallPanel: false,
     // 배치 작업 상태 (백그라운드 진행 표시용)
@@ -106,7 +117,11 @@ async function checkBatchStatus() {
 
 // 배치 작업 중지
 async function abortBatchProcess() {
-    if (!state.batchStatus.active) {
+    // 서버에서 최신 배치 상태 확인
+    const serverStatus = await checkBatchStatus();
+
+    // 서버 배치 활성화 또는 모니터 hidden 상태 중 하나라도 있으면 진행
+    if (!serverStatus.active && !state.monitor.hidden) {
         notifyWarning('실행 중인 작업이 없습니다.');
         return;
     }
@@ -119,10 +134,20 @@ async function abortBatchProcess() {
         const result = await api('/batch/abort', { method: 'POST' });
         if (result.success) {
             notifySuccess(result.message);
+            // 모니터 상태도 정리
+            if (state.monitor.hidden) {
+                state.monitor.hidden = false;
+                state.monitor.active = false;
+                if (state.monitor.pollInterval) {
+                    clearInterval(state.monitor.pollInterval);
+                    state.monitor.pollInterval = null;
+                }
+            }
         } else {
             notifyError(result.message);
         }
         await checkBatchStatus();
+        loadAccounts();
         render();
     } catch (error) {
         notifyError('작업 중지 실패: ' + error.message);
@@ -139,12 +164,54 @@ function startBatchStatusPolling() {
     }
     batchStatusPollInterval = setInterval(async () => {
         const status = await checkBatchStatus();
-        if (!status.active && batchStatusPollInterval) {
+        if (!status.active && !state.monitor.hidden && batchStatusPollInterval) {
             clearInterval(batchStatusPollInterval);
             batchStatusPollInterval = null;
+            render();  // 완료 시에만 전체 렌더링
+            return;
         }
-        render();
+        // 상단 바만 업데이트 (전체 render() 호출 안함)
+        updateBatchStatusBar();
     }, 2000);
+}
+
+// 상단 바만 업데이트 (전체 렌더링 없이)
+function updateBatchStatusBar() {
+    const existingBar = document.querySelector('.batch-status-bar');
+    if (!existingBar && (state.batchStatus.active || state.monitor.hidden)) {
+        // 바가 없는데 필요하면 전체 렌더링
+        render();
+        return;
+    }
+    if (existingBar && !state.batchStatus.active && !state.monitor.hidden) {
+        // 바가 있는데 필요없으면 전체 렌더링
+        render();
+        return;
+    }
+    if (!existingBar) return;
+
+    // 상단 바 내용만 업데이트
+    const stats = getMonitorStats();
+    const total = stats.total;
+    const completed = stats.completed;
+    const processing = stats.processing;
+    const currentIndex = completed + processing;
+    const statusParts = [];
+    if (stats.success > 0) statusParts.push(`성공 ${stats.success}`);
+    if (stats.warning > 0) statusParts.push(`경고 ${stats.warning}`);
+    if (stats.error > 0) statusParts.push(`실패 ${stats.error}`);
+    if (stats.passwordWrong > 0) statusParts.push(`비번오류 ${stats.passwordWrong}`);
+    const statusSummary = statusParts.length > 0 ? ` (${statusParts.join(', ')})` : '';
+
+    const detailEl = existingBar.querySelector('.batch-status-detail');
+    if (detailEl) {
+        detailEl.textContent = `${currentIndex}번째 / 총 ${total}개 처리 중${statusSummary}`;
+    }
+
+    const timeEl = existingBar.querySelector('.batch-status-time');
+    if (timeEl) {
+        timeEl.textContent = formatElapsedTime(state.batchStatus.active ? state.batchStatus.startTime : state.monitor.startTime);
+    }
 }
 
 // ========== 쿠폰 유틸리티 함수 ==========
@@ -157,6 +224,18 @@ function isExpired(expiryStr) {
         return expiry < new Date();
     } catch {
         return false;
+    }
+}
+
+// 만료일 문자열을 Date 객체로 파싱
+function parseExpiryDate(expiryStr) {
+    if (!expiryStr || expiryStr === 'N/A') return null;
+    try {
+        const date = new Date(expiryStr);
+        if (isNaN(date.getTime())) return null;
+        return date;
+    } catch {
+        return null;
     }
 }
 
@@ -178,10 +257,22 @@ function parseDateFromStatus(webStatus, mobileStatus) {
     const parseStatusDate = (status) => {
         if (!status) return null;
 
+        // 패턴0: [YY-MM-DD HH:MM] (예: [25-01-06 14:30]) - 현재 사용중인 형식
+        const pattern0 = /\[(\d{2})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})\]/;
+        let match = status.match(pattern0);
+        if (match) {
+            const year = 2000 + parseInt(match[1]); // 25 -> 2025
+            const month = parseInt(match[2]) - 1; // 0-indexed
+            const day = parseInt(match[3]);
+            const hour = parseInt(match[4]);
+            const minute = parseInt(match[5]);
+            return new Date(year, month, day, hour, minute);
+        }
+
         // 상태에서 날짜/시간 패턴만 추출 (완료 여부와 무관하게)
         // 패턴1: MM/DD HH:mm (예: 12/28 14:30) - 올해로 가정
         const pattern1 = /(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})/;
-        let match = status.match(pattern1);
+        match = status.match(pattern1);
         if (match) {
             const now = new Date();
             const month = parseInt(match[1]) - 1; // 0-indexed
@@ -260,6 +351,18 @@ function getCouponDisplayInfo(description) {
     if (!description) return { name: '기타', shortName: '기타', color: GREEN, icon: '🎫', sortValue: 0 };
 
     const desc = description.toLowerCase();
+
+    // === 잘못 파싱된 할인권 보정 (1원~4원, 20원 상품권 → 5%~20% 할인권) ===
+    // API value가 1,2,3,4,20인 할인권이 "1원 상품권" 등으로 잘못 저장된 경우 보정
+    if (desc === '1원 상품권' || desc.match(/^1원\s*상품권$/)) {
+        return { name: '5% 할인', shortName: '5% 할인', color: GREEN, icon: '🏷️', sortValue: 5000 };
+    } else if (desc === '2원 상품권' || desc.match(/^2원\s*상품권$/)) {
+        return { name: '10% 할인', shortName: '10% 할인', color: GREEN, icon: '🏷️', sortValue: 10000 };
+    } else if (desc === '3원 상품권' || desc.match(/^3원\s*상품권$/)) {
+        return { name: '15% 할인', shortName: '15% 할인', color: GREEN, icon: '🏷️', sortValue: 15000 };
+    } else if (desc === '4원 상품권' || desc.match(/^4원\s*상품권$/) || desc === '20원 상품권' || desc.match(/^20원\s*상품권$/)) {
+        return { name: '20% 할인', shortName: '20% 할인', color: GREEN, icon: '🏷️', sortValue: 20000 };
+    }
 
     // 금액 쿠폰 (100,000원, 100K, _100K 형태) - sortValue가 높을수록 상위 (금액 기준)
     // _3K, _5K 등 언더스코어+숫자K 형태도 지원 (예: KR_Raffle Reimburse_3K)
@@ -402,30 +505,63 @@ function renderCouponCards(acc, vouchers) {
 function parseStatus(status) {
     if (!status) return { text: '-', datetime: '', statusType: 'none' };
 
-    // 날짜+시간 형식으로 변환 (현재 시간 기준 MM/DD HH:MM)
+    // 날짜+시간 형식으로 변환
     let datetime = '';
-    const now = new Date();
-    const timeMatch = status.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
-    if (timeMatch) {
-        const hour = timeMatch[1].padStart(2, '0');
-        const minute = timeMatch[2];
-        const month = String(now.getMonth() + 1);
-        const day = String(now.getDate());
-        datetime = `${month}/${day} ${hour}:${minute}`;
+
+    // [YY-MM-DD HH:MM] 형식 파싱 (예: [25-01-01 14:30])
+    const fullMatch = status.match(/\[(\d{2})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})\]/);
+    if (fullMatch) {
+        const month = fullMatch[2];
+        const day = fullMatch[3];
+        const hour = fullMatch[4];
+        const minute = fullMatch[5];
+        datetime = `${parseInt(month)}/${parseInt(day)} ${hour}:${minute}`;
+    } else {
+        // MM/DD HH:MM 형식 파싱 (예: 12/28 14:30)
+        const shortMatch = status.match(/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})/);
+        if (shortMatch) {
+            const month = shortMatch[1];
+            const day = shortMatch[2];
+            const hour = shortMatch[3].padStart(2, '0');
+            const minute = shortMatch[4];
+            datetime = `${month}/${day} ${hour}:${minute}`;
+        }
     }
 
     // 상태 타입 결정
     let statusType = 'none';
     let shortText = '';
 
+    // 다중 쿠폰 발급 상태 감지 (예: "10만원권 1달 미경과, 5만원권 발급 완료")
+    const isMultiCouponStatus = (status.includes('만원권') || status.includes('원권')) && status.includes(',');
+
     if (status.includes('중...')) {
         statusType = 'processing';
         shortText = '진행중';
+    } else if (isMultiCouponStatus) {
+        // 다중 쿠폰 상태: 상세 내용 표시
+        // 오류 조건 체크 (methodnotallowed, 실패 포함)
+        const hasError = status.includes('실패') || status.toLowerCase().includes('methodnotallowed') || status.toLowerCase().includes('method');
+        const hasSuccess = status.includes('발급 완료');
+        const hasWarning = status.includes('1달 미경과') || status.includes('포인트 부족');
+
+        // 상태 결정: 오류 있으면 error 우선 (partial failure 표시)
+        if (hasError) {
+            statusType = hasSuccess ? 'warning' : 'error';  // 성공+실패 혼합이면 warning, 전부 실패면 error
+        } else if (hasWarning) {
+            statusType = hasSuccess ? 'success' : 'warning';  // 성공+warning 혼합이면 success
+        } else if (hasSuccess) {
+            statusType = 'success';
+        } else {
+            statusType = 'error';
+        }
+        // [모바일] 태그 제거하고 상세 내용만 추출
+        shortText = status.replace(/\[모바일\]\s*/, '').replace(/\[\d{2}-\d{2}-\d{2}\s+\d{2}:\d{2}\]/, '').trim();
     } else if (status.includes('완료')) {
         statusType = 'success';
         shortText = '완료';
     } else if (status.includes('비밀번호 틀림') || status.includes('비밀번호')) {
-        statusType = 'error';
+        statusType = 'password_wrong';  // 비밀번호 오류는 별도 상태 (주황색)
         shortText = '비번오류';
     } else if (status.includes('차단') || status.includes('BOT') || status.includes('API_BLOCKED')) {
         statusType = 'error';
@@ -439,9 +575,9 @@ function parseStatus(status) {
     } else if (status.includes('1달 미경과') || status.includes('미경과')) {
         statusType = 'warning';
         shortText = '1달미경과';
-    } else if (status.includes('실패') || status.includes('오류') || status.includes('에러')) {
+    } else if (status.includes('실패') || status.includes('오류') || status.includes('에러') || status.toLowerCase().includes('methodnotallowed')) {
         statusType = 'error';
-        shortText = '오류';
+        shortText = status.toLowerCase().includes('methodnotallowed') ? 'API오류' : '오류';
     } else if (status.includes('대기')) {
         statusType = 'waiting';
         shortText = '대기';
@@ -452,73 +588,78 @@ function parseStatus(status) {
     return { text: shortText, datetime, statusType };
 }
 
-// 3x3 표 형태 상태 렌더링 (컴팩트)
+// 간소화된 상태 렌더링 (모바일만 표시)
 function renderStatusTable(webFetchStatus, mobileFetchStatus, webIssueStatus, mobileIssueStatus) {
-    const webFetch = parseStatus(webFetchStatus);
-    const mobileFetch = parseStatus(mobileFetchStatus);
-    const webIssue = parseStatus(webIssueStatus);
-    const mobileIssue = parseStatus(mobileIssueStatus);
+    // 현재 모드에 따라 해당 모드 상태 표시, 둘 다 있으면 모두 표시
+    const fetchStatus = mobileFetchStatus || webFetchStatus;
+    const issueStatus = mobileIssueStatus || webIssueStatus;
+
+    const fetchParsed = parseStatus(fetchStatus);
+    const issueParsed = parseStatus(issueStatus);
 
     // 모든 상태가 없으면 간단히 표시
-    if (webFetch.statusType === 'none' && mobileFetch.statusType === 'none' &&
-        webIssue.statusType === 'none' && mobileIssue.statusType === 'none') {
+    if (fetchParsed.statusType === 'none' && issueParsed.statusType === 'none') {
         return '<span style="color:#999;font-size:11px;">-</span>';
     }
 
-    // 정보조회: 웹/모바일 중 하나라도 성공이면 다른 오류는 회색 처리
-    const fetchHasSuccess = webFetch.statusType === 'success' || mobileFetch.statusType === 'success';
-    // 쿠폰발급: 성공 또는 경고(1달 미경과, 포인트 부족)가 있으면 다른 오류는 회색 처리
-    const issueHasSuccessOrWarning = webIssue.statusType === 'success' || mobileIssue.statusType === 'success' ||
-                                      webIssue.statusType === 'warning' || mobileIssue.statusType === 'warning';
-
-    const getStatusCellClass = (statusType, hasOtherSuccessOrWarning = false) => {
-        // 다른 쪽이 성공/경고면 오류만 회색(muted)으로 처리 (warning은 유지)
-        if (hasOtherSuccessOrWarning && statusType === 'error') {
-            return 'cell-muted';
-        }
+    const getStatusClass = (statusType) => {
         switch (statusType) {
             case 'success': return 'cell-success';
             case 'error': return 'cell-error';
             case 'warning': return 'cell-warning';
+            case 'password_wrong': return 'cell-password-wrong';
             case 'processing': return 'cell-processing';
             case 'waiting': return 'cell-waiting';
             default: return 'cell-none';
         }
     };
 
-    const renderFetchCell = (parsed, hasOtherSuccess) => {
-        if (parsed.statusType === 'none') return '<td class="status-cell cell-none">-</td>';
-        const cellClass = getStatusCellClass(parsed.statusType, hasOtherSuccess);
-        const timeHtml = parsed.datetime ? `<span class="cell-time">(${parsed.datetime})</span>` : '';
-        return `<td class="status-cell ${cellClass}"><span class="cell-text">${parsed.text}</span>${timeHtml}</td>`;
+    // 다중 쿠폰 상태인지 확인하고 줄바꿈 처리
+    const renderIssueContent = (parsed, originalStatus) => {
+        if (parsed.statusType === 'none') return '-';
+
+        // 다중 쿠폰 상태 감지 (쉼표로 구분된 경우)
+        const isMultiCoupon = originalStatus && (originalStatus.includes('만원권') || originalStatus.includes('원권')) && originalStatus.includes(',');
+
+        if (isMultiCoupon) {
+            // [모바일] 태그와 타임스탬프 제거 후 쉼표로 분리
+            let cleanStatus = originalStatus.replace(/\[모바일\]\s*/, '').replace(/\[\d{2}-\d{2}-\d{2}\s+\d{2}:\d{2}\]/, '').trim();
+            const parts = cleanStatus.split(',').map(s => s.trim());
+
+            // 각 쿠폰 상태별 클래스 지정
+            const getPartClass = (part) => {
+                if (part.includes('발급 완료')) return 'cell-success';
+                if (part.includes('1달 미경과') || part.includes('포인트 부족')) return 'cell-warning';
+                // 오류 조건 확장: methodnotallowed, 실패, 오류
+                if (part.includes('실패') || part.includes('오류') || part.toLowerCase().includes('methodnotallowed') || part.toLowerCase().includes('method')) return 'cell-error';
+                return '';
+            };
+
+            return parts.map(part => `<div class="coupon-status-line ${getPartClass(part)}">${part}</div>`).join('');
+        }
+
+        return parsed.text;
     };
 
-    const renderIssueCell = (parsed, hasOtherSuccess) => {
-        if (parsed.statusType === 'none') return '<td class="status-cell cell-none">-</td>';
-        const cellClass = getStatusCellClass(parsed.statusType, hasOtherSuccess);
-        const timeHtml = parsed.datetime ? `<span class="cell-time">(${parsed.datetime})</span>` : '';
-        return `<td class="status-cell ${cellClass}"><span class="cell-text">${parsed.text}</span>${timeHtml}</td>`;
-    };
+    const fetchClass = getStatusClass(fetchParsed.statusType);
+    const issueClass = getStatusClass(issueParsed.statusType);
 
     return `
-        <table class="status-table">
-            <thead>
-                <tr>
-                    <th></th>
-                    <th>웹 브라우저</th>
-                    <th>모바일</th>
-                </tr>
-            </thead>
+        <table class="status-table-simple">
             <tbody>
                 <tr>
-                    <td class="row-label">정보 조회</td>
-                    ${renderFetchCell(webFetch, fetchHasSuccess)}
-                    ${renderFetchCell(mobileFetch, fetchHasSuccess)}
+                    <td class="row-label">정보조회</td>
+                    <td class="status-cell ${fetchClass}">
+                        <span class="cell-text">${fetchParsed.text}</span>
+                        ${fetchParsed.datetime ? `<span class="cell-time">(${fetchParsed.datetime})</span>` : ''}
+                    </td>
                 </tr>
                 <tr>
-                    <td class="row-label">쿠폰 발급</td>
-                    ${renderIssueCell(webIssue, issueHasSuccessOrWarning)}
-                    ${renderIssueCell(mobileIssue, issueHasSuccessOrWarning)}
+                    <td class="row-label">쿠폰발급</td>
+                    <td class="status-cell ${issueClass}">
+                        <div class="cell-content">${renderIssueContent(issueParsed, issueStatus)}</div>
+                        ${issueParsed.datetime ? `<span class="cell-time">(${issueParsed.datetime})</span>` : ''}
+                    </td>
                 </tr>
             </tbody>
         </table>
@@ -550,9 +691,9 @@ function renderFetchStatusMulti(webStatus, mobileStatus) {
 function getStatusClass(status) {
     if (!status) return '';
     if (status.includes('완료')) return 'status-success';
-    if (status.includes('비밀번호 틀림')) return 'status-error';
+    if (status.includes('비밀번호 틀림')) return 'status-password-wrong';  // 비밀번호 오류 (주황색)
     if (status.includes('차단 의심')) return 'status-error';
-    if (status.includes('실패') || status.includes('오류')) return 'status-error';
+    if (status.includes('실패') || status.includes('오류') || status.toLowerCase().includes('methodnotallowed')) return 'status-error';
     if (status.includes('중...')) return 'status-processing';
     return '';
 }
@@ -773,6 +914,7 @@ function showIssueCouponModal() {
         notifyWarning('쿠폰을 발급할 계정을 선택하세요');
         return;
     }
+    state.selectedIssueCouponTypes = []; // 선택 초기화
     state.modal = 'issue-coupon';
     render();
 }
@@ -781,16 +923,55 @@ function showIssueCouponModal() {
 function showSingleIssueCouponModal(accountId, email) {
     state.singleIssueCouponAccountId = accountId;
     state.singleIssueCouponEmail = email;
+    state.selectedIssueCouponTypes = []; // 선택 초기화
     state.modal = 'single-issue-coupon';
     render();
 }
 
-// 쿠폰 발급 실행 (일괄)
-async function issueCoupon(couponType) {
+// 쿠폰 타입 선택 토글 (순서대로 추가/제거)
+function toggleIssueCouponType(couponType) {
+    const idx = state.selectedIssueCouponTypes.indexOf(couponType);
+    if (idx >= 0) {
+        // 이미 선택됨 → 제거
+        state.selectedIssueCouponTypes.splice(idx, 1);
+    } else {
+        // 새로 선택 → 끝에 추가
+        state.selectedIssueCouponTypes.push(couponType);
+    }
+    render();
+}
+
+// 다중 쿠폰 발급 시작 (일괄)
+async function startIssueCoupon() {
+    const couponTypes = [...state.selectedIssueCouponTypes];
+    if (couponTypes.length === 0) {
+        notifyWarning('발급할 쿠폰을 선택하세요');
+        return;
+    }
+    await issueCoupon(couponTypes);
+}
+
+// 다중 쿠폰 발급 시작 (전체 활성 계정)
+async function startIssueCouponForAllActive() {
+    const couponTypes = [...state.selectedIssueCouponTypes];
+    if (couponTypes.length === 0) {
+        notifyWarning('발급할 쿠폰을 선택하세요');
+        return;
+    }
+    await issueCouponForAllActive(couponTypes);
+}
+
+// 쿠폰 발급 실행 (일괄) - couponTypes: 배열 또는 단일값
+async function issueCoupon(couponTypes) {
     const ids = Array.from(state.selectedIds);
     const accounts = ids.map(id => state.accounts.find(acc => acc.id === id)).filter(Boolean);
 
     closeModal();
+
+    // 배열로 정규화
+    const couponTypesArray = Array.isArray(couponTypes) ? couponTypes : [couponTypes];
+    const couponNames = { '10000': '1만원권', '30000': '3만원권', '50000': '5만원권', '100000': '10만원권' };
+    const couponTypesStr = couponTypesArray.map(ct => couponNames[ct] || `${ct}원`).join(', ');
 
     // 모바일 모드일 때 연결 상태 확인
     if (state.extractMode === 'mobile') {
@@ -811,27 +992,37 @@ async function issueCoupon(couponType) {
     const modeLabel = state.extractMode === 'web' ? '웹' : (state.extractMode === 'mobile' ? '모바일' : '웹+모바일');
     const confirmed = await showConfirm({
         title: '쿠폰 일괄 발급',
-        message: `[${modeLabel}] 선택한 ${accounts.length}개 계정에 ${couponType.toLocaleString()}원 쿠폰을 발급하시겠습니까?`,
+        message: `[${modeLabel}] 선택한 ${accounts.length}개 계정에 ${couponTypesStr} 쿠폰을 발급하시겠습니까?`,
         confirmText: '발급',
         type: 'info'
     });
     if (!confirmed) return;
 
-    openMonitor('issue', `[${modeLabel}] 쿠폰 일괄 발급 (${couponType.toLocaleString()}원)`, accounts);
+    openMonitor('issue', `[${modeLabel}] 쿠폰 일괄 발급 (${couponTypesStr})`, accounts);
     state.selectedIds.clear();
 
     try {
         await api('/issue-coupon/bulk', {
             method: 'POST',
-            body: { ids, coupon_type: couponType, mode: state.extractMode }
+            body: { ids, coupon_types: couponTypesArray, mode: state.extractMode }
         });
     } catch (error) {
         notifyError('쿠폰 발급 실패: ' + error.message);
     }
 }
 
-// 단일 계정 쿠폰 발급
-async function issueCouponForAccount(accountId, couponType) {
+// 단일 계정 다중 쿠폰 발급 시작
+async function startIssueCouponForAccount() {
+    const couponTypes = [...state.selectedIssueCouponTypes];
+    if (couponTypes.length === 0) {
+        notifyWarning('발급할 쿠폰을 선택하세요');
+        return;
+    }
+    await issueCouponForAccount(state.singleIssueCouponAccountId, couponTypes);
+}
+
+// 단일 계정 쿠폰 발급 - couponTypes: 배열 또는 단일값
+async function issueCouponForAccount(accountId, couponTypes) {
     const account = state.accounts.find(acc => acc.id === accountId);
     if (!account) {
         notifyError('계정을 찾을 수 없습니다');
@@ -839,6 +1030,11 @@ async function issueCouponForAccount(accountId, couponType) {
     }
 
     closeModal();
+
+    // 배열로 정규화
+    const couponTypesArray = Array.isArray(couponTypes) ? couponTypes : [couponTypes];
+    const couponNames = { '10000': '1만원권', '30000': '3만원권', '50000': '5만원권', '100000': '10만원권' };
+    const couponTypesStr = couponTypesArray.map(ct => couponNames[ct] || `${ct}원`).join(', ');
 
     // 모바일 모드일 때 연결 상태 확인
     if (state.extractMode === 'mobile') {
@@ -852,18 +1048,19 @@ async function issueCouponForAccount(accountId, couponType) {
     const modeLabel = state.extractMode === 'web' ? '웹' : (state.extractMode === 'mobile' ? '모바일' : '웹+모바일');
     const confirmed = await showConfirm({
         title: '쿠폰 발급',
-        message: `[${modeLabel}] ${account.email} 계정에 ${couponType.toLocaleString()}원 쿠폰을 발급하시겠습니까?`,
+        message: `[${modeLabel}] ${account.email} 계정에 ${couponTypesStr} 쿠폰을 발급하시겠습니까?`,
         confirmText: '발급',
         type: 'info'
     });
     if (!confirmed) return;
 
-    openMonitor('issue', `[${modeLabel}] 쿠폰 발급 (${couponType.toLocaleString()}원)`, [account]);
+    openMonitor('issue', `[${modeLabel}] 쿠폰 발급 (${couponTypesStr})`, [account]);
 
     try {
-        await api(`/issue-coupon/${accountId}`, {
+        // 단일 계정도 bulk 엔드포인트 사용 (다중 쿠폰 지원)
+        await api('/issue-coupon/bulk', {
             method: 'POST',
-            body: { coupon_type: couponType, mode: state.extractMode }
+            body: { ids: [accountId], coupon_types: couponTypesArray, mode: state.extractMode }
         });
     } catch (error) {
         notifyError('쿠폰 발급 실패: ' + error.message);
@@ -988,35 +1185,55 @@ function getFilteredAndSortedAccounts() {
             const webStatus = acc.web_fetch_status || '';
             const mobileStatus = acc.mobile_fetch_status || '';
             const combinedStatus = webStatus + ' ' + mobileStatus;
+            const hasCompleted = combinedStatus.includes('완료');
+            const hasError = (combinedStatus.includes('오류') || combinedStatus.includes('실패')) && !combinedStatus.includes('비밀번호');
+            const hasPasswordError = combinedStatus.includes('비밀번호') || combinedStatus.includes('로그인실패');
 
             switch (state.filters.fetchStatus) {
                 case 'completed':
-                    return combinedStatus.includes('완료');
+                    return hasCompleted;
                 case 'pending':
                     return (!webStatus && !mobileStatus) || combinedStatus.includes('조회 중');
                 case 'error':
-                    return (combinedStatus.includes('오류') || combinedStatus.includes('실패')) && !combinedStatus.includes('비밀번호');
+                    // 오류가 있고, 완료가 없는 경우만 (모바일 완료 시 제외)
+                    return hasError && !hasCompleted;
                 case 'password_wrong':
-                    return combinedStatus.includes('비밀번호') || combinedStatus.includes('로그인실패');
+                    // 비밀번호 오류가 있고, 완료가 없는 경우만
+                    return hasPasswordError && !hasCompleted;
                 default:
                     return true;
             }
         });
     }
 
-    // 발급 현황 필터
+    // 발급 현황 필터 (웹/모바일 모두 확인)
     if (state.filters.issueStatus !== null) {
         result = result.filter(acc => {
-            const status = acc.issue_status || '';
+            // 웹/모바일 발급 상태 가져오기 (기존 issue_status fallback 포함)
+            let webStatus = acc.web_issue_status || '';
+            let mobileStatus = acc.mobile_issue_status || '';
+            if (!webStatus && !mobileStatus && acc.issue_status) {
+                if (acc.issue_status.includes('[모바일]')) {
+                    mobileStatus = acc.issue_status;
+                } else {
+                    webStatus = acc.issue_status;
+                }
+            }
+            const combinedStatus = webStatus + ' ' + mobileStatus;
+
             switch (state.filters.issueStatus) {
                 case 'success':
-                    return status.includes('발급 완료') || status.includes('완료');
+                    return combinedStatus.includes('발급 완료') || combinedStatus.includes('완료');
                 case 'pending':
-                    return !status || status === '-';
+                    return (!webStatus && !mobileStatus) || combinedStatus.includes('발급 중');
                 case 'warning':
-                    return status.includes('포인트 부족') || status.includes('버튼 없음');
+                    return combinedStatus.includes('포인트 부족') || combinedStatus.includes('버튼 없음') || combinedStatus.includes('1달 미경과');
+                case 'password_wrong':
+                    return combinedStatus.includes('비밀번호') || combinedStatus.includes('PASSWORD_WRONG');
                 case 'error':
-                    return (status.includes('오류') || status.includes('실패') || status.includes('차단') || status.includes('비밀번호')) && !status.includes('포인트 부족') && !status.includes('버튼 없음');
+                    return (combinedStatus.includes('오류') || combinedStatus.includes('실패') || combinedStatus.includes('차단'))
+                        && !combinedStatus.includes('포인트 부족') && !combinedStatus.includes('버튼 없음')
+                        && !combinedStatus.includes('1달 미경과') && !combinedStatus.includes('비밀번호');
                 default:
                     return true;
             }
@@ -1031,13 +1248,113 @@ function getFilteredAndSortedAccounts() {
         });
     }
 
-    // 10만원 쿠폰 보유 필터
-    if (state.filters.has100kCoupon) {
+    // 10만원 쿠폰 보유 필터 (유효기간 입력됨 + 만료되지 않음 + 판매되지 않음)
+    if (state.filters.has100kCoupon || state.filters.has100kCoupon2Plus || state.filters.no100kCoupon) {
         result = result.filter(acc => {
             const vouchers = parseVouchers(acc.owned_vouchers);
-            return vouchers.some(v => {
+            // 유효한 10만원 쿠폰 개수 세기
+            const valid100kCount = vouchers.filter(v => {
                 const desc = (v.description || '').toLowerCase();
-                return desc.includes('100k') || desc.includes('100000');
+                // 10만원 쿠폰 인식: 100k, 100000, 10만, 100,000 등 다양한 형식 지원
+                const is100k = desc.includes('100k') || desc.includes('100000') || desc.includes('10만') || desc.includes('100,000');
+                const hasValidExpiry = v.expiry && v.expiry !== 'N/A' && v.expiry.trim() !== '';
+                const notExpired = hasValidExpiry && !isExpired(v.expiry);
+                const notSold = !v.sold;
+                return is100k && hasValidExpiry && notExpired && notSold;
+            }).length;
+            if (state.filters.has100kCoupon2Plus) return valid100kCount >= 2;
+            if (state.filters.has100kCoupon) return valid100kCount >= 1;
+            if (state.filters.no100kCoupon) return valid100kCount === 0;
+            return true;
+        });
+    }
+
+    // 10만원권 수량 필터 (정확히 N장 보유)
+    if (state.filters.coupon100kCount !== null) {
+        result = result.filter(acc => {
+            const vouchers = parseVouchers(acc.owned_vouchers);
+            const valid100kCount = vouchers.filter(v => {
+                const desc = (v.description || '').toLowerCase();
+                const is100k = desc.includes('100k') || desc.includes('100000') || desc.includes('10만') || desc.includes('100,000');
+                const hasValidExpiry = v.expiry && v.expiry !== 'N/A' && v.expiry.trim() !== '';
+                const notExpired = hasValidExpiry && !isExpired(v.expiry);
+                const notSold = !v.sold;
+                return is100k && hasValidExpiry && notExpired && notSold;
+            }).length;
+            return valid100kCount === state.filters.coupon100kCount;
+        });
+    }
+
+    // 5만원권 수량 필터 (정확히 N장 보유)
+    if (state.filters.coupon50kCount !== null) {
+        result = result.filter(acc => {
+            const vouchers = parseVouchers(acc.owned_vouchers);
+            const valid50kCount = vouchers.filter(v => {
+                const desc = (v.description || '').toLowerCase();
+                const is50k = desc.includes('50k') || desc.includes('50000') || desc.includes('5만') || desc.includes('50,000');
+                const hasValidExpiry = v.expiry && v.expiry !== 'N/A' && v.expiry.trim() !== '';
+                const notExpired = hasValidExpiry && !isExpired(v.expiry);
+                const notSold = !v.sold;
+                return is50k && hasValidExpiry && notExpired && notSold;
+            }).length;
+            return valid50kCount === state.filters.coupon50kCount;
+        });
+    }
+
+    // 10만원 쿠폰 만료일 필터 (지정 날짜 이전에 만료되는 쿠폰만)
+    if (state.filters.coupon100kExpiryBefore) {
+        const filterDate = new Date(state.filters.coupon100kExpiryBefore);
+        filterDate.setHours(23, 59, 59, 999); // 해당 날짜 끝까지 포함
+
+        result = result.filter(acc => {
+            const vouchers = parseVouchers(acc.owned_vouchers);
+            // 10만원 쿠폰 중 유효한 것만 찾기
+            const valid100kVouchers = vouchers.filter(v => {
+                const desc = (v.description || '').toLowerCase();
+                // 10만원 쿠폰 인식: 100k, 100000, 10만, 100,000 등 다양한 형식 지원
+                const is100k = desc.includes('100k') || desc.includes('100000') || desc.includes('10만') || desc.includes('100,000');
+                const hasValidExpiry = v.expiry && v.expiry !== 'N/A' && v.expiry.trim() !== '';
+                const notExpired = hasValidExpiry && !isExpired(v.expiry);
+                const notSold = !v.sold;
+                return is100k && hasValidExpiry && notExpired && notSold;
+            });
+
+            if (valid100kVouchers.length === 0) return false; // 10만원 쿠폰이 없으면 제외
+
+            // 쿠폰 중 만료일이 필터 날짜 이전인 것이 있는지 확인
+            return valid100kVouchers.some(v => {
+                const expiryDate = parseExpiryDate(v.expiry);
+                if (!expiryDate) return false;
+                return expiryDate <= filterDate;
+            });
+        });
+    }
+
+    // 10만원 쿠폰 만료일 필터 (지정 날짜 이후에 만료되는 쿠폰만)
+    if (state.filters.coupon100kExpiryAfter) {
+        const filterDate = new Date(state.filters.coupon100kExpiryAfter);
+        filterDate.setHours(0, 0, 0, 0); // 해당 날짜 시작부터 포함
+
+        result = result.filter(acc => {
+            const vouchers = parseVouchers(acc.owned_vouchers);
+            // 10만원 쿠폰 중 유효한 것만 찾기
+            const valid100kVouchers = vouchers.filter(v => {
+                const desc = (v.description || '').toLowerCase();
+                // 10만원 쿠폰 인식: 100k, 100000, 10만, 100,000 등 다양한 형식 지원
+                const is100k = desc.includes('100k') || desc.includes('100000') || desc.includes('10만') || desc.includes('100,000');
+                const hasValidExpiry = v.expiry && v.expiry !== 'N/A' && v.expiry.trim() !== '';
+                const notExpired = hasValidExpiry && !isExpired(v.expiry);
+                const notSold = !v.sold;
+                return is100k && hasValidExpiry && notExpired && notSold;
+            });
+
+            if (valid100kVouchers.length === 0) return false; // 10만원 쿠폰이 없으면 제외
+
+            // 쿠폰 중 만료일이 필터 날짜 이후인 것이 있는지 확인
+            return valid100kVouchers.some(v => {
+                const expiryDate = parseExpiryDate(v.expiry);
+                if (!expiryDate) return false;
+                return expiryDate >= filterDate;
             });
         });
     }
@@ -1050,6 +1367,17 @@ function getFilteredAndSortedAccounts() {
             const statusDate = parseDateFromStatus(acc.web_fetch_status, acc.mobile_fetch_status);
             if (!statusDate) return false; // 날짜 파싱 실패 시 제외
             return statusDate <= filterDate;
+        });
+    }
+
+    // 조회일 이후 필터 (특정 날짜 이후에 조회 시도한 건 - 성공/실패 모두 포함)
+    if (state.filters.fetchAfter) {
+        const filterDate = new Date(state.filters.fetchAfter);
+        filterDate.setHours(0, 0, 0, 0); // 해당 날짜 시작부터 포함
+        result = result.filter(acc => {
+            const statusDate = parseDateFromStatus(acc.web_fetch_status, acc.mobile_fetch_status);
+            if (!statusDate) return false; // 날짜 파싱 실패 시 제외
+            return statusDate >= filterDate;
         });
     }
 
@@ -1128,14 +1456,18 @@ function render() {
         } catch { return false; }
     }).length;
 
-    // 10만원 쿠폰 보유 계정 수
+    // 10만원 쿠폰 보유 계정 수 (유효기간 입력됨 + 만료되지 않음 + 판매되지 않음)
     const has100kCouponCount = state.accounts.filter(a => {
         if (!a.owned_vouchers) return false;
         try {
             const vouchers = JSON.parse(a.owned_vouchers);
             return vouchers.some(v => {
                 const desc = (v.description || '').toLowerCase();
-                return desc.includes('100k') || desc.includes('100000');
+                const is100k = desc.includes('100k') || desc.includes('100000');
+                const hasValidExpiry = v.expiry && v.expiry !== 'N/A' && v.expiry.trim() !== '';
+                const notExpired = hasValidExpiry && !isExpired(v.expiry);
+                const notSold = !v.sold;
+                return is100k && hasValidExpiry && notExpired && notSold;
             });
         } catch { return false; }
     }).length;
@@ -1162,13 +1494,11 @@ function render() {
                     </button>
                 </div>
                 <button class="btn ${state.mobileConnected ? 'btn-success' : 'btn-danger'}" onclick="connectMobile()" ${state.mobileConnecting ? 'disabled' : ''} style="min-width: 180px; padding: 4px 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.1;">
-                    ${state.mobileConnecting ? '<span style="font-size: 12px;">연결 중...</span>' : (state.mobileConnected ? '<span style="font-size: 12px;">모바일 연결됨</span><span style="font-size: 9px; opacity: 0.8;">모바일 모드 사용 가능합니다</span>' : '<span style="font-size: 12px;">모바일 연결되지 않음</span><span style="font-size: 9px; opacity: 0.8;">버튼을 누르면 연결됩니다</span>')}
+                    ${state.mobileConnecting ? '<span style="font-size: 12px;">연결 중...</span>' : (state.mobileConnected ? `<span style="font-size: 12px;">${state.mobileDeviceType === 'real_phone' ? '📱 실제 폰 연결됨' : '모바일 연결됨'}</span><span style="font-size: 9px; opacity: 0.8;">${state.mobileDeviceType === 'real_phone' ? state.mobileUdid || '' : '에뮬레이터 모드'}</span>` : '<span style="font-size: 12px;">모바일 연결되지 않음</span><span style="font-size: 9px; opacity: 0.8;">버튼을 누르면 연결됩니다</span>')}
                 </button>
-                ${DEV_MODE ? `
                 <button class="btn btn-default" onclick="showLogModal()">
                     ◎ 로그
                 </button>
-                ` : ''}
                 <button class="btn-icon" onclick="showGuideModal()" title="사용자 가이드">
                     ?
                 </button>
@@ -1207,12 +1537,24 @@ function render() {
         </div>
 
         <!-- 배치 작업 진행 상태 바 (백그라운드 작업 중일 때 또는 모니터가 숨김 상태일 때 표시) -->
-        ${(state.batchStatus.active || state.monitor.hidden) ? `
+        ${(state.batchStatus.active || state.monitor.hidden) ? (() => {
+            const stats = getMonitorStats();
+            const total = stats.total;
+            const completed = stats.completed;
+            const processing = stats.processing;
+            const currentIndex = completed + processing;
+            const statusParts = [];
+            if (stats.success > 0) statusParts.push(`성공 ${stats.success}`);
+            if (stats.warning > 0) statusParts.push(`경고 ${stats.warning}`);
+            if (stats.error > 0) statusParts.push(`실패 ${stats.error}`);
+            if (stats.passwordWrong > 0) statusParts.push(`비번오류 ${stats.passwordWrong}`);
+            const statusSummary = statusParts.length > 0 ? ` (${statusParts.join(', ')})` : '';
+            return `
         <div class="batch-status-bar">
             <div class="batch-status-info">
                 <span class="batch-status-icon">⏳</span>
                 <span class="batch-status-title">${state.batchStatus.active ? state.batchStatus.title : state.monitor.title}</span>
-                <span class="batch-status-detail">${state.batchStatus.active ? state.batchStatus.accountCount + '개 계정 처리 중' : state.monitor.items.length + '개 계정 진행 중'}</span>
+                <span class="batch-status-detail">${currentIndex}번째 / 총 ${total}개 처리 중${statusSummary}</span>
                 <span class="batch-status-time">${formatElapsedTime(state.batchStatus.active ? state.batchStatus.startTime : state.monitor.startTime)}</span>
             </div>
             <div class="batch-status-actions">
@@ -1220,7 +1562,8 @@ function render() {
                 <button class="btn btn-sm btn-danger" onclick="abortBatchProcess()">중지</button>
             </div>
         </div>
-        ` : ''}
+        `;
+        })() : ''}
 
         <!-- 통계 카드 + 주요 액션 버튼 -->
         <div style="padding: 24px 24px 0;">
@@ -1268,6 +1611,13 @@ function render() {
                         <div class="btn-content">
                             <span class="btn-text">바코드 다운로드</span>
                             <span class="btn-desc">zip 압축 파일</span>
+                        </div>
+                    </button>
+                    <button class="btn btn-main-action btn-secondary ${state.selectedIds.size === 0 ? 'disabled' : ''}" onclick="extractEmailList()">
+                        <span class="btn-icon">📋</span>
+                        <div class="btn-content">
+                            <span class="btn-text">아이디 추출</span>
+                            <span class="btn-desc">이메일 목록 복사</span>
                         </div>
                     </button>
                 </div>
@@ -1329,15 +1679,15 @@ function render() {
                                 <th class="resizable sortable ${state.sort.column === 'name' ? 'sorted' : ''}" style="width:70px;" onclick="toggleSort('name')">
                                     이름/전화 ${renderSortIcon('name')}
                                 </th>
-                                <th class="resizable" style="width:115px;">바코드</th>
-                                <th class="resizable" style="width:115px;">바코드이미지</th>
-                                <th class="resizable sortable ${state.sort.column === 'points' ? 'sorted' : ''}" style="width:65px;" onclick="toggleSort('points')">
+                                <th class="resizable" style="width:95px;">바코드</th>
+                                <th class="resizable" style="width:95px;">바코드이미지</th>
+                                <th class="resizable sortable ${state.sort.column === 'points' ? 'sorted' : ''}" style="width:55px;" onclick="toggleSort('points')">
                                     포인트 ${renderSortIcon('points')}
                                 </th>
-                                <th class="resizable sortable ${state.sort.column === 'couponCount' ? 'sorted' : ''}" style="width:140px;" onclick="toggleSort('couponCount')">
+                                <th class="resizable sortable ${state.sort.column === 'couponCount' ? 'sorted' : ''}" style="width:180px;" onclick="toggleSort('couponCount')">
                                     보유 쿠폰 ${renderSortIcon('couponCount')}
                                 </th>
-                                <th class="resizable" style="width:220px;">조회현황</th>
+                                <th class="resizable" style="width:260px;">조회현황</th>
                                 <th class="resizable" style="width:100px;">작업</th>
                             </tr>
                         </thead>
@@ -1397,7 +1747,7 @@ function renderAccountRow(acc, rowNum) {
     const barcode = acc.adikr_barcode || '';
 
     return `
-        <tr>
+        <tr class="${isSelected ? 'row-selected' : ''}">
             <td class="checkbox-cell">
                 <div class="checkbox-wrapper" onclick="toggleSelect(${acc.id}, !state.selectedIds.has(${acc.id}))">
                     <input type="checkbox" ${isSelected ? 'checked' : ''}
@@ -1481,6 +1831,7 @@ function renderMonitorPopup() {
             case 'success': return '✓';
             case 'error': return '✕';
             case 'warning': return '⚠';
+            case 'password_wrong': return '🔑';  // 비밀번호 오류 (주황색 키 아이콘)
             default: return '○';
         }
     };
@@ -1507,11 +1858,19 @@ function renderMonitorPopup() {
                     </div>
                     <div class="monitor-stat">
                         <div class="monitor-stat-value processing">${stats.processing}</div>
-                        <div class="monitor-stat-label">처리 중</div>
+                        <div class="monitor-stat-label">진행</div>
                     </div>
                     <div class="monitor-stat">
                         <div class="monitor-stat-value success">${stats.success}</div>
-                        <div class="monitor-stat-label">성공</div>
+                        <div class="monitor-stat-label">완료</div>
+                    </div>
+                    <div class="monitor-stat">
+                        <div class="monitor-stat-value warning">${stats.warning}</div>
+                        <div class="monitor-stat-label">패스</div>
+                    </div>
+                    <div class="monitor-stat">
+                        <div class="monitor-stat-value password-wrong">${stats.passwordWrong}</div>
+                        <div class="monitor-stat-label">비번오류</div>
                     </div>
                     <div class="monitor-stat">
                         <div class="monitor-stat-value error">${stats.error}</div>
@@ -1535,13 +1894,22 @@ function renderMonitorPopup() {
                     <ul class="monitor-list">
                         ${state.monitor.items.map((item, index) => `
                             <li class="monitor-item ${item.status}">
-                                <div class="monitor-item-index">${index + 1}</div>
+                                ${!isRunning ? `
+                                    <div class="monitor-item-check">
+                                        <input type="checkbox"
+                                            ${state.monitor.selectedIds?.has(item.id) ? 'checked' : ''}
+                                            onchange="toggleMonitorSelect(${item.id})"
+                                        />
+                                    </div>
+                                ` : `
+                                    <div class="monitor-item-index">${index + 1}</div>
+                                `}
                                 <div class="monitor-item-info">
                                     <div class="monitor-item-email">${item.email}</div>
                                     <div class="monitor-item-status">${item.message}</div>
                                 </div>
                                 <div class="monitor-item-time">
-                                    ${item.status === 'success' || item.status === 'error'
+                                    ${item.status === 'success' || item.status === 'error' || item.status === 'warning' || item.status === 'password_wrong'
                                         ? formatDuration(item.startTime, item.endTime)
                                         : item.status === 'processing'
                                             ? formatElapsedTime(item.startTime)
@@ -1556,10 +1924,21 @@ function renderMonitorPopup() {
                 <!-- 푸터 -->
                 <div class="monitor-footer">
                     <div class="monitor-footer-info">
-                        시작: <span>${state.monitor.startTime ? new Date(state.monitor.startTime).toLocaleTimeString('ko-KR') : '-'}</span>
+                        ${!isRunning ? `
+                            <label class="monitor-select-all">
+                                <input type="checkbox" onchange="toggleMonitorSelectAll(this.checked)"
+                                    ${state.monitor.selectedIds?.size === state.monitor.items.length ? 'checked' : ''}
+                                /> 전체선택
+                            </label>
+                            <span class="monitor-selected-count">${state.monitor.selectedIds?.size || 0}건 선택</span>
+                        ` : `
+                            시작: <span>${state.monitor.startTime ? new Date(state.monitor.startTime).toLocaleTimeString('ko-KR') : '-'}</span>
+                        `}
                     </div>
                     <div class="monitor-footer-actions">
                         ${!isRunning ? `
+                            ${(state.monitor.selectedIds?.size || 0) > 0 ? `<button class="btn btn-warning" onclick="retrySelectedItems()">선택 ${state.monitor.selectedIds.size}건 재처리</button>` : ''}
+                            ${stats.error > 0 ? `<button class="btn btn-outline-warning" onclick="selectFailedItems()">실패만 선택</button>` : ''}
                             <button class="btn btn-primary" onclick="closeMonitor()">닫기</button>
                         ` : `
                             <button class="btn btn-danger" onclick="abortBatchProcess()">중지</button>
@@ -1816,6 +2195,12 @@ function renderModal() {
                                 </button>
                             </div>
                             <div class="filter-date-row" style="margin-top:8px;">
+                                <label style="font-size:11px;color:#666;">조회일 이후:</label>
+                                <input type="date" class="filter-date-input" value="${state.filters.fetchAfter}"
+                                    onchange="setDateFilter('fetchAfter', this.value)" />
+                                ${state.filters.fetchAfter ? '<button class="filter-date-clear" onclick="setDateFilter(\'fetchAfter\', \'\')">✕</button>' : ''}
+                            </div>
+                            <div class="filter-date-row" style="margin-top:4px;">
                                 <label style="font-size:11px;color:#666;">조회일 이전:</label>
                                 <input type="date" class="filter-date-input" value="${state.filters.fetchBefore}"
                                     onchange="setDateFilter('fetchBefore', this.value)" />
@@ -1838,6 +2223,9 @@ function renderModal() {
                                 </button>
                                 <button class="filter-chip ${state.filters.issueStatus === 'warning' ? 'active warning' : ''}" onclick="toggleFilter('issueStatus', 'warning')">
                                     <span class="chip-dot warning"></span> 포인트 부족
+                                </button>
+                                <button class="filter-chip ${state.filters.issueStatus === 'password_wrong' ? 'active danger' : ''}" onclick="toggleFilter('issueStatus', 'password_wrong')">
+                                    <span class="chip-dot password-wrong"></span> 비밀번호 오류
                                 </button>
                                 <button class="filter-chip ${state.filters.issueStatus === 'error' ? 'active danger' : ''}" onclick="toggleFilter('issueStatus', 'error')">
                                     <span class="chip-dot danger"></span> 발급 오류
@@ -1927,9 +2315,23 @@ function renderModal() {
         const targetText = isAllActive
             ? `전체 활성 계정 ${targetCount}개`
             : `선택된 ${targetCount}개 계정`;
-        const issueFunc = isAllActive ? 'issueCouponForAllActive' : 'issueCoupon';
+        const issueFunc = isAllActive ? 'startIssueCouponForAllActive' : 'startIssueCoupon';
         const modeLabel = state.extractMode === 'web' ? '웹' : (state.extractMode === 'mobile' ? '모바일' : '웹+모바일');
         const timeEstimate = state.extractMode === 'web' ? '20~30초' : (state.extractMode === 'mobile' ? '30~40초' : '20초~1분');
+
+        // 선택된 쿠폰 타입들
+        const selected = state.selectedIssueCouponTypes || [];
+        const getOrder = (type) => {
+            const idx = selected.indexOf(type);
+            return idx >= 0 ? idx + 1 : null;
+        };
+        const isSelected = (type) => selected.includes(type);
+
+        // 선택 순서 표시 텍스트
+        const couponNames = { '10000': '1만원권', '30000': '3만원권', '50000': '5만원권', '100000': '10만원권' };
+        const selectedText = selected.length > 0
+            ? selected.map((t, i) => `${i+1}. ${couponNames[t]}`).join(' → ')
+            : '선택된 쿠폰 없음';
 
         return `
             <div class="modal-overlay" onclick="closeModal()">
@@ -1942,41 +2344,51 @@ function renderModal() {
                         <p style="margin-bottom:16px;color:#666;">
                             <strong>${targetText}</strong>에 쿠폰을 발급합니다.<br>
                             <span style="display:inline-block;margin-top:4px;padding:2px 8px;background:#e6f4ff;color:#1890ff;border-radius:4px;font-size:12px;font-weight:600;">${modeLabel} 모드</span>
-                            <span style="display:block;margin-top:8px;">발급할 쿠폰을 선택하세요.</span>
+                            <span style="display:block;margin-top:8px;">발급할 쿠폰을 <strong>클릭 순서대로</strong> 선택하세요. (다중 선택 가능)</span>
                         </p>
                         <div class="coupon-issue-grid">
-                            <div class="coupon-issue-card" onclick="${issueFunc}('10000')">
+                            <div class="coupon-issue-card ${isSelected('10000') ? 'selected' : ''}" onclick="toggleIssueCouponType('10000')">
+                                ${getOrder('10000') ? `<div class="coupon-order-badge">${getOrder('10000')}</div>` : ''}
                                 <div class="coupon-issue-points">1,500P</div>
                                 <div class="coupon-issue-arrow">→</div>
                                 <div class="coupon-issue-value">10,000원</div>
                                 <div class="coupon-issue-name">1만원 상품권</div>
                             </div>
-                            <div class="coupon-issue-card" onclick="${issueFunc}('30000')">
+                            <div class="coupon-issue-card ${isSelected('30000') ? 'selected' : ''}" onclick="toggleIssueCouponType('30000')">
+                                ${getOrder('30000') ? `<div class="coupon-order-badge">${getOrder('30000')}</div>` : ''}
                                 <div class="coupon-issue-points">3,000P</div>
                                 <div class="coupon-issue-arrow">→</div>
                                 <div class="coupon-issue-value">30,000원</div>
                                 <div class="coupon-issue-name">3만원 상품권</div>
                             </div>
-                            <div class="coupon-issue-card" onclick="${issueFunc}('50000')">
+                            <div class="coupon-issue-card ${isSelected('50000') ? 'selected' : ''}" onclick="toggleIssueCouponType('50000')">
+                                ${getOrder('50000') ? `<div class="coupon-order-badge">${getOrder('50000')}</div>` : ''}
                                 <div class="coupon-issue-points">4,000P</div>
                                 <div class="coupon-issue-arrow">→</div>
                                 <div class="coupon-issue-value">50,000원</div>
                                 <div class="coupon-issue-name">5만원 상품권</div>
                             </div>
-                            <div class="coupon-issue-card" onclick="${issueFunc}('100000')">
+                            <div class="coupon-issue-card ${isSelected('100000') ? 'selected' : ''}" onclick="toggleIssueCouponType('100000')">
+                                ${getOrder('100000') ? `<div class="coupon-order-badge">${getOrder('100000')}</div>` : ''}
                                 <div class="coupon-issue-points">6,000P</div>
                                 <div class="coupon-issue-arrow">→</div>
                                 <div class="coupon-issue-value">100,000원</div>
                                 <div class="coupon-issue-name">10만원 상품권</div>
                             </div>
                         </div>
-                        <p style="margin-top:16px;font-size:12px;color:#999;">
-                            * 포인트가 부족한 계정은 발급에 실패합니다.<br>
+                        <div style="margin-top:12px;padding:10px;background:#f6f6f6;border-radius:8px;font-size:13px;">
+                            <strong>발급 순서:</strong> ${selectedText}
+                        </div>
+                        <p style="margin-top:12px;font-size:12px;color:#999;">
+                            * 포인트가 부족한 계정은 해당 쿠폰 발급에 실패합니다.<br>
                             * 발급은 순차적으로 진행되며, 계정당 약 <strong>${timeEstimate}</strong> 소요됩니다.
                         </p>
                     </div>
                     <div class="modal-footer">
                         <button class="btn btn-default" onclick="closeModal()">취소</button>
+                        <button class="btn btn-primary" onclick="${issueFunc}()" ${selected.length === 0 ? 'disabled' : ''}>
+                            ${selected.length > 0 ? `${selected.length}개 쿠폰 발급 시작` : '쿠폰을 선택하세요'}
+                        </button>
                     </div>
                 </div>
             </div>
@@ -1986,6 +2398,21 @@ function renderModal() {
     if (state.modal === 'single-issue-coupon') {
         const modeLabel = state.extractMode === 'web' ? '웹' : (state.extractMode === 'mobile' ? '모바일' : '웹+모바일');
         const timeEstimate = state.extractMode === 'web' ? '20~30초' : (state.extractMode === 'mobile' ? '30~40초' : '20초~1분');
+
+        // 선택된 쿠폰 타입들
+        const selected = state.selectedIssueCouponTypes || [];
+        const getOrder = (type) => {
+            const idx = selected.indexOf(type);
+            return idx >= 0 ? idx + 1 : null;
+        };
+        const isSelected = (type) => selected.includes(type);
+
+        // 선택 순서 표시 텍스트
+        const couponNames = { '10000': '1만원권', '30000': '3만원권', '50000': '5만원권', '100000': '10만원권' };
+        const selectedText = selected.length > 0
+            ? selected.map((t, i) => `${i+1}. ${couponNames[t]}`).join(' → ')
+            : '선택된 쿠폰 없음';
+
         return `
             <div class="modal-overlay" onclick="closeModal()">
                 <div class="modal" style="width:500px;" onclick="event.stopPropagation()">
@@ -1997,40 +2424,51 @@ function renderModal() {
                         <p style="margin-bottom:16px;color:#666;">
                             <strong>${state.singleIssueCouponEmail || ''}</strong> 계정에 쿠폰을 발급합니다.<br>
                             <span style="display:inline-block;margin-top:4px;padding:2px 8px;background:#e6f4ff;color:#1890ff;border-radius:4px;font-size:12px;font-weight:600;">${modeLabel} 모드</span>
+                            <span style="display:block;margin-top:8px;">발급할 쿠폰을 <strong>클릭 순서대로</strong> 선택하세요. (다중 선택 가능)</span>
                         </p>
                         <div class="coupon-issue-grid">
-                            <div class="coupon-issue-card" onclick="issueCouponForAccount(${state.singleIssueCouponAccountId}, '10000')">
+                            <div class="coupon-issue-card ${isSelected('10000') ? 'selected' : ''}" onclick="toggleIssueCouponType('10000')">
+                                ${getOrder('10000') ? `<div class="coupon-order-badge">${getOrder('10000')}</div>` : ''}
                                 <div class="coupon-issue-points">1,500P</div>
                                 <div class="coupon-issue-arrow">→</div>
                                 <div class="coupon-issue-value">10,000원</div>
                                 <div class="coupon-issue-name">1만원 상품권</div>
                             </div>
-                            <div class="coupon-issue-card" onclick="issueCouponForAccount(${state.singleIssueCouponAccountId}, '30000')">
+                            <div class="coupon-issue-card ${isSelected('30000') ? 'selected' : ''}" onclick="toggleIssueCouponType('30000')">
+                                ${getOrder('30000') ? `<div class="coupon-order-badge">${getOrder('30000')}</div>` : ''}
                                 <div class="coupon-issue-points">3,000P</div>
                                 <div class="coupon-issue-arrow">→</div>
                                 <div class="coupon-issue-value">30,000원</div>
                                 <div class="coupon-issue-name">3만원 상품권</div>
                             </div>
-                            <div class="coupon-issue-card" onclick="issueCouponForAccount(${state.singleIssueCouponAccountId}, '50000')">
+                            <div class="coupon-issue-card ${isSelected('50000') ? 'selected' : ''}" onclick="toggleIssueCouponType('50000')">
+                                ${getOrder('50000') ? `<div class="coupon-order-badge">${getOrder('50000')}</div>` : ''}
                                 <div class="coupon-issue-points">4,000P</div>
                                 <div class="coupon-issue-arrow">→</div>
                                 <div class="coupon-issue-value">50,000원</div>
                                 <div class="coupon-issue-name">5만원 상품권</div>
                             </div>
-                            <div class="coupon-issue-card" onclick="issueCouponForAccount(${state.singleIssueCouponAccountId}, '100000')">
+                            <div class="coupon-issue-card ${isSelected('100000') ? 'selected' : ''}" onclick="toggleIssueCouponType('100000')">
+                                ${getOrder('100000') ? `<div class="coupon-order-badge">${getOrder('100000')}</div>` : ''}
                                 <div class="coupon-issue-points">6,000P</div>
                                 <div class="coupon-issue-arrow">→</div>
                                 <div class="coupon-issue-value">100,000원</div>
                                 <div class="coupon-issue-name">10만원 상품권</div>
                             </div>
                         </div>
-                        <p style="margin-top:16px;font-size:12px;color:#999;">
-                            * 포인트가 부족하면 발급에 실패합니다.<br>
+                        <div style="margin-top:12px;padding:10px;background:#f6f6f6;border-radius:8px;font-size:13px;">
+                            <strong>발급 순서:</strong> ${selectedText}
+                        </div>
+                        <p style="margin-top:12px;font-size:12px;color:#999;">
+                            * 포인트가 부족하면 해당 쿠폰 발급에 실패합니다.<br>
                             * 발급에 약 <strong>${timeEstimate}</strong> 소요됩니다.
                         </p>
                     </div>
                     <div class="modal-footer">
                         <button class="btn btn-default" onclick="closeModal()">취소</button>
+                        <button class="btn btn-primary" onclick="startIssueCouponForAccount()" ${selected.length === 0 ? 'disabled' : ''}>
+                            ${selected.length > 0 ? `${selected.length}개 쿠폰 발급 시작` : '쿠폰을 선택하세요'}
+                        </button>
                     </div>
                 </div>
             </div>
@@ -2177,7 +2615,14 @@ function hasActiveFilters() {
         state.filters.issueStatus !== null ||
         state.filters.expiringCoupon ||
         state.filters.has100kCoupon ||
+        state.filters.has100kCoupon2Plus ||
+        state.filters.no100kCoupon ||
+        state.filters.coupon100kCount !== null ||
+        state.filters.coupon50kCount !== null ||
+        state.filters.coupon100kExpiryBefore !== '' ||
+        state.filters.coupon100kExpiryAfter !== '' ||
         state.filters.fetchBefore !== '' ||
+        state.filters.fetchAfter !== '' ||
         state.filters.issueBefore !== '';
 }
 
@@ -2191,7 +2636,14 @@ function getActiveFilterCount() {
     if (state.filters.issueStatus !== null) count++;
     if (state.filters.expiringCoupon) count++;
     if (state.filters.has100kCoupon) count++;
+    if (state.filters.has100kCoupon2Plus) count++;
+    if (state.filters.no100kCoupon) count++;
+    if (state.filters.coupon100kCount !== null) count++;
+    if (state.filters.coupon50kCount !== null) count++;
+    if (state.filters.coupon100kExpiryBefore !== '') count++;
+    if (state.filters.coupon100kExpiryAfter !== '') count++;
     if (state.filters.fetchBefore !== '') count++;
+    if (state.filters.fetchAfter !== '') count++;
     if (state.filters.issueBefore !== '') count++;
     count += state.filters.birthdayMonths.length;
     count += state.filters.couponTypes.length;
@@ -2244,6 +2696,11 @@ function renderFilterExpandPanel() {
                     <button class="filter-link ${state.filters.fetchStatus === 'error' ? 'active' : ''}" onclick="toggleFilter('fetchStatus', 'error')">기타 오류</button>
 
                     <div class="filter-date-wrapper">
+                        <label>조회일 이후:</label>
+                        <input type="date" value="${state.filters.fetchAfter}" onchange="setDateFilter('fetchAfter', this.value)">
+                        ${state.filters.fetchAfter ? `<button class="clear-btn" onclick="setDateFilter('fetchAfter', '')">✕</button>` : ''}
+                    </div>
+                    <div class="filter-date-wrapper">
                         <label>조회일 이전:</label>
                         <input type="date" value="${state.filters.fetchBefore}" onchange="setDateFilter('fetchBefore', this.value)">
                         ${state.filters.fetchBefore ? `<button class="clear-btn" onclick="setDateFilter('fetchBefore', '')">✕</button>` : ''}
@@ -2259,6 +2716,7 @@ function renderFilterExpandPanel() {
                     <button class="filter-link ${state.filters.issueStatus === 'success' ? 'active' : ''}" onclick="toggleFilter('issueStatus', 'success')">발급완료</button>
                     <button class="filter-link ${state.filters.issueStatus === 'pending' ? 'active' : ''}" onclick="toggleFilter('issueStatus', 'pending')">미발급</button>
                     <button class="filter-link ${state.filters.issueStatus === 'warning' ? 'active' : ''}" onclick="toggleFilter('issueStatus', 'warning')">포인트 부족</button>
+                    <button class="filter-link ${state.filters.issueStatus === 'password_wrong' ? 'active' : ''}" onclick="toggleFilter('issueStatus', 'password_wrong')">비밀번호 오류</button>
                     <button class="filter-link ${state.filters.issueStatus === 'error' ? 'active' : ''}" onclick="toggleFilter('issueStatus', 'error')">발급 오류</button>
 
                     <div class="filter-date-wrapper">
@@ -2276,6 +2734,59 @@ function renderFilterExpandPanel() {
                     <button class="filter-link ${state.filters.hasCoupon === null ? 'active' : ''}" onclick="toggleFilter('hasCoupon', null)">전체</button>
                     <button class="filter-link ${state.filters.hasCoupon === true ? 'active' : ''}" onclick="toggleFilter('hasCoupon', true)">보유</button>
                     <button class="filter-link ${state.filters.hasCoupon === false ? 'active' : ''}" onclick="toggleFilter('hasCoupon', false)">미보유</button>
+                </div>
+            </div>
+
+            <!-- 10만원 상품권 -->
+            <div class="filter-expand-row">
+                <div class="filter-expand-label">10만원 상품권</div>
+                <div class="filter-expand-content">
+                    <button class="filter-link ${!state.filters.has100kCoupon && !state.filters.has100kCoupon2Plus && !state.filters.no100kCoupon ? 'active' : ''}" onclick="set100kFilter(null)">전체</button>
+                    <button class="filter-link ${state.filters.has100kCoupon ? 'active' : ''}" onclick="set100kFilter('has')">있음</button>
+                    <button class="filter-link ${state.filters.has100kCoupon2Plus ? 'active' : ''}" onclick="set100kFilter('2plus')">2장↑</button>
+                    <button class="filter-link ${state.filters.no100kCoupon ? 'active' : ''}" onclick="set100kFilter('no')">없음</button>
+                </div>
+            </div>
+
+            <!-- 10만원권 수량 -->
+            <div class="filter-expand-row">
+                <div class="filter-expand-label">10만원권 수량</div>
+                <div class="filter-expand-content">
+                    <button class="filter-link ${state.filters.coupon100kCount === null ? 'active' : ''}" onclick="setCouponCountFilter('100k', null)">전체</button>
+                    <button class="filter-link ${state.filters.coupon100kCount === 1 ? 'active' : ''}" onclick="setCouponCountFilter('100k', 1)">1장</button>
+                    <button class="filter-link ${state.filters.coupon100kCount === 2 ? 'active' : ''}" onclick="setCouponCountFilter('100k', 2)">2장</button>
+                    <button class="filter-link ${state.filters.coupon100kCount === 3 ? 'active' : ''}" onclick="setCouponCountFilter('100k', 3)">3장</button>
+                    <button class="filter-link ${state.filters.coupon100kCount === 0 ? 'active' : ''}" onclick="setCouponCountFilter('100k', 0)">0장</button>
+                </div>
+            </div>
+
+            <!-- 5만원권 수량 -->
+            <div class="filter-expand-row">
+                <div class="filter-expand-label">5만원권 수량</div>
+                <div class="filter-expand-content">
+                    <button class="filter-link ${state.filters.coupon50kCount === null ? 'active' : ''}" onclick="setCouponCountFilter('50k', null)">전체</button>
+                    <button class="filter-link ${state.filters.coupon50kCount === 1 ? 'active' : ''}" onclick="setCouponCountFilter('50k', 1)">1장</button>
+                    <button class="filter-link ${state.filters.coupon50kCount === 2 ? 'active' : ''}" onclick="setCouponCountFilter('50k', 2)">2장</button>
+                    <button class="filter-link ${state.filters.coupon50kCount === 3 ? 'active' : ''}" onclick="setCouponCountFilter('50k', 3)">3장</button>
+                    <button class="filter-link ${state.filters.coupon50kCount === 0 ? 'active' : ''}" onclick="setCouponCountFilter('50k', 0)">0장</button>
+                </div>
+            </div>
+
+            <!-- 10만원 쿠폰 만료일 -->
+            <div class="filter-expand-row">
+                <div class="filter-expand-label">10만원 만료일</div>
+                <div class="filter-expand-content">
+                    <div class="filter-date-group">
+                        <input type="date" value="${state.filters.coupon100kExpiryBefore}" onchange="setDateFilter('coupon100kExpiryBefore', this.value)">
+                        ${state.filters.coupon100kExpiryBefore ? `<button class="clear-btn" onclick="setDateFilter('coupon100kExpiryBefore', '')">✕</button>` : ''}
+                    </div>
+                    <span class="filter-hint">이전</span>
+                    <span class="filter-separator-text">/</span>
+                    <div class="filter-date-group">
+                        <input type="date" value="${state.filters.coupon100kExpiryAfter}" onchange="setDateFilter('coupon100kExpiryAfter', this.value)">
+                        ${state.filters.coupon100kExpiryAfter ? `<button class="clear-btn" onclick="setDateFilter('coupon100kExpiryAfter', '')">✕</button>` : ''}
+                    </div>
+                    <span class="filter-hint">이후</span>
                 </div>
             </div>
 
@@ -2469,7 +2980,14 @@ function clearAllFilters() {
         issueStatus: null,
         expiringCoupon: false,
         has100kCoupon: false,
+        has100kCoupon2Plus: false,
+        no100kCoupon: false,
+        coupon100kCount: null,
+        coupon50kCount: null,
+        coupon100kExpiryBefore: '',
+        coupon100kExpiryAfter: '',
         fetchBefore: '',
+        fetchAfter: '',
         issueBefore: '',
     };
     state.currentPage = 1;
@@ -2480,7 +2998,9 @@ function clearAllFilters() {
 function toggleExpiringCouponFilter() {
     state.filters.expiringCoupon = !state.filters.expiringCoupon;
     if (state.filters.expiringCoupon) {
-        state.filters.has100kCoupon = false; // 다른 필터 해제
+        state.filters.has100kCoupon = false;
+        state.filters.has100kCoupon2Plus = false;
+        state.filters.no100kCoupon = false;
     }
     state.currentPage = 1;
     render();
@@ -2490,7 +3010,40 @@ function toggleExpiringCouponFilter() {
 function toggle100kCouponFilter() {
     state.filters.has100kCoupon = !state.filters.has100kCoupon;
     if (state.filters.has100kCoupon) {
-        state.filters.expiringCoupon = false; // 다른 필터 해제
+        state.filters.expiringCoupon = false;
+        state.filters.has100kCoupon2Plus = false; // 상호 배타
+        state.filters.no100kCoupon = false; // 상호 배타
+    }
+    state.currentPage = 1;
+    render();
+}
+
+// 10만원 상품권 필터 설정 (필터 패널용)
+function set100kFilter(value) {
+    // 모든 10만원 관련 필터 초기화
+    state.filters.has100kCoupon = false;
+    state.filters.has100kCoupon2Plus = false;
+    state.filters.no100kCoupon = false;
+
+    if (value === 'has') {
+        state.filters.has100kCoupon = true;
+    } else if (value === '2plus') {
+        state.filters.has100kCoupon2Plus = true;
+    } else if (value === 'no') {
+        state.filters.no100kCoupon = true;
+    }
+    // value === null 이면 모두 false (전체)
+
+    state.currentPage = 1;
+    render();
+}
+
+// 쿠폰 수량 필터 설정
+function setCouponCountFilter(type, count) {
+    if (type === '100k') {
+        state.filters.coupon100kCount = count;
+    } else if (type === '50k') {
+        state.filters.coupon50kCount = count;
     }
     state.currentPage = 1;
     render();
@@ -2537,13 +3090,19 @@ function showBulkIssueCouponModal() {
 
     // 전체 활성 계정을 선택 상태로 설정하고 기존 모달 활용
     state.bulkIssueAllActive = true;
+    state.selectedIssueCouponTypes = []; // 선택 초기화
     state.modal = 'issue-coupon';
     render();
 }
 
-// 전체 활성 계정 쿠폰 발급 실행
-async function issueCouponForAllActive(couponType) {
+// 전체 활성 계정 쿠폰 발급 실행 - couponTypes: 배열 또는 단일값
+async function issueCouponForAllActive(couponTypes) {
     closeModal();
+
+    // 배열로 정규화
+    const couponTypesArray = Array.isArray(couponTypes) ? couponTypes : [couponTypes];
+    const couponNames = { '10000': '1만원권', '30000': '3만원권', '50000': '5만원권', '100000': '10만원권' };
+    const couponTypesStr = couponTypesArray.map(ct => couponNames[ct] || `${ct}원`).join(', ');
 
     // 모바일 모드일 때 Appium 실행 확인
     if (state.extractMode === 'mobile') {
@@ -2568,12 +3127,12 @@ async function issueCouponForAllActive(couponType) {
 
     const modeLabel = state.extractMode === 'web' ? '웹' : '모바일';
     state.bulkIssueAllActive = false;
-    openMonitor('issue', `[${modeLabel}] 쿠폰 일괄 발급 (${couponType.toLocaleString()}원)`, activeAccounts);
+    openMonitor('issue', `[${modeLabel}] 쿠폰 일괄 발급 (${couponTypesStr})`, activeAccounts);
 
     try {
         await api('/issue-coupon/bulk', {
             method: 'POST',
-            body: { ids, coupon_type: couponType, mode: state.extractMode }
+            body: { ids, coupon_types: couponTypesArray, mode: state.extractMode }
         });
     } catch (error) {
         notifyError('쿠폰 발급 실패: ' + error.message);
@@ -2663,7 +3222,7 @@ function renderTableOnly() {
 
 function goToPage(page) {
     state.currentPage = page;
-    render();
+    renderPreservingScroll();
 }
 
 function changePageSize(value) {
@@ -3038,6 +3597,20 @@ function copyText(text) {
     notifySuccess('복사됨', 1500);
 }
 
+// 선택된 계정의 이메일 목록 추출
+function extractEmailList() {
+    if (state.selectedIds.size === 0) {
+        notifyWarning('계정을 선택하세요');
+        return;
+    }
+    const emails = state.accounts
+        .filter(acc => state.selectedIds.has(acc.id))
+        .map(acc => acc.email)
+        .join('\n');
+    navigator.clipboard.writeText(emails);
+    notifySuccess(`${state.selectedIds.size}개 이메일이 복사되었습니다`);
+}
+
 // Electron IPC
 const { ipcRenderer } = require('electron');
 
@@ -3069,6 +3642,8 @@ async function connectMobile() {
         ipcRenderer.invoke('disconnect-mobile');
         state.mobileConnected = false;
         state.mobileConnecting = false;
+        state.mobileDeviceType = null;
+        state.mobileUdid = null;
         render();
         return;
     }
@@ -3080,9 +3655,15 @@ async function connectMobile() {
         const result = await ipcRenderer.invoke('connect-mobile');
         state.mobileConnecting = false;
         state.mobileConnected = result.success;
+        state.mobileDeviceType = result.deviceType || null;
+        state.mobileUdid = result.udid || null;
 
         if (result.success) {
-            notifySuccess('모바일 연결 완료');
+            if (result.deviceType === 'real_phone') {
+                notifySuccess(`실제 폰 연결 완료 (${result.udid})`);
+            } else {
+                notifySuccess('에뮬레이터 연결 완료');
+            }
         } else {
             notifyError(result.error || '모바일 연결 실패');
         }
@@ -3362,6 +3943,8 @@ async function checkMobileStatus() {
         const result = await ipcRenderer.invoke('check-mobile-status');
         const wasConnected = state.mobileConnected;
         state.mobileConnected = result.allConnected;
+        state.mobileDeviceType = result.deviceType || null;
+        state.mobileUdid = result.udid || null;
 
         // 상태가 변경된 경우에만 렌더링
         if (wasConnected !== state.mobileConnected) {
@@ -3416,3 +3999,93 @@ document.addEventListener('keyup', function(e) {
         renderTableOnly();
     }
 });
+
+// ========== 로그 모달 기능 ==========
+
+let logRefreshInterval = null;
+
+function showLogModal() {
+    state.modal = { type: 'log' };
+    state.logPaused = false;
+    render();
+
+    // 로그 즉시 로드
+    setTimeout(() => {
+        loadLogs();
+        // 2초마다 자동 새로고침
+        logRefreshInterval = setInterval(() => {
+            if (!state.logPaused) {
+                loadLogs();
+            }
+        }, 2000);
+    }, 100);
+}
+
+function loadLogs() {
+    const logContent = document.getElementById('logContent');
+    if (!logContent) return;
+
+    fetch('http://localhost:8003/api/logs')
+        .then(res => res.json())
+        .then(logs => {
+            if (!Array.isArray(logs)) return;
+
+            logContent.innerHTML = '';
+            logs.forEach(log => {
+                const line = document.createElement('div');
+                line.style.cssText = 'padding:2px 0;border-bottom:1px solid #333;word-break:break-all;';
+
+                const msg = log.message || '';
+                if (msg.startsWith('[PY]')) {
+                    line.style.color = '#69b1ff';
+                } else if (msg.startsWith('[PY-ERR]')) {
+                    line.style.color = '#ff7875';
+                } else if (msg.includes('성공')) {
+                    line.style.color = '#95de64';
+                } else if (msg.includes('오류') || msg.includes('실패')) {
+                    line.style.color = '#ff7875';
+                }
+
+                line.textContent = `[${log.timestamp}] ${msg}`;
+                logContent.appendChild(line);
+            });
+
+            logContent.scrollTop = logContent.scrollHeight;
+        })
+        .catch(err => {
+            console.error('로그 로드 실패:', err);
+            logContent.innerHTML = '<div style="color:#ff7875;">로그 로드 실패: ' + err.message + '</div>';
+        });
+}
+
+function disconnectLogWebSocket() {
+    if (logRefreshInterval) {
+        clearInterval(logRefreshInterval);
+        logRefreshInterval = null;
+    }
+}
+
+function refreshLogs() {
+    loadLogs();
+}
+
+function toggleLogPause() {
+    state.logPaused = !state.logPaused;
+    const btn = document.getElementById('logPauseBtn');
+    if (btn) {
+        btn.textContent = state.logPaused ? '▶ 재생' : '❚❚ 일시중지';
+        btn.className = state.logPaused ? 'btn btn-success' : 'btn btn-warning';
+    }
+}
+
+function clearLogView() {
+    const logContent = document.getElementById('logContent');
+    if (logContent) {
+        logContent.innerHTML = '';
+    }
+}
+
+function showGuideModal() {
+    state.modal = { type: 'guide' };
+    render();
+}

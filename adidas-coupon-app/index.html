@@ -896,6 +896,15 @@
             background: #f5f5f5;
         }
 
+        /* 선택된 행 스타일 */
+        tr.row-selected {
+            background: #e6f7ff !important;
+        }
+
+        tr.row-selected:hover {
+            background: #bae7ff !important;
+        }
+
         .checkbox-cell {
             width: 50px;
             text-align: center;
@@ -1040,20 +1049,30 @@
             background: white;
             border: 1px solid #d9d9d9;
             border-radius: 6px;
-            padding: 8px;
+            padding: 6px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
             z-index: 1000;
             flex-direction: column;
-            gap: 6px;
-            min-width: 240px;
+            gap: 4px;
+            min-width: 180px;
         }
 
         .coupon-hidden-list.show {
             display: flex;
         }
 
+        /* 쿠폰 목록 확장 시 overflow 허용 */
+        .coupon-list:has(.coupon-hidden-list.show) {
+            overflow: visible;
+        }
+
+        td:has(.coupon-hidden-list.show) {
+            overflow: visible;
+        }
+
         .coupon-hidden-list .coupon-card {
             margin: 0;
+            max-width: 100%;
         }
 
         /* 숨김 클래스 */
@@ -1097,6 +1116,11 @@
         .status-line.status-processing {
             background: #e6f7ff;
             color: #1890ff;
+        }
+
+        .status-line.status-password-wrong {
+            background: #fff7e6;
+            color: #ff7f00;
         }
 
         .status-line.status-warning {
@@ -1188,6 +1212,16 @@
             color: #ffd666;
         }
 
+        .status-table .cell-password-wrong {
+            background: #fff7e6;
+        }
+        .status-table .cell-password-wrong .cell-text {
+            color: #ff7f00;
+        }
+        .status-table .cell-password-wrong .cell-time {
+            color: #ffab40;
+        }
+
         .status-table .cell-processing {
             background: #e6f7ff;
         }
@@ -1218,6 +1252,109 @@
         }
         .status-table .cell-muted .cell-time {
             color: #bfbfbf;
+        }
+
+        /* 간소화된 상태 테이블 (정보조회/쿠폰발급만) */
+        .status-table-simple {
+            border-collapse: collapse;
+            font-size: 11px;
+            width: 100%;
+        }
+        .status-table-simple td {
+            padding: 4px 8px;
+            border: 1px solid #e8e8e8;
+        }
+        .status-table-simple .row-label {
+            background: #fafafa;
+            color: #666;
+            font-weight: 600;
+            font-size: 10px;
+            width: 60px;
+            text-align: center;
+        }
+        .status-table-simple .status-cell {
+            text-align: left;
+        }
+        .status-table-simple .cell-text {
+            font-weight: 600;
+            font-size: 11px;
+        }
+        .status-table-simple .cell-time {
+            font-size: 9px;
+            color: #888;
+            margin-left: 4px;
+        }
+        .status-table-simple .cell-content {
+            display: inline;
+        }
+        .status-table-simple .cell-none {
+            color: #ccc;
+        }
+        .status-table-simple .cell-success {
+            background: #f6ffed;
+        }
+        .status-table-simple .cell-success .cell-text,
+        .status-table-simple .cell-success .cell-content {
+            color: #52c41a;
+        }
+        .status-table-simple .cell-error {
+            background: #fff2f0;
+        }
+        .status-table-simple .cell-error .cell-text,
+        .status-table-simple .cell-error .cell-content {
+            color: #ff4d4f;
+        }
+        .status-table-simple .cell-warning {
+            background: #fffbe6;
+        }
+        .status-table-simple .cell-warning .cell-text,
+        .status-table-simple .cell-warning .cell-content {
+            color: #faad14;
+        }
+        .status-table-simple .cell-password-wrong {
+            background: #fff7e6;
+        }
+        .status-table-simple .cell-password-wrong .cell-text,
+        .status-table-simple .cell-password-wrong .cell-content {
+            color: #ff7f00;
+        }
+        .status-table-simple .cell-processing {
+            background: #e6f7ff;
+        }
+        .status-table-simple .cell-processing .cell-text,
+        .status-table-simple .cell-processing .cell-content {
+            color: #1890ff;
+        }
+        .status-table-simple .cell-waiting {
+            background: #f5f5f5;
+        }
+        .status-table-simple .cell-waiting .cell-text,
+        .status-table-simple .cell-waiting .cell-content {
+            color: #8c8c8c;
+        }
+
+        /* 다중 쿠폰 상태 줄바꿈 */
+        .coupon-status-line {
+            display: block;
+            font-size: 10px;
+            font-weight: 600;
+            padding: 2px 0;
+            border-bottom: 1px dashed #eee;
+        }
+        .coupon-status-line:last-child {
+            border-bottom: none;
+        }
+        .coupon-status-line.cell-success {
+            color: #52c41a;
+            background: transparent;
+        }
+        .coupon-status-line.cell-warning {
+            color: #faad14;
+            background: transparent;
+        }
+        .coupon-status-line.cell-error {
+            color: #ff4d4f;
+            background: transparent;
         }
 
         /* 쿠폰 발급 상태 태그 */
@@ -1251,27 +1388,31 @@
             flex-direction: column;
             gap: 3px;
             position: relative;
-            overflow: visible !important;
+            overflow: hidden;
+            max-width: 100%;
         }
 
-        /* 쿠폰 컬럼 td에 overflow visible 적용 */
+        /* 쿠폰 컬럼 td - 내용이 넘치지 않도록 */
         td:has(.coupon-list) {
-            overflow: visible !important;
+            overflow: hidden;
+            position: relative;
         }
 
         /* 쿠폰 카드 스타일 (새 디자인) */
         .coupon-card {
             display: flex;
-            width: 220px;
+            width: 100%;
+            max-width: 200px;
             height: 50px;
-            border-radius: 8px;
-            overflow: visible;
+            border-radius: 6px;
+            overflow: hidden;
             cursor: pointer;
             transition: all 0.2s;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             position: relative;
             background: #166534;
             border: 2px solid transparent;
+            flex-shrink: 0;
         }
 
         .coupon-card:hover {
@@ -1285,45 +1426,29 @@
             background: #6b7280;
         }
 
-        /* 노치 장식 (쿠폰 티켓 느낌) */
-        .coupon-card::before,
-        .coupon-card::after {
-            content: '';
-            position: absolute;
-            width: 10px;
-            height: 10px;
-            background: #f5f5f5;
-            border-radius: 50%;
-            top: 50%;
-            transform: translateY(-50%);
-        }
-        .coupon-card::before {
-            left: -5px;
-        }
-        .coupon-card::after {
-            right: -5px;
-        }
+        /* 노치 장식 제거 - 컴팩트한 디자인 */
 
         .coupon-card-left {
             flex: 1;
             display: flex;
             flex-direction: column;
             justify-content: center;
-            padding: 6px 12px 6px 14px;
+            padding: 5px 10px 5px 12px;
             color: white;
             position: relative;
             min-width: 0;
+            overflow: hidden;
         }
 
         .coupon-card-top {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 6px;
         }
 
         .coupon-card-logo {
-            width: 28px;
-            height: 18px;
+            width: 26px;
+            height: 17px;
             filter: brightness(0) invert(1);
             flex-shrink: 0;
         }
@@ -1333,21 +1458,26 @@
             font-weight: 700;
             line-height: 1.1;
             white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .coupon-card-code {
             display: inline-flex;
             align-items: center;
-            gap: 4px;
-            font-size: 10px;
+            gap: 3px;
+            font-size: 9px;
             font-weight: 600;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.3px;
             margin-top: 3px;
             background: #fef9c3;
             color: #713f12;
             padding: 2px 6px;
             border-radius: 3px;
-            max-width: fit-content;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         .coupon-card-code .copy-icon {
@@ -1360,13 +1490,13 @@
         }
 
         .coupon-card-right {
-            width: 52px;
+            width: 48px;
             background: #fef9c3;
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            padding: 4px 6px;
+            padding: 4px 5px;
             border-left: 1px dashed #a3a3a3;
             flex-shrink: 0;
             border-radius: 0 6px 6px 0;
@@ -1679,6 +1809,7 @@
         .chip-dot.success { background: #10b981; }
         .chip-dot.danger { background: #ef4444; }
         .chip-dot.warning { background: #f59e0b; }
+        .chip-dot.password-wrong { background: #ff7f00; }
 
         .filter-chip.active .chip-dot {
             background: white;
@@ -2703,11 +2834,35 @@
             border: 2px solid #52c41a;
         }
 
+        /* 선택된 쿠폰 카드 스타일 */
+        .coupon-issue-card.selected {
+            border: 2px solid #52c41a;
+            background: linear-gradient(135deg, #1e4d2b 0%, #2d4a3a 100%);
+        }
+
+        /* 순서 배지 스타일 */
+        .coupon-order-badge {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            width: 24px;
+            height: 24px;
+            background: #52c41a;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 700;
+            color: white;
+            z-index: 1;
+        }
+
         /* ===== 모니터링 팝업 ===== */
         .monitor-modal {
             background: #ffffff;
             border-radius: 12px;
-            width: 700px;
+            width: 720px;
             max-width: 95vw;
             max-height: 85vh;
             overflow: hidden;
@@ -2771,9 +2926,9 @@
 
         .monitor-stats {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 12px;
-            padding: 16px 24px;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 4px;
+            padding: 12px 16px;
             background: #f9fafb;
             border-bottom: 1px solid #e5e7eb;
         }
@@ -2783,7 +2938,7 @@
         }
 
         .monitor-stat-value {
-            font-size: 24px;
+            font-size: 20px;
             font-weight: 700;
             color: #1a1a2e;
         }
@@ -2800,10 +2955,18 @@
             color: #1890ff;
         }
 
+        .monitor-stat-value.warning {
+            color: #faad14;
+        }
+
+        .monitor-stat-value.password-wrong {
+            color: #ff7f00;
+        }
+
         .monitor-stat-label {
-            font-size: 11px;
+            font-size: 10px;
             color: #6b7280;
-            margin-top: 4px;
+            margin-top: 2px;
         }
 
         .monitor-progress {
@@ -2883,6 +3046,10 @@
             background: #fffbe6;
         }
 
+        .monitor-item.password_wrong {
+            background: #fff7e6;
+        }
+
         .monitor-item-index {
             width: 32px;
             height: 32px;
@@ -2917,6 +3084,61 @@
         }
 
         .monitor-item.warning .monitor-item-index {
+            background: #faad14;
+            color: white;
+        }
+
+        .monitor-item.password_wrong .monitor-item-index {
+            background: #ff7f00;
+            color: white;
+        }
+
+        .monitor-item-check {
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .monitor-item-check input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+            accent-color: #1890ff;
+        }
+
+        .monitor-select-all {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: #6b7280;
+            cursor: pointer;
+        }
+
+        .monitor-select-all input[type="checkbox"] {
+            width: 14px;
+            height: 14px;
+            cursor: pointer;
+            accent-color: #1890ff;
+        }
+
+        .monitor-selected-count {
+            font-size: 12px;
+            color: #1890ff;
+            font-weight: 500;
+            margin-left: 12px;
+        }
+
+        .btn-outline-warning {
+            background: transparent;
+            border: 1px solid #faad14;
+            color: #faad14;
+        }
+
+        .btn-outline-warning:hover {
             background: #faad14;
             color: white;
         }
@@ -2957,6 +3179,10 @@
             color: #faad14;
         }
 
+        .monitor-item.password_wrong .monitor-item-status {
+            color: #ff7f00;
+        }
+
         .monitor-item-time {
             font-size: 11px;
             color: #9ca3af;
@@ -2989,6 +3215,10 @@
 
         .monitor-item.warning .monitor-item-icon {
             color: #faad14;
+        }
+
+        .monitor-item.password_wrong .monitor-item-icon {
+            color: #ff7f00;
         }
 
         .monitor-footer {
@@ -3172,6 +3402,18 @@
             flex-wrap: wrap;
             gap: 6px;
             align-items: center;
+        }
+
+        .filter-hint {
+            font-size: 12px;
+            color: #888;
+            margin-left: 4px;
+        }
+
+        .filter-separator-text {
+            font-size: 12px;
+            color: #ccc;
+            margin: 0 8px;
         }
 
         /* 필터 링크 스타일 (밑줄 활성화) */

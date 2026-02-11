@@ -38,8 +38,19 @@ try:
     from selenium.webdriver.support import expected_conditions as EC
     from selenium.webdriver.common.by import By
     APPIUM_AVAILABLE = True
-except ImportError:
+
+    # 공통 로그인 모듈 임포트
+    from adidas_login import (
+        login_with_driver,
+        logout_with_driver,
+        clear_webview_cookies,
+        get_token_from_webview,
+        wait_for_element,
+        InstanceManager,
+    )
+except ImportError as e:
     APPIUM_AVAILABLE = False
+    print(f"모듈 임포트 오류: {e}")
     print("Appium 라이브러리가 설치되지 않았습니다.")
     print("설치: pip install Appium-Python-Client")
 
@@ -63,47 +74,6 @@ def get_connected_device():
     except Exception as e:
         print(f"ADB 오류: {e}")
     return None
-
-
-def clear_webview_cookies(driver) -> bool:
-    """
-    웹뷰 쿠키만 삭제 (로그아웃 실패 시 사용)
-    - 앱 데이터는 유지하고 로그인 토큰만 삭제
-    """
-    try:
-        print("  웹뷰 쿠키 삭제 중...")
-
-        # 웹뷰 컨텍스트로 전환하여 쿠키 삭제
-        contexts = driver.contexts
-        webview_contexts = [ctx for ctx in contexts if 'WEBVIEW' in ctx and 'Terrace' not in ctx]
-
-        cookies_deleted = False
-        for ctx in webview_contexts:
-            try:
-                driver.switch_to.context(ctx)
-                driver.delete_all_cookies()
-                print(f"  {ctx} 쿠키 삭제 완료")
-                cookies_deleted = True
-            except Exception as e:
-                print(f"  {ctx} 쿠키 삭제 실패: {e}")
-
-        # 네이티브로 복귀
-        driver.switch_to.context('NATIVE_APP')
-
-        if cookies_deleted:
-            print("  웹뷰 쿠키 삭제 완료")
-            return True
-        else:
-            print("  삭제할 웹뷰가 없음")
-            return False
-
-    except Exception as e:
-        print(f"  웹뷰 쿠키 삭제 오류: {e}")
-        try:
-            driver.switch_to.context('NATIVE_APP')
-        except:
-            pass
-        return False
 
 
 def test_api_with_token(access_token: str) -> Dict[str, Any]:
@@ -175,6 +145,7 @@ def test_api_with_token(access_token: str) -> Dict[str, Any]:
 
     # 4. 쿠폰
     print("\n[4/4] 쿠폰 조회...")
+    results['vouchers'] = []  # 기본값: 빈 배열
     try:
         resp = requests.get(
             'https://www.adidas.co.kr/api/account/loyalty/vouchers',
@@ -182,8 +153,8 @@ def test_api_with_token(access_token: str) -> Dict[str, Any]:
         )
         if resp.status_code == 200:
             data = resp.json()
-            results['vouchers'] = data
             if isinstance(data, list):
+                results['vouchers'] = data
                 print(f"  쿠폰 수: {len(data)}개")
                 for v in data:
                     name = v.get('couponLabel') or v.get('name', 'N/A')
@@ -192,10 +163,12 @@ def test_api_with_token(access_token: str) -> Dict[str, Any]:
                     if expire != 'N/A':
                         expire = expire[:10]
                     print(f"    - {name}: {code} (만료: {expire})")
+            else:
+                print(f"  쿠폰 수: 0개")
         else:
-            print(f"  실패: HTTP {resp.status_code}")
+            print(f"  실패: HTTP {resp.status_code} (쿠폰 0개로 처리)")
     except Exception as e:
-        print(f"  오류: {e}")
+        print(f"  오류: {e} (쿠폰 0개로 처리)")
 
     return results
 
@@ -274,385 +247,6 @@ def check_and_handle_error_screen(driver) -> bool:
     except Exception as e:
         print(f"  에러 화면 체크 중 예외: {e}")
         return False
-
-
-def login_with_driver(driver, email: str, password: str, is_batch_continuation: bool = False) -> tuple:
-    """
-    웹뷰 컨텍스트에서 로그인하여 토큰 추출
-    Args:
-        driver: Appium 드라이버
-        email: 이메일
-        password: 비밀번호
-        is_batch_continuation: 배치 모드에서 첫 번째 계정 이후인지 여부 (True면 대기 시간 최소화)
-    Returns: (success: bool, token: Optional[str])
-    """
-    try:
-        print("=" * 60)
-        print("Adidas 로그인 (웹뷰 방식)")
-        print("=" * 60)
-        print(f"계정: {email}")
-        if is_batch_continuation:
-            print("  [배치 모드] 빠른 처리 활성화\n")
-        else:
-            print()
-
-        # [0단계] 배치 모드에서 이전 계정 쿠키 삭제 (중요!)
-        if is_batch_continuation:
-            print("[0단계] 이전 계정 쿠키 삭제")
-            clear_webview_cookies(driver)
-
-        # [1단계] 딥링크로 로그인 화면 직접 이동
-        print("[1단계] 로그인 화면 이동 (딥링크)")
-        driver.execute_script("mobile: deepLink", {
-            "url": "adidas://login",
-            "package": "com.adidas.app"
-        })
-        print("  adidas://login 딥링크 실행")
-        time.sleep(1.5)  # 로그인 화면 로드 대기
-
-        # 에러 화면 체크 (계정 차단 등으로 인한 오류 화면)
-        if check_and_handle_error_screen(driver):
-            # 에러 화면이 감지되면 실패 반환 (다시 시도 버튼은 이미 클릭됨)
-            return (False, None)
-
-        # [2단계] 웹뷰 컨텍스트로 전환 (아디다스 앱 내 웹뷰)
-        print("\n[2단계] 웹뷰 컨텍스트 전환")
-
-        time.sleep(1)  # 웹뷰 로딩 대기 (2초에서 1초로 단축)
-
-        adidas_webview = None
-        start_wait = time.time()
-        max_wait = 10  # 최대 10초로 단축 (15초에서)
-
-        while time.time() - start_wait < max_wait:
-            contexts = driver.contexts
-            webview_contexts = [ctx for ctx in contexts if 'WEBVIEW' in ctx and 'Terrace' not in ctx]
-
-            if webview_contexts:
-                print(f"  사용 가능한 웹뷰: {webview_contexts}")
-
-            # 각 웹뷰를 순회하면서 아디다스 URL을 가진 것 찾기
-            for ctx in webview_contexts:
-                try:
-                    driver.switch_to.context(ctx)
-                    url = driver.current_url
-                    print(f"  {ctx} URL: {url}")
-
-                    if 'adidas' in url.lower():
-                        adidas_webview = ctx
-                        print(f"  아디다스 웹뷰 발견: {ctx}")
-                        break
-                    else:
-                        # 아디다스가 아니면 네이티브로 복귀
-                        driver.switch_to.context('NATIVE_APP')
-                except Exception as e:
-                    print(f"  {ctx} 접근 오류: {e}")
-                    try:
-                        driver.switch_to.context('NATIVE_APP')
-                    except:
-                        pass
-
-            if adidas_webview:
-                elapsed = time.time() - start_wait
-                print(f"  아디다스 웹뷰 확정: {adidas_webview} ({elapsed:.1f}초)")
-                break
-
-            time.sleep(0.3)  # 0.3초마다 확인 (0.5초에서 단축)
-
-        if not adidas_webview:
-            print("  아디다스 웹뷰를 찾을 수 없습니다")
-            # 네이티브 방식으로 폴백
-            driver.switch_to.context('NATIVE_APP')
-            return login_native_fallback(driver, email, password)
-
-        # 이미 아디다스 웹뷰로 전환된 상태
-
-        # [3단계] 웹뷰에서 로그인
-        print("\n[3단계] 웹뷰에서 로그인")
-        current_url = driver.current_url
-        print(f"  현재 URL: {current_url}")
-
-        # ★ 중요: 로그인 전 기존 토큰 쿠키 삭제 (이전 계정 토큰 제거)
-        try:
-            old_cookies = driver.get_cookies()
-            token_cookies_to_delete = ['account.grant.accessToken', 'account.grant.refreshToken']
-            deleted_any = False
-            for cookie in old_cookies:
-                if cookie.get('name') in token_cookies_to_delete:
-                    driver.delete_cookie(cookie.get('name'))
-                    print(f"  기존 토큰 쿠키 삭제: {cookie.get('name')}")
-                    deleted_any = True
-            if deleted_any:
-                print(f"  이전 계정 토큰 삭제 완료 (새 로그인 준비)")
-        except Exception as e:
-            print(f"  토큰 쿠키 삭제 실패 (무시): {e}")
-
-        # 이메일 입력 - 우선순위가 높은 셀렉터를 먼저 시도 (최적화)
-        email_input = None
-        # 가장 흔한 셀렉터를 먼저 시도
-        email_selectors_priority = [
-            'input[name="email"]',
-            'input[type="email"]',
-            '#login\\.email\\.input',
-        ]
-        # 대체 셀렉터
-        email_selectors_fallback = [
-            'input[id*="email"]',
-            'input[data-auto-id="login-email-input"]',
-            '#email',
-        ]
-
-        start_find = time.time()
-        max_find_wait = 5  # 최대 5초로 단축
-
-        while time.time() - start_find < max_find_wait:
-            # 먼저 우선순위 높은 셀렉터 시도
-            for selector in email_selectors_priority:
-                try:
-                    email_input = driver.find_element(By.CSS_SELECTOR, selector)
-                    if email_input and email_input.is_displayed():
-                        elapsed = time.time() - start_find
-                        print(f"  이메일 필드 발견: {selector} ({elapsed:.1f}초)")
-                        break
-                except:
-                    continue
-
-            if email_input:
-                break
-
-            # 우선순위 셀렉터로 못 찾으면 대체 셀렉터 시도
-            for selector in email_selectors_fallback:
-                try:
-                    email_input = driver.find_element(By.CSS_SELECTOR, selector)
-                    if email_input and email_input.is_displayed():
-                        elapsed = time.time() - start_find
-                        print(f"  이메일 필드 발견 (대체): {selector} ({elapsed:.1f}초)")
-                        break
-                except:
-                    continue
-
-            if email_input:
-                break
-
-            time.sleep(0.2)  # 0.2초마다 확인 (0.3초에서 단축)
-
-        if email_input:
-            try:
-                email_input.clear()
-                email_input.send_keys(email)
-                print(f"  이메일 입력 완료")
-            except Exception as e:
-                print(f"  이메일 입력 실패: {e}")
-                driver.switch_to.context('NATIVE_APP')
-                return (False, None)
-        else:
-            print(f"  이메일 필드 찾기 실패 - 모든 셀렉터 시도 완료")
-            # 쿠키 확인
-            cookies = driver.get_cookies()
-            print(f"  현재 쿠키 수: {len(cookies)}")
-            for cookie in cookies:
-                if cookie.get('name') == 'account.grant.accessToken':
-                    print("  토큰 발견!")
-                    driver.switch_to.context('NATIVE_APP')
-                    return (True, cookie['value'])
-
-            # 페이지 소스 전체 저장 (디버깅용)
-            try:
-                debug_html = driver.page_source
-                with open('debug_webview_page.html', 'w', encoding='utf-8') as f:
-                    f.write(debug_html)
-                print("  디버깅용 HTML 저장: debug_webview_page.html")
-            except:
-                pass
-
-            driver.switch_to.context('NATIVE_APP')
-            return (False, None)
-
-        # 비밀번호 입력 - 최적화된 셀렉터 순서
-        password_input = None
-        # 가장 흔한 셀렉터를 먼저 시도
-        password_selectors = [
-            'input[type="password"]',
-            'input[name="password"]',
-            '#login\\.password\\.input',
-            'input[id*="password"]',
-        ]
-
-        for selector in password_selectors:
-            try:
-                password_input = driver.find_element(By.CSS_SELECTOR, selector)
-                if password_input and password_input.is_displayed():
-                    print(f"  비밀번호 필드 발견: {selector}")
-                    break
-                password_input = None
-            except:
-                continue
-
-        if password_input:
-            try:
-                password_input.clear()
-                password_input.send_keys(password)
-                print(f"  비밀번호 입력 완료")
-            except Exception as e:
-                print(f"  비밀번호 입력 실패: {e}")
-                driver.switch_to.context('NATIVE_APP')
-                return (False, None)
-        else:
-            print(f"  비밀번호 필드 찾기 실패")
-            driver.switch_to.context('NATIVE_APP')
-            return (False, None)
-
-        # 로그인 버튼 클릭 - 최적화된 셀렉터 순서
-        login_btn = None
-        # 가장 흔한 셀렉터를 먼저 시도
-        login_selectors = [
-            'button[type="submit"]',
-            '#login-submit-button',
-            'input[type="submit"]',
-        ]
-
-        for selector in login_selectors:
-            try:
-                login_btn = driver.find_element(By.CSS_SELECTOR, selector)
-                if login_btn and login_btn.is_displayed():
-                    print(f"  로그인 버튼 발견: {selector}")
-                    break
-                login_btn = None
-            except:
-                continue
-
-        # CSS selector로 못 찾으면 XPath로 시도
-        if not login_btn:
-            xpath_selectors = [
-                '//button[@type="submit"]',
-                '//button[contains(text(), "로그인")]',
-            ]
-            for xpath in xpath_selectors:
-                try:
-                    login_btn = driver.find_element(By.XPATH, xpath)
-                    if login_btn and login_btn.is_displayed():
-                        print(f"  로그인 버튼 발견 (XPath): {xpath}")
-                        break
-                    login_btn = None
-                except:
-                    continue
-
-        if login_btn:
-            try:
-                login_btn.click()
-                print(f"  로그인 버튼 클릭")
-            except Exception as e:
-                print(f"  로그인 버튼 클릭 실패: {e}")
-                driver.switch_to.context('NATIVE_APP')
-                return (False, None)
-        else:
-            print(f"  로그인 버튼 찾기 실패")
-            driver.switch_to.context('NATIVE_APP')
-            return (False, None)
-
-        # [4단계] 토큰 추출 대기
-        print("\n[4단계] 토큰 추출 대기")
-        access_token = None
-        start_time = time.time()
-        max_wait = 20
-
-        while time.time() - start_time < max_wait:
-            try:
-                cookies = driver.get_cookies()
-
-                # cookies가 None이면 스킵
-                if cookies is None:
-                    time.sleep(0.5)
-                    continue
-
-                # 디버깅: 쿠키 목록 출력 (5초마다)
-                elapsed = int(time.time() - start_time)
-                if elapsed % 5 == 0:
-                    cookie_names = [c.get('name', '') for c in cookies]
-                    print(f"  쿠키 ({len(cookies)}개): {cookie_names[:10]}...")
-
-                for cookie in cookies:
-                    if cookie.get('name') == 'account.grant.accessToken':
-                        access_token = cookie.get('value')
-                        print(f"  토큰 획득 성공!")
-                        break
-
-                if access_token:
-                    # 토큰 획득 성공 직후, 웹뷰에서 토큰 쿠키 삭제 (다음 계정에 영향 방지)
-                    try:
-                        token_cookies = ['account.grant.accessToken', 'account.grant.refreshToken']
-                        for token_name in token_cookies:
-                            driver.delete_cookie(token_name)
-                        print(f"  웹뷰 토큰 쿠키 삭제 완료")
-                    except Exception as e:
-                        print(f"  토큰 쿠키 삭제 실패 (무시): {e}")
-                    break
-
-                # 에러 메시지 확인 (웹뷰) - 실제 로그인 에러만 감지
-                try:
-                    page_source = driver.page_source
-                    # 더 구체적인 에러 패턴만 체크 (일반적인 '실패' 단어는 제외)
-                    login_error_patterns = [
-                        'Invalid email or password',
-                        'incorrect password',
-                        '잘못된 이메일 또는 비밀번호',
-                        '이메일 또는 비밀번호가 잘못',
-                        'login failed',
-                        'authentication failed',
-                    ]
-                    if any(err.lower() in page_source.lower() for err in login_error_patterns):
-                        print("  로그인 실패 감지 (비밀번호 오류)")
-                        print("[ERROR] PASSWORD_WRONG")
-                        break
-                except:
-                    pass
-
-                # 네이티브 에러 화면 확인 (계정 차단 등)
-                try:
-                    driver.switch_to.context('NATIVE_APP')
-                    if check_and_handle_error_screen(driver):
-                        # 에러 화면 감지됨 - 다시 시도 버튼은 이미 클릭됨
-                        return (False, None)
-                    # 다시 웹뷰로 복귀
-                    contexts = driver.contexts
-                    if contexts:
-                        for ctx in contexts:
-                            if 'WEBVIEW' in ctx and 'Terrace' not in ctx:
-                                driver.switch_to.context(ctx)
-                                break
-                except:
-                    pass
-
-            except Exception as e:
-                print(f"  쿠키 조회 오류: {e}")
-                break
-
-            time.sleep(0.5)
-            if int(time.time() - start_time) % 3 == 0:
-                print(f"  대기 중... ({int(time.time() - start_time)}초)")
-
-        # 네이티브로 복귀
-        try:
-            driver.switch_to.context('NATIVE_APP')
-        except:
-            pass
-
-        if access_token:
-            print("  로그인 성공!")
-            return (True, access_token)
-        else:
-            print("  토큰 획득 실패")
-            return (False, None)
-
-    except Exception as e:
-        print(f"\n오류 발생: {e}")
-        import traceback
-        traceback.print_exc()
-        try:
-            driver.switch_to.context('NATIVE_APP')
-        except:
-            pass
-        return (False, None)
 
 
 def login_native_fallback(driver, email: str, password: str) -> tuple:
@@ -740,171 +334,6 @@ def login_native_fallback(driver, email: str, password: str) -> tuple:
         return (False, None)
 
 
-def get_token_from_webview(driver, max_wait: int = 20) -> Optional[str]:
-    """
-    웹뷰에서 토큰 쿠키 추출
-    로그인 후 프로필/계정 페이지로 이동하여 웹뷰에서 토큰 확인
-    """
-    print("\n[토큰 추출] 웹뷰 쿠키에서 토큰 확인...")
-
-    access_token = None
-    start_time = time.time()
-
-    try:
-        # 먼저 프로필/계정 화면으로 이동 (웹뷰가 로드되도록)
-        print("  프로필 화면으로 이동 시도...")
-
-        # 프로필 탭 클릭 시도
-        profile_selectors = [
-            '//android.widget.ImageView[@content-desc="프로필" or @content-desc="Profile" or @content-desc="계정"]',
-            '//android.view.View[@content-desc="프로필" or @content-desc="Profile"]',
-            '//android.widget.TextView[@text="프로필" or @text="Profile"]',
-            '//*[contains(@content-desc, "profile") or contains(@content-desc, "Profile")]',
-            '//*[@content-desc="프로필"]',
-        ]
-
-        for selector in profile_selectors:
-            try:
-                elem = driver.find_element(AppiumBy.XPATH, selector)
-                elem.click()
-                print(f"  프로필 탭 클릭: {selector}")
-                time.sleep(3)
-                break
-            except:
-                continue
-
-        # 토큰 추출 대기 루프 (최대 max_wait 초)
-        while time.time() - start_time < max_wait:
-            contexts = driver.contexts
-            print(f"  사용 가능한 컨텍스트: {contexts}")
-
-            # WEBVIEW_chrome 또는 다른 WEBVIEW 시도
-            for ctx in contexts:
-                if 'WEBVIEW' in ctx and 'Terrace' not in ctx:
-                    print(f"  {ctx} 컨텍스트 전환 시도...")
-                    try:
-                        driver.switch_to.context(ctx)
-                        print(f"  {ctx} 전환 성공, 쿠키 조회 중...")
-
-                        # 쿠키 조회
-                        cookies = driver.get_cookies()
-                        print(f"  쿠키 {len(cookies)}개 발견")
-
-                        # 디버깅: 쿠키 이름 출력
-                        cookie_names = [c.get('name', '') for c in cookies]
-                        token_related = [n for n in cookie_names if 'token' in n.lower() or 'account' in n.lower() or 'auth' in n.lower()]
-                        if token_related:
-                            print(f"  토큰 관련 쿠키: {token_related}")
-
-                        for cookie in cookies:
-                            if cookie.get('name') == 'account.grant.accessToken':
-                                access_token = cookie.get('value')
-                                print(f"  토큰 발견!")
-                                driver.switch_to.context('NATIVE_APP')
-                                return access_token
-
-                        driver.switch_to.context('NATIVE_APP')
-
-                    except Exception as e:
-                        print(f"  {ctx} 접근 오류: {e}")
-                        try:
-                            driver.switch_to.context('NATIVE_APP')
-                        except:
-                            pass
-
-            # 토큰이 없으면 잠시 대기 후 재시도
-            if not access_token:
-                time.sleep(2)
-                print(f"  토큰 대기 중... ({int(time.time() - start_time)}초)")
-
-    except Exception as e:
-        print(f"  토큰 추출 오류: {e}")
-
-    # NATIVE_APP로 복귀 확인
-    try:
-        driver.switch_to.context('NATIVE_APP')
-    except:
-        pass
-
-    print("  토큰을 찾지 못함")
-    return None
-
-
-def logout_with_driver(driver) -> bool:
-    """로그아웃 (딥링크 사용)"""
-    try:
-        window_size = driver.get_window_size()
-        width = window_size['width']
-        height = window_size['height']
-
-        print("\n[로그아웃] 시작")
-
-        # 딥링크로 프로필 화면 직접 이동
-        driver.execute_script("mobile: deepLink", {
-            "url": "adidas://profile",
-            "package": "com.adidas.app"
-        })
-        print("  adidas://profile 딥링크 실행")
-        time.sleep(1)
-
-        # 하단으로 스크롤하여 로그아웃 찾기
-        for i in range(5):
-            driver.swipe(width // 2, int(height * 0.8), width // 2, int(height * 0.2), 400)
-            time.sleep(0.3)
-            page_source = driver.page_source
-            if '로그아웃' in page_source or 'LOGOUT' in page_source:
-                break
-
-        # 로그아웃 버튼 클릭
-        logout_clicked = False
-        for text in ['로그아웃', 'LOGOUT', 'Log out']:
-            try:
-                logout_btn = driver.find_element(AppiumBy.XPATH, f"//*[@text='{text}']")
-                logout_btn.click()
-                print(f"  로그아웃 버튼 클릭 ({text})")
-                logout_clicked = True
-                time.sleep(0.5)
-                break
-            except:
-                pass
-
-        if not logout_clicked:
-            for desc in ['로그아웃', 'logout', 'LOGOUT']:
-                try:
-                    logout_btn = driver.find_element(AppiumBy.XPATH, f"//*[@content-desc='{desc}']")
-                    logout_btn.click()
-                    print(f"  로그아웃 버튼 클릭 (content-desc: {desc})")
-                    logout_clicked = True
-                    time.sleep(0.5)
-                    break
-                except:
-                    pass
-
-        if not logout_clicked:
-            print("  [WARNING] 로그아웃 버튼 미발견")
-            return False
-
-        # 확인 팝업 처리
-        time.sleep(0.5)
-        for text in ['로그아웃', 'LOG OUT', '확인', 'Yes', 'OK']:
-            try:
-                confirm_btn = driver.find_element(AppiumBy.XPATH, f"//*[@text='{text}']")
-                confirm_btn.click()
-                print(f"  확인 버튼 클릭 ({text})")
-                break
-            except:
-                pass
-
-        # 로그아웃 처리 완료 대기 (중요: 다음 계정 로그인 전 필수)
-        time.sleep(1.5)
-        print("[OK] 로그아웃 완료")
-        return True
-
-    except Exception as e:
-        print(f"  로그아웃 오류: {e}")
-        return False
-
-
 def mobile_login_and_extract(email: str, password: str, device_udid: str = None) -> Optional[str]:
     """
     모바일 앱에서 로그인 후 토큰 추출
@@ -942,6 +371,9 @@ def mobile_login_and_extract(email: str, password: str, device_udid: str = None)
         # 웹뷰 디버깅을 위한 크롬드라이버 자동 다운로드
         options.set_capability('appium:chromedriverAutodownload', True)
 
+        # UiAutomator2 서버 재설치 스킵 (apksigner 불필요)
+        options.set_capability('appium:skipServerInstallation', True)
+
         print("\n[1/6] Appium 연결 중...")
         driver = webdriver.Remote('http://localhost:4723', options=options)
         print("  Appium 연결 성공")
@@ -956,7 +388,7 @@ def mobile_login_and_extract(email: str, password: str, device_udid: str = None)
 
         if not login_success:
             print("\n로그인 실패!")
-            # 로그인 실패해도 로그아웃 시도 (다음 계정 처리를 위해)
+            # 로그인 실패해도 로그아웃 시도
             try:
                 logout_with_driver(driver)
             except:
@@ -971,13 +403,15 @@ def mobile_login_and_extract(email: str, password: str, device_udid: str = None)
         if access_token:
             print(f"\n토큰 획득 성공!")
         else:
-            print("\n토큰을 찾지 못했지만 로그인은 성공")
-            access_token = "LOGIN_SUCCESS_NO_TOKEN"
+            print("\n토큰 획득 실패!")
+            # 로그아웃 후 None 반환
+            logout_with_driver(driver)
+            return None
 
         # 로그아웃 시도
         logout_success = logout_with_driver(driver)
 
-        # 로그아웃 실패 시 웹뷰 쿠키만 삭제 (다음 계정에 영향 방지)
+        # 실패 시 웹뷰 쿠키 삭제 (다음 계정에 영향 방지)
         if not logout_success:
             print("\n[경고] 로그아웃 실패 - 웹뷰 쿠키 삭제 진행...")
             clear_webview_cookies(driver)
@@ -988,16 +422,11 @@ def mobile_login_and_extract(email: str, password: str, device_udid: str = None)
         print(f"\n오류 발생: {e}")
         import traceback
         traceback.print_exc()
-        # 오류 발생 시에도 로그아웃 시도 (다음 계정 처리를 위해)
+
+        # 오류 발생 시 로그아웃 시도
         if driver:
-            print("\n[경고] 오류 발생 - 로그아웃 시도...")
             try:
                 logout_with_driver(driver)
-            except:
-                pass
-            # 로그아웃 실패 시 쿠키 삭제
-            try:
-                clear_webview_cookies(driver)
             except:
                 pass
         return None
@@ -1008,8 +437,11 @@ def mobile_login_and_extract(email: str, password: str, device_udid: str = None)
                 driver.switch_to.context('NATIVE_APP')
             except:
                 pass
-            driver.quit()
-            print("\nAppium 세션 종료")
+            try:
+                driver.quit()
+                print("\nAppium 세션 종료")
+            except:
+                pass
 
 
 def process_single_account_with_driver(driver, email: str, password: str, is_batch_continuation: bool = False) -> Dict[str, Any]:
@@ -1049,8 +481,16 @@ def process_single_account_with_driver(driver, email: str, password: str, is_bat
         login_success, access_token = login_with_driver(driver, email, password, is_batch_continuation)
 
         if not login_success:
-            result['error'] = 'LOGIN_FAILED'
-            print(f"\n로그인 실패: {email}")
+            # 비밀번호 오류 / 봇 차단 구분
+            if access_token == "PASSWORD_WRONG":
+                result['error'] = 'PASSWORD_WRONG'
+                print(f"\n비밀번호 오류: {email}")
+            elif access_token == "BOT_BLOCKED":
+                result['error'] = 'BOT_BLOCKED'
+                print(f"\n봇 차단: {email}")
+            else:
+                result['error'] = 'LOGIN_FAILED'
+                print(f"\n로그인 실패: {email}")
             return result
 
         # 로그인 중 토큰을 못 가져왔으면 추가 시도
@@ -1058,7 +498,7 @@ def process_single_account_with_driver(driver, email: str, password: str, is_bat
             print("\n[추가 토큰 추출] 프로필 화면에서 재시도...")
             access_token = get_token_from_webview(driver)
 
-        if access_token and access_token != "LOGIN_SUCCESS_NO_TOKEN":
+        if access_token:
             result['token'] = access_token
             result['success'] = True
             print(f"\n토큰 획득 성공: {email}")
@@ -1066,10 +506,6 @@ def process_single_account_with_driver(driver, email: str, password: str, is_bat
             # API 테스트
             api_result = test_api_with_token(access_token)
             result['api_result'] = api_result
-        elif access_token == "LOGIN_SUCCESS_NO_TOKEN":
-            result['success'] = True
-            result['error'] = 'NO_TOKEN'
-            print(f"\n로그인 성공 (토큰 미추출): {email}")
         else:
             result['error'] = 'TOKEN_FAILED'
             print(f"\n토큰 획득 실패: {email}")
@@ -1077,7 +513,7 @@ def process_single_account_with_driver(driver, email: str, password: str, is_bat
         # 로그아웃 시도
         logout_success = logout_with_driver(driver)
 
-        # 로그아웃 실패 시 웹뷰 쿠키만 삭제 (다음 계정에 영향 방지)
+        # 실패 시 웹뷰 쿠키 삭제 (다음 계정에 영향 방지)
         if not logout_success:
             print("\n[경고] 로그아웃 실패 - 웹뷰 쿠키 삭제 진행...")
             clear_webview_cookies(driver)
@@ -1093,7 +529,7 @@ def process_single_account_with_driver(driver, email: str, password: str, is_bat
         traceback.print_exc()
         result['error'] = str(e)
 
-        # 오류 발생 시에도 웹뷰 쿠키 삭제 시도
+        # 오류 발생 시 쿠키 삭제 시도
         try:
             clear_webview_cookies(driver)
         except:
@@ -1104,11 +540,12 @@ def process_single_account_with_driver(driver, email: str, password: str, is_bat
 
 def mobile_batch_extract(accounts: List[Dict], device_udid: str = None) -> List[Dict]:
     """
-    배치 모드: 여러 계정을 하나의 Appium 세션으로 처리
+    배치 모드: 여러 계정을 멀티 인스턴스로 처리
+    BOT_BLOCKED 시 자동으로 다른 인스턴스로 전환
 
     Args:
         accounts: [{"email": "...", "password": "...", "id": ...}, ...]
-        device_udid: 디바이스 UDID (생략시 자동 감지)
+        device_udid: 디바이스 UDID (생략시 InstanceManager 사용)
 
     Returns:
         [{"id": ..., "email": ..., "success": ..., "api_result": ..., "error": ...}, ...]
@@ -1117,46 +554,24 @@ def mobile_batch_extract(accounts: List[Dict], device_udid: str = None) -> List[
         print("[ERROR] Appium이 설치되지 않았습니다.")
         return [{'id': acc.get('id'), 'email': acc.get('email'), 'success': False, 'error': 'APPIUM_NOT_AVAILABLE'} for acc in accounts]
 
-    if not device_udid:
-        device_udid = get_connected_device()
-    if not device_udid:
-        print("[ERROR] 연결된 디바이스가 없습니다.")
-        return [{'id': acc.get('id'), 'email': acc.get('email'), 'success': False, 'error': 'NO_DEVICE'} for acc in accounts]
-
     print(f"\n{'='*60}")
-    print(f"배치 모드 시작 - {len(accounts)}개 계정")
-    print(f"디바이스: {device_udid}")
+    print(f"배치 모드 시작 - {len(accounts)}개 계정 (단일 인스턴스)")
     print('='*60)
 
     results = []
     driver = None
+    instance_manager = None
 
     try:
-        # Appium 옵션 설정
-        options = UiAutomator2Options()
-        options.platform_name = 'Android'
-        options.automation_name = 'UiAutomator2'
-        options.udid = device_udid
-        options.device_name = device_udid
-        options.app_package = 'com.adidas.app'
-        options.no_reset = True
-        options.new_command_timeout = 600  # 배치 처리를 위해 타임아웃 증가
-
-        android_home = 'C:\\platform-tools'
-        options.set_capability('appium:androidSdkRoot', android_home)
-        options.set_capability('appium:adbExecTimeout', 60000)
-        options.set_capability('appium:chromedriverAutodownload', True)
-
-        print("\n[Appium] 연결 중...")
-        driver = webdriver.Remote('http://localhost:4723', options=options)
-        print("[Appium] 연결 성공 (세션 1회)")
-
-        # 앱 실행
-        driver.activate_app('com.adidas.app')
-        time.sleep(2)
+        # 인스턴스 매니저로 Appium 연결
+        instance_manager = InstanceManager()
+        driver, device_udid = instance_manager.create_driver()
+        print(f"[Appium] 연결 성공 - {device_udid}")
 
         # 각 계정 순차 처리
-        for i, account in enumerate(accounts):
+        i = 0
+        while i < len(accounts):
+            account = accounts[i]
             email = account.get('email')
             password = account.get('password')
             acc_id = account.get('id')
@@ -1168,6 +583,25 @@ def mobile_batch_extract(accounts: List[Dict], device_udid: str = None) -> List[
             account_result = process_single_account_with_driver(driver, email, password, is_continuation)
             account_result['id'] = acc_id
 
+            # BOT_BLOCKED → 배치 즉시 중단
+            if account_result.get('error') == 'BOT_BLOCKED':
+                print(f"\n[BATCH_STOPPED] 봇 차단 감지 - 배치 즉시 중단: {email}")
+                print(f"\n[BATCH_RESULT] {json.dumps(account_result, ensure_ascii=False)}")
+                results.append(account_result)
+
+                # 나머지 계정을 모두 스킵 처리
+                for j in range(i + 1, len(accounts)):
+                    skip_acc = accounts[j]
+                    skip_result = {
+                        'id': skip_acc.get('id'),
+                        'email': skip_acc.get('email'),
+                        'success': False,
+                        'error': 'BATCH_STOPPED',
+                    }
+                    print(f"\n[BATCH_RESULT] {json.dumps(skip_result, ensure_ascii=False)}")
+                    results.append(skip_result)
+                break  # 배치 즉시 중단
+
             # 결과 출력 (server.js에서 파싱용)
             print(f"\n[BATCH_RESULT] {json.dumps(account_result, ensure_ascii=False)}")
 
@@ -1177,6 +611,8 @@ def mobile_batch_extract(accounts: List[Dict], device_udid: str = None) -> List[
             if i < len(accounts) - 1:
                 print(f"\n다음 계정 준비 중... (0.5초 대기)")
                 time.sleep(0.5)
+
+            i += 1  # 다음 계정으로
 
         print(f"\n{'='*60}")
         print(f"배치 처리 완료 - 성공: {sum(1 for r in results if r['success'])}/{len(results)}")
@@ -1203,7 +639,10 @@ def mobile_batch_extract(accounts: List[Dict], device_udid: str = None) -> List[
         return results
 
     finally:
-        if driver:
+        if instance_manager:
+            instance_manager.cleanup()
+            print("\n[Appium] 세션 종료")
+        elif driver:
             try:
                 driver.switch_to.context('NATIVE_APP')
             except:
@@ -1213,6 +652,8 @@ def mobile_batch_extract(accounts: List[Dict], device_udid: str = None) -> List[
 
 
 def main():
+    print("[스크립트 시작] extract_account.py", flush=True)
+
     parser = argparse.ArgumentParser(description='Adidas 모바일 로그인 및 정보 추출')
     parser.add_argument('email', nargs='?', help='아디다스 계정 이메일')
     parser.add_argument('password', nargs='?', help='아디다스 계정 비밀번호')
@@ -1220,6 +661,7 @@ def main():
     parser.add_argument('--batch', '-b', help='배치 모드: JSON 파일 경로 또는 JSON 문자열')
 
     args = parser.parse_args()
+    print(f"[인자 파싱 완료] batch={args.batch}", flush=True)
 
     print("=" * 60)
     print("Adidas 모바일 로그인 테스트")
@@ -1227,6 +669,7 @@ def main():
 
     # 배치 모드
     if args.batch:
+        print(f"[배치 시작] JSON 경로: {args.batch}", flush=True)
         print("\n[배치 모드] 활성화")
 
         # JSON 파일 또는 JSON 문자열 파싱
@@ -1269,7 +712,7 @@ def main():
 
     access_token = mobile_login_and_extract(args.email, args.password, args.device)
 
-    if access_token and access_token != "LOGIN_SUCCESS_NO_TOKEN":
+    if access_token:
         print("\n" + "=" * 60)
         print("토큰 획득 성공!")
         print("=" * 60)
@@ -1282,15 +725,17 @@ def main():
 
         # API 테스트
         test_api_with_token(access_token)
-    elif access_token == "LOGIN_SUCCESS_NO_TOKEN":
-        print("\n" + "=" * 60)
-        print("로그인 성공! (토큰 미추출)")
-        print("=" * 60)
     else:
         print("\n" + "=" * 60)
-        print("로그인 실패!")
+        print("로그인 실패 또는 토큰 추출 실패!")
         print("=" * 60)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"[FATAL ERROR] {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)

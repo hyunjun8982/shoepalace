@@ -1,12 +1,37 @@
 /**
- * 로컬 Express 서버 - SQLite DB 관리 및 API 제공
- * sql.js를 사용하여 네이티브 빌드 불필요
+ * 로컬 Express 서버 - DB 관리 및 API 제공
+ * DB_TYPE 환경변수로 SQLite(개인) 또는 PostgreSQL(공용) 선택
+ * - 배포용: SQLite (sql.js)
+ * - 로컬 테스트: PostgreSQL (입출고관리시스템 공용 DB)
  */
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const WebSocket = require('ws');
+
+// 쓰기 가능한 임시 폴더 경로 (app.asar 외부)
+function getWritableTempDir() {
+    // 1. 우선 process.resourcesPath 사용 (Electron 패키징 시)
+    if (process.resourcesPath && !process.resourcesPath.includes('app.asar')) {
+        const tempDir = path.join(process.resourcesPath, 'temp');
+        try {
+            if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+            return tempDir;
+        } catch (e) { /* fallback */ }
+    }
+    // 2. 시스템 임시 폴더 사용
+    const tempDir = path.join(os.tmpdir(), 'adidas-coupon-app');
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+    return tempDir;
+}
+
+// DB 타입 결정: 환경변수 또는 config 파일
+const DB_TYPE = process.env.DB_TYPE || 'sqlite'; // 'sqlite' 또는 'postgresql'
+const PG_CONNECTION = process.env.DATABASE_URL || 'postgresql://shoepalace_user:shoepalace_pass@133.186.221.84:5432/shoepalace';
+
+console.log(`[DB] 사용 DB 타입: ${DB_TYPE}`);
 
 const app = express();
 app.use(cors());
@@ -132,12 +157,21 @@ let runningBatchProcess = {
 
 function updateProgress(accountId, type, status, message) {
     progressStore.set(accountId, { type, status, message, updatedAt: new Date() });
-    // 30분 후 자동 정리
-    setTimeout(() => progressStore.delete(accountId), 30 * 60 * 1000);
+    // 타임아웃 없음 - 배치 완료 시 clearProgressForBatch()로 정리
 }
 
 function getProgress(accountId) {
     return progressStore.get(accountId) || null;
+}
+
+// 배치 작업 완료 후 해당 계정들의 progress 정리
+function clearProgressForBatch(accountIds) {
+    if (!accountIds || accountIds.length === 0) return;
+    // 배치 완료 30초 후 정리 (UI에서 최종 상태 확인할 시간)
+    setTimeout(() => {
+        accountIds.forEach(id => progressStore.delete(id));
+        addLog(`[Progress] ${accountIds.length}개 계정 상태 정리 완료`);
+    }, 30 * 1000);
 }
 
 // ==================== Appium 세션 서버 관리 ====================
@@ -272,6 +306,8 @@ function startBatchProcess(type, title, accountIds, process) {
 function endBatchProcess() {
     const wasActive = runningBatchProcess.active;
     const title = runningBatchProcess.title;
+    const accountIds = [...runningBatchProcess.accountIds];  // 정리 대상 복사
+
     runningBatchProcess = {
         active: false,
         type: null,
@@ -281,8 +317,11 @@ function endBatchProcess() {
         startTime: null,
         accountIds: [],
     };
+
     if (wasActive) {
         addLog(`[배치 종료] ${title}`);
+        // 배치 완료 후 progress 정리 (30초 후)
+        clearProgressForBatch(accountIds);
     }
 }
 
@@ -653,7 +692,7 @@ app.post('/api/accounts/:id/update-info', (req, res) => {
             phone || existing.phone,
             adikr_barcode || existing.adikr_barcode,
             current_points !== undefined ? current_points : existing.current_points,
-            owned_vouchers || existing.owned_vouchers,
+            owned_vouchers !== undefined ? owned_vouchers : existing.owned_vouchers,
             fetch_status || existing.fetch_status,
             id
         ]);
@@ -691,8 +730,8 @@ app.post('/api/accounts/:id/voucher-sale', (req, res) => {
 
 // ========== Appium 자동화 API ==========
 
-// 현재 사용 모드 (web 또는 mobile) - 정보조회와 쿠폰발급 모두 이 모드 사용
-let extractMode = 'web';
+// 현재 사용 모드 (web 또는 mobile) - 정보조회와 쿠폰발급 모두 이 모드 사용 (기본값: mobile)
+let extractMode = 'mobile';
 
 // Python 스크립트 경로 (하이브리드 스크립트 사용)
 function getPythonScriptPath() {
@@ -722,6 +761,26 @@ function getPythonScriptPath() {
     // 기존 backend 경로 (폴백)
     const backendPath = path.join(__dirname, '..', 'backend', 'test_mobile_webview_login.py');
     return backendPath;
+}
+
+// 모바일 전용 스크립트 경로 (extract_account.py - 배치 모드 지원)
+function getMobileExtractScriptPath() {
+    // 배포 환경
+    if (process.resourcesPath) {
+        const prodPath = path.join(process.resourcesPath, 'scripts', 'extract_account.py');
+        if (fs.existsSync(prodPath)) {
+            return prodPath;
+        }
+    }
+
+    // 개발 환경
+    const devPath = path.join(__dirname, 'scripts', 'extract_account.py');
+    if (fs.existsSync(devPath)) {
+        return devPath;
+    }
+
+    // 폴백 - 일반 스크립트 경로 사용
+    return getPythonScriptPath();
 }
 
 // 추출 모드 조회 API
@@ -766,18 +825,15 @@ app.post('/api/extract/bulk', async (req, res) => {
             return res.status(404).json({ error: '선택한 계정을 찾을 수 없습니다' });
         }
 
-        // 모바일 모드이고 extract_account.py를 사용하는 경우 → 배치 모드 사용
-        const scriptPath = getPythonScriptPath();
-        const isExtractAccountScript = scriptPath && scriptPath.includes('extract_account.py');
-
-        if (extractMode === 'mobile' && isExtractAccountScript) {
+        // 모바일 모드 → extract_account.py 배치 모드 사용
+        if (extractMode === 'mobile') {
             addLog(`[일괄추출] 모바일 배치 모드로 ${accounts.length}개 계정 처리 (Appium 1회 연결)`);
             res.json({ message: `${accounts.length}개 계정 정보 조회를 시작합니다. (모바일 배치 모드 - Appium 1회 연결)` });
 
             // 백그라운드에서 배치 처리
             processAccountsBatchMode(accounts);
         } else {
-            // 웹 모드 또는 하이브리드 스크립트 → 기존 순차 처리 방식
+            // 웹 모드 또는 하이브리드 모드 → 기존 순차 처리 방식
             addLog(`[일괄추출] 순차 처리 모드로 ${accounts.length}개 계정 처리`);
             res.json({ message: `${accounts.length}개 계정 정보 조회를 시작합니다. 순차적으로 처리됩니다.` });
 
@@ -845,6 +901,12 @@ app.post('/api/extract/:id', (req, res) => {
             // [PROGRESS] 라인 파싱하여 진행 상태 업데이트
             const lines = chunk.split('\n');
             for (const line of lines) {
+                // 모든 Python 출력 로그 표시 (디버깅용)
+                const trimmedLine = line.trim();
+                if (trimmedLine && trimmedLine.length > 0) {
+                    addLog(`[PY] ${trimmedLine.substring(0, 200)}`);
+                }
+
                 if (line.startsWith('[PROGRESS]')) {
                     try {
                         const jsonStr = line.substring('[PROGRESS]'.length).trim();
@@ -862,6 +924,8 @@ app.post('/api/extract/:id', (req, res) => {
         pythonProcess.stderr.on('data', (data) => {
             const chunk = data.toString();
             stderr += chunk;
+            // stderr도 로그에 표시 (디버깅용)
+            addLog(`[PY-ERR] ${chunk.substring(0, 200)}`);
         });
 
         pythonProcess.on('close', (code) => {
@@ -973,7 +1037,7 @@ app.post('/api/extract/:id', (req, res) => {
                             result.phone || account.phone,
                             result.barcode || account.adikr_barcode,
                             result.points || account.current_points,
-                            result.vouchers ? JSON.stringify(result.vouchers) : account.owned_vouchers,
+                            JSON.stringify(result.vouchers || []),
                             webStatus,
                             mobileStatus,
                             id
@@ -995,7 +1059,7 @@ app.post('/api/extract/:id', (req, res) => {
                             result.phone || account.phone,
                             result.barcode || account.adikr_barcode,
                             result.points || account.current_points,
-                            result.vouchers ? JSON.stringify(result.vouchers) : account.owned_vouchers,
+                            JSON.stringify(result.vouchers || []),
                             successStatus,
                             id
                         ]);
@@ -1046,6 +1110,10 @@ app.post('/api/extract/:id', (req, res) => {
                     errorMsg = `${modeLabel} 모바일 연결 필요 (Appium 서버 미실행) ${getNowTime()}`;
                 } else if (stdout.includes('[ERROR] PASSWORD_WRONG') || stdout.includes('잘못된 이메일/비밀번호')) {
                     errorMsg = `${modeLabel} 비밀번호 틀림 ${getNowTime()}`;
+                    addLog(`[추출] 실패 - ${account.email}: ${errorMsg}`);
+                    runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [errorMsg, id]);
+                    updateProgress(parseInt(id), 'extract', 'password_wrong', errorMsg);
+                    return;
                 } else if (stdout.includes('[ERROR] BOT_BLOCKED') || stdout.includes('BOT_BLOCKED')) {
                     // BOT_BLOCKED:에러메시지 형식에서 에러 메시지 추출
                     const botBlockMatch = stdout.match(/BOT_BLOCKED:([^\n\r]+)/);
@@ -1118,7 +1186,8 @@ async function processAccountsBatchMode(accounts) {
         updateProgress(account.id, 'extract', 'waiting', `대기 중... ${account.email}`);
     }
 
-    const scriptPath = getPythonScriptPath();
+    // 모바일 배치 모드에서는 extract_account.py를 직접 사용 (배치 모드 지원)
+    const scriptPath = getMobileExtractScriptPath();
     const androidHome = (process.env.ANDROID_HOME || 'C:\\platform-tools').trim();
 
     // 계정 목록을 JSON 파일로 저장
@@ -1128,7 +1197,7 @@ async function processAccountsBatchMode(accounts) {
         password: acc.password
     }));
 
-    const batchJsonPath = path.join(__dirname, 'batch_accounts.json');
+    const batchJsonPath = path.join(getWritableTempDir(), 'batch_accounts.json');
     fs.writeFileSync(batchJsonPath, JSON.stringify(batchData, null, 2), 'utf-8');
 
     const { spawn } = require('child_process');
@@ -1161,6 +1230,13 @@ async function processAccountsBatchMode(accounts) {
         // [BATCH_RESULT] 라인을 실시간으로 파싱하여 DB 업데이트
         const lines = chunk.split('\n');
         for (const line of lines) {
+            // 모든 Python 출력 로그 표시 (디버깅용)
+            const trimmedLine = line.trim();
+            if (trimmedLine && trimmedLine.length > 0) {
+                // 모든 Python stdout 출력을 로그에 추가
+                addLog(`[PY] ${trimmedLine.substring(0, 200)}`);
+            }
+
             if (line.includes('[BATCH_RESULT]')) {
                 try {
                     const jsonStart = line.indexOf('{');
@@ -1187,24 +1263,18 @@ async function processAccountsBatchMode(accounts) {
                 }
             }
         }
-
-        // 에러 로그만 출력
-        if (chunk.includes('ERROR') || chunk.includes('오류') || chunk.includes('실패')) {
-            const errorLines = chunk.split('\n').filter(line =>
-                line.includes('ERROR') || line.includes('오류') || line.includes('실패')
-            ).slice(0, 3); // 최대 3줄만
-            if (errorLines.length > 0) {
-                addLog(`[배치추출] ${errorLines.join(' | ').substring(0, 150)}`);
-            }
-        }
     });
 
     pythonProcess.stderr.on('data', (data) => {
         const chunk = data.toString();
         stderr += chunk;
-        // stderr는 심각한 오류만 출력
-        if (chunk.includes('Error') || chunk.includes('Exception') || chunk.includes('Traceback')) {
-            addLog(`[배치추출 오류] ${chunk.substring(0, 150)}`);
+        // 모든 stderr 출력 (디버깅용)
+        const lines = chunk.split('\n');
+        for (const line of lines) {
+            const trimmedLine = line.trim();
+            if (trimmedLine && trimmedLine.length > 0) {
+                addLog(`[PY-ERR] ${trimmedLine.substring(0, 200)}`);
+            }
         }
     });
 
@@ -1241,6 +1311,17 @@ async function processAccountsBatchMode(accounts) {
                 }
             } catch (e) {
                 addLog(`[배치추출] 완료 결과 파싱 오류: ${e.message}`);
+            }
+        }
+
+        // 처리되지 않은 계정들(waiting/processing 상태)을 에러로 처리
+        for (const account of accounts) {
+            const progress = progressStore.get(account.id);
+            if (progress && (progress.status === 'waiting' || progress.status === 'processing')) {
+                const errorMsg = `${modeLabel} 처리 중단 ${getNowTime()}`;
+                runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [errorMsg, account.id]);
+                updateProgress(account.id, 'extract', 'error', errorMsg);
+                addLog(`[배치추출] 미처리 계정: ${account.email}`);
             }
         }
 
@@ -1316,8 +1397,8 @@ function processBatchResult(result, modeLabel, statusColumn) {
         const barcode = member.memberId || account.adikr_barcode;
         const points = wallet.availablePoints !== undefined ? wallet.availablePoints : account.current_points;
 
-        // 쿠폰 정보 변환
-        let voucherData = account.owned_vouchers;
+        // 쿠폰 정보 변환 (API 결과로 덮어쓰기)
+        let voucherData = '[]';
         if (Array.isArray(vouchers) && vouchers.length > 0) {
             const formattedVouchers = vouchers.map(v => ({
                 description: v.couponLabel || v.name || 'N/A',
@@ -1356,9 +1437,13 @@ function processBatchResult(result, modeLabel, statusColumn) {
     } else {
         // 실패
         let errorMsg;
+        let progressStatus = 'error';
         const errorCode = result.error || 'UNKNOWN';
 
-        if (errorCode === 'LOGIN_FAILED' || errorCode.includes('PASSWORD')) {
+        if (errorCode === 'PASSWORD_WRONG') {
+            errorMsg = `${modeLabel} 비밀번호 틀림 ${getNowTime()}`;
+            progressStatus = 'warning';  // 패스로 처리
+        } else if (errorCode === 'LOGIN_FAILED') {
             errorMsg = `${modeLabel} 로그인 실패 ${getNowTime()}`;
         } else if (errorCode === 'TOKEN_FAILED' || errorCode === 'NO_TOKEN') {
             errorMsg = `${modeLabel} 토큰 추출 실패 ${getNowTime()}`;
@@ -1369,12 +1454,12 @@ function processBatchResult(result, modeLabel, statusColumn) {
         } else if (errorCode === 'APPIUM_NOT_AVAILABLE') {
             errorMsg = `${modeLabel} Appium 없음 ${getNowTime()}`;
         } else {
-            errorMsg = `${modeLabel} 오류: ${errorCode.substring(0, 30)} ${getNowTime()}`;
+            errorMsg = `${modeLabel} 알 수 없는 오류 ${getNowTime()}`;
         }
 
         addLog(`[배치추출] ${email} - ${errorMsg}`);
         runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [errorMsg, accountId]);
-        updateProgress(accountId, 'extract', 'error', errorMsg);
+        updateProgress(accountId, 'extract', progressStatus, errorMsg);
     }
 }
 
@@ -1519,7 +1604,7 @@ function extractAccountInfo(account) {
                             result.phone || account.phone,
                             result.barcode || account.adikr_barcode,
                             result.points || account.current_points,
-                            result.vouchers ? JSON.stringify(result.vouchers) : account.owned_vouchers,
+                            JSON.stringify(result.vouchers || []),
                             webStatus,
                             mobileStatus,
                             account.id
@@ -1540,7 +1625,7 @@ function extractAccountInfo(account) {
                             result.phone || account.phone,
                             result.barcode || account.adikr_barcode,
                             result.points || account.current_points,
-                            result.vouchers ? JSON.stringify(result.vouchers) : account.owned_vouchers,
+                            JSON.stringify(result.vouchers || []),
                             successStatus,
                             account.id
                         ]);
@@ -1583,6 +1668,11 @@ function extractAccountInfo(account) {
                 } else if (isPasswordError) {
                     errorMsg = `${modeLabel} 비밀번호 틀림 ${getNowTime()}`;
                     addLog(`[일괄추출] ${account.email} - 비밀번호 틀림`);
+                    // 비밀번호 오류는 별도 상태로 처리 (취합용)
+                    runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [errorMsg, account.id]);
+                    updateProgress(account.id, 'extract', 'password_wrong', errorMsg);
+                    resolve();
+                    return;
                 } else if (isBotBlocked) {
                     // BOT_BLOCKED:에러메시지 형식에서 에러 메시지 추출
                     const botBlockMatch = stdout.match(/BOT_BLOCKED:([^\n\r]+)/);
@@ -1777,15 +1867,29 @@ function getIssueCouponMobileScriptPath() {
 
 // 쿠폰 일괄 발급 (반드시 단건 발급보다 먼저 정의해야 함 - Express 라우팅 순서)
 app.post('/api/issue-coupon/bulk', async (req, res) => {
-    const { ids, coupon_type, mode } = req.body;
+    const { ids, coupon_type, coupon_types, mode } = req.body;
 
     try {
         if (!ids || !Array.isArray(ids) || ids.length === 0) {
             return res.status(400).json({ error: '발급할 계정 ID가 없습니다' });
         }
 
-        if (!coupon_type || !['10000', '30000', '50000', '100000'].includes(coupon_type)) {
-            return res.status(400).json({ error: '유효하지 않은 쿠폰 타입입니다' });
+        // 여러 쿠폰 타입 지원 (coupon_types 배열 우선, 없으면 coupon_type 단일값)
+        let targetCouponTypes = [];
+        if (coupon_types && Array.isArray(coupon_types) && coupon_types.length > 0) {
+            targetCouponTypes = coupon_types;
+        } else if (coupon_type) {
+            targetCouponTypes = [coupon_type];
+        } else {
+            return res.status(400).json({ error: '쿠폰 타입을 선택해주세요' });
+        }
+
+        // 모든 쿠폰 타입 유효성 검사
+        const validTypes = ['10000', '30000', '50000', '100000'];
+        for (const ct of targetCouponTypes) {
+            if (!validTypes.includes(ct)) {
+                return res.status(400).json({ error: `유효하지 않은 쿠폰 타입: ${ct}` });
+            }
         }
 
         // 요청에서 모드를 전달받거나, 없으면 서버의 extractMode 사용
@@ -1804,18 +1908,27 @@ app.post('/api/issue-coupon/bulk', async (req, res) => {
             return res.status(404).json({ error: '선택한 계정을 찾을 수 없습니다' });
         }
 
+        // 쿠폰 타입 이름 변환
+        const couponNames = {
+            '10000': '1만원권',
+            '30000': '3만원권',
+            '50000': '5만원권',
+            '100000': '10만원권'
+        };
+        const couponTypesStr = targetCouponTypes.map(ct => couponNames[ct] || `${ct}원`).join(', ');
+
         const modeLabels = { web: '[웹]', mobile: '[모바일]', hybrid: '[웹+모바일]' };
         const modeLabel = modeLabels[issueMode] || '[웹]';
-        addLog(`[쿠폰발급] ${modeLabel} ${accounts.length}개 계정 ${coupon_type}원 발급 시작`);
-        res.json({ message: `${modeLabel} ${accounts.length}개 계정 쿠폰 발급(${coupon_type}원)을 시작합니다. 순차적으로 처리됩니다.` });
+        addLog(`[쿠폰발급] ${modeLabel} ${accounts.length}개 계정 ${couponTypesStr} 발급 시작`);
+        res.json({ message: `${modeLabel} ${accounts.length}개 계정 쿠폰 발급(${couponTypesStr})을 시작합니다. 순차적으로 처리됩니다.` });
 
         // 백그라운드에서 순차 처리 (모드에 따라 분기)
         if (issueMode === 'mobile') {
-            processIssueCouponMobileSequentially(accounts, coupon_type);
+            processIssueCouponMobileSequentially(accounts, targetCouponTypes);
         } else if (issueMode === 'hybrid') {
-            processIssueCouponHybridSequentially(accounts, coupon_type);
+            processIssueCouponHybridSequentially(accounts, targetCouponTypes[0]); // 하이브리드는 아직 단일만 지원
         } else {
-            processIssueCouponSequentially(accounts, coupon_type);
+            processIssueCouponSequentially(accounts, targetCouponTypes[0]); // 웹은 아직 단일만 지원
         }
     } catch (error) {
         addLog(`[쿠폰발급] 오류: ${error.message}`);
@@ -1854,8 +1967,8 @@ app.post('/api/issue-coupon/:id', (req, res) => {
 
             res.json({ message: `[모바일] ${account.email} 쿠폰 발급(${coupon_type}원)을 시작합니다.` });
 
-            // 모바일 발급 처리 (1개 계정)
-            processIssueCouponMobileSequentially([account], coupon_type);
+            // 모바일 발급 처리 (1개 계정) - 배열 형태로 전달
+            processIssueCouponMobileSequentially([account], [coupon_type]);
             return;
         }
 
@@ -1963,6 +2076,7 @@ app.post('/api/issue-coupon/:id', (req, res) => {
                     const errorCode = result.error;
                     if (errorCode === 'PASSWORD_WRONG') {
                         errorMsg = `[웹브라우저] 비밀번호 틀림 ${getNowTime()}`;
+                        progressStatus = 'password_wrong';  // 비밀번호 오류는 별도 상태
                     } else if (errorCode.startsWith('BOT_BLOCKED')) {
                         // BOT_BLOCKED:에러메시지 형식에서 에러 메시지 추출
                         const botBlockMsg = errorCode.includes(':') ? errorCode.split(':').slice(1).join(':').trim() : '';
@@ -2047,20 +2161,32 @@ async function processIssueCouponSequentially(accounts, coupon_type) {
 }
 
 // 모바일 쿠폰 발급 순차 처리 (Appium 배치 모드 사용)
-async function processIssueCouponMobileSequentially(accounts, coupon_type) {
+async function processIssueCouponMobileSequentially(accounts, coupon_types) {
     const accountIds = accounts.map(a => a.id);
+
+    // coupon_types를 배열로 정규화 (단일값도 지원)
+    const couponTypesArray = Array.isArray(coupon_types) ? coupon_types : [coupon_types];
+
+    // 쿠폰 타입 이름 변환
+    const couponNames = {
+        '10000': '1만원권',
+        '30000': '3만원권',
+        '50000': '5만원권',
+        '100000': '10만원권'
+    };
+    const couponTypesStr = couponTypesArray.map(ct => couponNames[ct] || `${ct}원`).join(', ');
 
     // 모든 계정 상태를 '대기 중'으로 초기화 (mobile_issue_status 사용)
     for (const account of accounts) {
         runQuery('UPDATE accounts SET mobile_issue_status = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?',
-            [`[모바일] ${coupon_type}원 대기 중... ${getNowTime()}`, account.id]);
+            [`[모바일] ${couponTypesStr} 대기 중... ${getNowTime()}`, account.id]);
         updateProgress(account.id, 'issue', 'waiting', `대기 중... ${account.email}`);
     }
 
     // Python 직접 실행 방식 (배치 처리)
     // 배치 정보를 임시 JSON 파일로 저장
     const batchData = {
-        coupon_type: coupon_type,
+        coupon_types: couponTypesArray,
         accounts: accounts.map(acc => ({
             id: acc.id,
             email: acc.email,
@@ -2068,11 +2194,7 @@ async function processIssueCouponMobileSequentially(accounts, coupon_type) {
         })),
     };
 
-    const batchJsonPath = path.join(__dirname, 'temp', `issue_batch_${Date.now()}.json`);
-    const tempDir = path.dirname(batchJsonPath);
-    if (!fs.existsSync(tempDir)) {
-        fs.mkdirSync(tempDir, { recursive: true });
-    }
+    const batchJsonPath = path.join(getWritableTempDir(), `issue_batch_${Date.now()}.json`);
     fs.writeFileSync(batchJsonPath, JSON.stringify(batchData, null, 2), 'utf-8');
 
     const scriptPath = getIssueCouponMobileScriptPath();
@@ -2086,11 +2208,15 @@ async function processIssueCouponMobileSequentially(accounts, coupon_type) {
 
     const { spawn } = require('child_process');
     const pythonPath = getPythonPath();
+    const androidHome = (process.env.ANDROID_HOME || 'C:\\platform-tools').trim();
 
     // 배치 모드로 실행 (--batch 옵션)
     const pythonProcess = spawn(pythonPath, ['-u', scriptPath, '--batch', batchJsonPath], {
         env: {
             ...process.env,
+            ANDROID_HOME: androidHome,
+            ANDROID_SDK_ROOT: androidHome,
+            PATH: `${androidHome};${process.env.PATH}`,
             PYTHONIOENCODING: 'utf-8',
             PYTHONUTF8: '1'
         },
@@ -2098,7 +2224,7 @@ async function processIssueCouponMobileSequentially(accounts, coupon_type) {
     });
 
     // 배치 프로세스 시작 등록
-    startBatchProcess('issue-mobile', `모바일 쿠폰 발급 (${coupon_type}원)`, accountIds, pythonProcess);
+    startBatchProcess('issue-mobile', `모바일 쿠폰 발급 (${couponTypesStr})`, accountIds, pythonProcess);
 
     let stdout = '';
     let lineBuffer = '';  // 불완전한 라인 버퍼링
@@ -2127,22 +2253,34 @@ async function processIssueCouponMobileSequentially(accounts, coupon_type) {
 
                     // DB 상태 업데이트 (mobile_issue_status 사용) - 변환된 메시지 사용
                     const statusMsg = `[모바일] ${displayMessage} ${getNowTime()}`;
+                    addLog(`[쿠폰발급-DEBUG] id=${progress.id}, progress.message=${progress.message}, displayMessage=${displayMessage}, statusMsg=${statusMsg}`);
                     runQuery('UPDATE accounts SET mobile_issue_status = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?', [statusMsg, progress.id]);
 
-                    if (progress.status === 'success' || progress.status === 'error' || progress.status === 'warning') {
-                        // 포인트 정보 업데이트
-                        if (progress.data && progress.data.remaining_points !== undefined) {
-                            const newPoints = progress.data.remaining_points || 0;
-                            runQuery(`
-                                UPDATE accounts
-                                SET current_points = ?,
-                                    updated_at = datetime('now', 'localtime')
-                                WHERE id = ?
-                            `, [newPoints, progress.id]);
+                    if (progress.status === 'success' || progress.status === 'error' || progress.status === 'warning' || progress.status === 'password_wrong') {
+                        // 포인트와 쿠폰 목록 업데이트 (vouchers가 있으면 전체 대체)
+                        if (progress.data) {
+                            if (progress.data.vouchers && Array.isArray(progress.data.vouchers)) {
+                                runQuery(`
+                                    UPDATE accounts
+                                    SET current_points = COALESCE(?, current_points),
+                                        owned_vouchers = ?,
+                                        updated_at = datetime('now', 'localtime')
+                                    WHERE id = ?
+                                `, [progress.data.remaining_points, JSON.stringify(progress.data.vouchers), progress.id]);
+                            } else if (progress.data.remaining_points !== undefined) {
+                                runQuery(`
+                                    UPDATE accounts
+                                    SET current_points = ?,
+                                        updated_at = datetime('now', 'localtime')
+                                    WHERE id = ?
+                                `, [progress.data.remaining_points, progress.id]);
+                            }
                         }
 
                         // 결과 로그 (간결하게)
-                        const statusIcon = progress.status === 'success' ? '✓' : progress.status === 'warning' ? '!' : '✗';
+                        const statusIcon = progress.status === 'success' ? '✓' :
+                                          progress.status === 'warning' ? '!' :
+                                          progress.status === 'password_wrong' ? '🔑' : '✗';
                         const pointsInfo = progress.data?.remaining_points ? ` (${progress.data.remaining_points}P)` : '';
                         addLog(`[쿠폰발급] id=${progress.id} ${statusIcon} ${progress.message}${pointsInfo}`);
                     }
@@ -2188,10 +2326,39 @@ async function processIssueCouponMobileSequentially(accounts, coupon_type) {
         for (const line of lines) {
             const trimmedLine = line.trim();
             if (trimmedLine) {
-                // 토큰 불일치 같은 심각한 문제만 로그
-                if (trimmedLine.includes('불일치') || trimmedLine.includes('[ERROR]')) {
-                    addLog(`[쿠폰발급] ${trimmedLine.substring(0, 150)}`);
+                // [DEBUG] 모든 Python 출력 로그 (디버깅용)
+                addLog(`[PY] ${trimmedLine.substring(0, 200)}`);
+
+
+                // "발급 중:" 패턴으로 실시간 상태 업데이트 (정보 조회와 동일 방식)
+                if (trimmedLine.includes('발급 중:')) {
+                    const emailMatch = trimmedLine.match(/발급 중:\s*(\S+)/);
+                    if (emailMatch) {
+                        const email = emailMatch[1];
+                        const account = accounts.find(a => a.email === email);
+                        if (account) {
+                            runQuery('UPDATE accounts SET mobile_issue_status = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?',
+                                [`[모바일] ${couponTypesStr} 발급 중... ${getNowTime()}`, account.id]);
+                            updateProgress(account.id, 'issue', 'processing', `${couponTypesStr} 발급 중...`);
+                        }
+                    }
                 }
+
+                // 비밀번호 오류 패턴 직접 감지 (fallback - [PROGRESS] 없이도 감지)
+                if ((trimmedLine.includes('비밀번호 오류:') || trimmedLine.includes('PASSWORD_WRONG') || trimmedLine.includes('[ERROR] PASSWORD_WRONG')) && !trimmedLine.includes('[PROGRESS]')) {
+                    const emailMatch = trimmedLine.match(/비밀번호 오류:\s*(\S+)/) || trimmedLine.match(/:\s*(\S+@\S+)/);
+                    if (emailMatch) {
+                        const email = emailMatch[1];
+                        const account = accounts.find(a => a.email === email);
+                        if (account) {
+                            const statusMsg = `[모바일] 비밀번호 틀림 ${getNowTime()}`;
+                            addLog(`[쿠폰발급-fallback] ${email} - 비밀번호 오류 감지`);
+                            runQuery('UPDATE accounts SET mobile_issue_status = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?', [statusMsg, account.id]);
+                            updateProgress(account.id, 'issue', 'password_wrong', `비밀번호 틀림`);
+                        }
+                    }
+                }
+
                 processLine(trimmedLine);
             }
         }
@@ -2344,6 +2511,7 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false) {
 
                 if (errorCode === 'PASSWORD_WRONG') {
                     errorMsg = `[웹브라우저] 비밀번호 틀림 ${getNowTime()}`;
+                    progressStatus = 'password_wrong';  // 비밀번호 오류는 별도 상태
                 } else if (errorCode.startsWith('BOT_BLOCKED')) {
                     // BOT_BLOCKED:에러메시지 형식에서 에러 메시지 추출
                     const botBlockMsg = errorCode.includes(':') ? errorCode.split(':').slice(1).join(':').trim() : '';
@@ -2551,25 +2719,32 @@ function issueCouponMobileSingle(account, coupon_type) {
             }
 
             if (result) {
-                // DB 업데이트
-                if (result.success) {
-                    const newPoints = result.remaining_points || 0;
-                    const vouchers = result.vouchers ? JSON.stringify(result.vouchers) : null;
+                // DB 업데이트 (성공/실패 모두 vouchers가 있으면 갱신)
+                const newPoints = result.remaining_points;
+                const vouchers = result.vouchers ? JSON.stringify(result.vouchers) : null;
+                const statusMsg = result.success
+                    ? `[모바일] ${coupon_type}원 발급 완료 ${getNowTime()}`
+                    : `[모바일] ${result.message || '실패'} ${getNowTime()}`;
+
+                if (newPoints !== undefined && vouchers) {
+                    // 포인트와 쿠폰 정보가 있으면 함께 갱신 (1달 미경과 등도 포함)
                     runQuery(`
                         UPDATE accounts
                         SET current_points = ?,
-                            owned_vouchers = COALESCE(?, owned_vouchers),
+                            owned_vouchers = ?,
                             mobile_issue_status = ?,
+                            mobile_fetch_status = ?,
                             updated_at = datetime('now', 'localtime')
                         WHERE id = ?
-                    `, [newPoints, vouchers, `[모바일] ${coupon_type}원 발급 완료 ${getNowTime()}`, account.id]);
+                    `, [newPoints, vouchers, statusMsg, `조회 완료 ${getNowTime()}`, account.id]);
                 } else {
+                    // 정보가 없으면 상태만 갱신
                     runQuery(`
                         UPDATE accounts
                         SET mobile_issue_status = ?,
                             updated_at = datetime('now', 'localtime')
                         WHERE id = ?
-                    `, [`[모바일] ${result.message || '실패'} ${getNowTime()}`, account.id]);
+                    `, [statusMsg, account.id]);
                 }
                 resolve(result);
             } else {
@@ -2605,11 +2780,7 @@ function processIssueCouponMobileForHybrid(accounts, coupon_type) {
             })),
         };
 
-        const batchJsonPath = path.join(__dirname, 'temp', `issue_hybrid_batch_${Date.now()}.json`);
-        const tempDir = path.dirname(batchJsonPath);
-        if (!fs.existsSync(tempDir)) {
-            fs.mkdirSync(tempDir, { recursive: true });
-        }
+        const batchJsonPath = path.join(getWritableTempDir(), `issue_hybrid_batch_${Date.now()}.json`);
         fs.writeFileSync(batchJsonPath, JSON.stringify(batchData, null, 2), 'utf-8');
 
         const scriptPath = getIssueCouponMobileScriptPath();
@@ -2669,14 +2840,20 @@ function processIssueCouponMobileForHybrid(accounts, coupon_type) {
                             const statusMsg = `[모바일] ${displayMessage} ${getNowTime()}`;
                             runQuery('UPDATE accounts SET mobile_issue_status = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?', [statusMsg, progress.id]);
 
-                            if (progress.status === 'success' || progress.status === 'error' || progress.status === 'warning') {
-                                if (progress.data && progress.data.remaining_points !== undefined) {
-                                    runQuery('UPDATE accounts SET current_points = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?',
-                                        [progress.data.remaining_points, progress.id]);
+                            if (progress.status === 'success' || progress.status === 'error' || progress.status === 'warning' || progress.status === 'password_wrong') {
+                                if (progress.data) {
+                                    // 포인트와 쿠폰 목록 업데이트 (vouchers가 있으면 전체 대체)
+                                    if (progress.data.vouchers && Array.isArray(progress.data.vouchers)) {
+                                        runQuery('UPDATE accounts SET current_points = COALESCE(?, current_points), owned_vouchers = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?',
+                                            [progress.data.remaining_points, JSON.stringify(progress.data.vouchers), progress.id]);
+                                    } else if (progress.data.remaining_points !== undefined) {
+                                        runQuery('UPDATE accounts SET current_points = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?',
+                                            [progress.data.remaining_points, progress.id]);
+                                    }
                                 }
                             }
 
-                            const statusIcon = progress.status === 'success' ? '✓' : (progress.status === 'warning' ? '!' : '✗');
+                            const statusIcon = progress.status === 'success' ? '✓' : (progress.status === 'warning' ? '!' : (progress.status === 'password_wrong' ? '🔑' : '✗'));
                             if (progress.status !== 'processing') {
                                 addLog(`[하이브리드-모바일] id=${progress.id} ${statusIcon} ${displayMessage}`);
                             }
@@ -2745,9 +2922,15 @@ app.post('/api/progress/init', (req, res) => {
         return res.status(400).json({ error: 'ids 배열이 필요합니다' });
     }
 
-    // 모든 계정을 'waiting' 상태로 초기화
+    // 이미 진행 중이거나 완료된 상태는 덮어쓰지 않음
+    // (배치 작업이 먼저 시작되어 이미 처리된 경우 보호)
     ids.forEach(id => {
-        updateProgress(id, type, 'waiting', '대기 중');
+        const existing = getProgress(id);
+        if (!existing || existing.type !== type) {
+            // 기존 상태가 없거나 다른 타입이면 초기화
+            updateProgress(id, type, 'waiting', '대기 중');
+        }
+        // 이미 해당 타입의 상태가 있으면 유지 (덮어쓰지 않음)
     });
 
     res.json({ success: true, count: ids.length });

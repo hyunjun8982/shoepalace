@@ -26,7 +26,9 @@ import {
   MinusSquareOutlined,
   SearchOutlined,
   FilterOutlined,
+  DownloadOutlined,
 } from '@ant-design/icons';
+import * as XLSX from 'xlsx';
 import { poizonPriceService } from '../../services/poizonPrice';
 import type { PoizonPriceWatchItem, PoizonPriceRefreshStatus, PriceDetail } from '../../types/poizonPrice';
 
@@ -208,6 +210,62 @@ const PoizonPriceComparisonPage: React.FC = () => {
       }
       return next;
     });
+  };
+
+  const handleExportExcel = () => {
+    // 구매 권장 항목만 필터 (현재 필터 적용 목록 기준)
+    const targetItems = filteredItems.filter((item) => {
+      if (!item.sell_price || !item.price_details) return false;
+      return item.price_details.some((d) => isRecommend(item.sell_price, d.average_price));
+    });
+
+    if (targetItems.length === 0) {
+      message.warning('구매 권장 항목이 없습니다');
+      return;
+    }
+
+    // 사이즈별로 행 펼치기
+    const rows: Record<string, string | number>[] = [];
+    for (const item of targetItems) {
+      const details = item.price_details || [];
+      for (const d of details) {
+        if (!d.average_price && !d.leak_price) continue;
+        const recommend = isRecommend(item.sell_price, d.average_price);
+        rows.push({
+          '품번': item.article_number,
+          '상품명': item.title || '',
+          '사이즈': d.size_kr,
+          '구매최종가': item.sell_price || '',
+          '평균가': d.average_price || '',
+          '최저입찰': d.leak_price || '',
+          '구매권장': recommend ? 'O' : '',
+        });
+      }
+    }
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    // 열 너비
+    ws['!cols'] = [
+      { wch: 14 }, // 품번
+      { wch: 40 }, // 상품명
+      { wch: 8 },  // 사이즈
+      { wch: 12 }, // 구매최종가
+      { wch: 12 }, // 평균가
+      { wch: 12 }, // 최저입찰
+      { wch: 8 },  // 구매권장
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '구매권장');
+    const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const blob = new Blob([buf], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `포이즌_구매권장_${today}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+    message.success(`${targetItems.length}개 상품 엑셀 다운로드`);
   };
 
   const isApparel = (item: PoizonPriceWatchItem) => {
@@ -547,6 +605,13 @@ const PoizonPriceComparisonPage: React.FC = () => {
           onClick={() => { setFilterRecommend(!filterRecommend); setCurrentPage(1); }}
         >
           구매 권장
+        </Button>
+        <Button
+          icon={<DownloadOutlined />}
+          onClick={handleExportExcel}
+          disabled={items.length === 0}
+        >
+          엑셀 다운로드
         </Button>
         <div style={{ flex: 1, textAlign: 'center' }}>
           {selectedKeys.size > 0 && (

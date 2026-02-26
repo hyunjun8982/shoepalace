@@ -120,7 +120,7 @@ def web_login(email: str, password: str, headless: bool = False):
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.common.exceptions import TimeoutException, NoSuchElementException
     except ImportError as e:
-        print("웹 모드에 필요한 라이브러리가 없습니다.")
+        print("[ERROR] LIBRARY_MISSING: 웹 모드에 필요한 라이브러리가 없습니다.")
         print(f"에러 상세: {e}")
         print(f"Python 버전: {sys.version}")
         print("설치: pip install undetected-chromedriver selenium")
@@ -134,7 +134,6 @@ def web_login(email: str, password: str, headless: bool = False):
 
     driver = None
     try:
-        # 헤드리스 모드 알림
         if headless:
             print("[주의] 헤드리스 모드 활성화 - 봇 차단될 가능성 있음")
 
@@ -144,9 +143,7 @@ def web_login(email: str, password: str, headless: bool = False):
             import subprocess
             import re
             import sys
-            # Windows에서 콘솔 창 숨기기
             creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
-            # Windows에서 Chrome 버전 확인
             chrome_paths = [
                 r'C:\Program Files\Google\Chrome\Application\chrome.exe',
                 r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
@@ -154,27 +151,46 @@ def web_login(email: str, password: str, headless: bool = False):
             ]
             for chrome_path in chrome_paths:
                 if os.path.exists(chrome_path):
-                    # wmic으로 버전 가져오기
-                    result = subprocess.run(
-                        ['wmic', 'datafile', 'where', f'name="{chrome_path.replace(os.sep, os.sep + os.sep)}"', 'get', 'Version', '/value'],
-                        capture_output=True, text=True, timeout=10,
-                        creationflags=creationflags
-                    )
-                    match = re.search(r'Version=(\d+)', result.stdout)
-                    if match:
-                        chrome_version = int(match.group(1))
-                        print(f"[감지] 설치된 Chrome 버전: {chrome_version}")
+                    # PowerShell로 버전 감지 (Windows 11 24H2에서 wmic 제거됨)
+                    try:
+                        result = subprocess.run(
+                            ['powershell', '-NoProfile', '-Command',
+                             f"(Get-Item '{chrome_path}').VersionInfo.ProductVersion"],
+                            capture_output=True, text=True, timeout=10,
+                            creationflags=creationflags
+                        )
+                        match = re.search(r'(\d+)', result.stdout.strip())
+                        if match:
+                            chrome_version = int(match.group(1))
+                            print(f"[감지] 설치된 Chrome 버전: {chrome_version} (PowerShell)")
+                            break
+                    except Exception:
+                        pass
+
+                    # 폴백: wmic (Windows 11 24H2 이전 버전용)
+                    try:
+                        result = subprocess.run(
+                            ['wmic', 'datafile', 'where', f'name="{chrome_path.replace(os.sep, os.sep + os.sep)}"', 'get', 'Version', '/value'],
+                            capture_output=True, text=True, timeout=10,
+                            creationflags=creationflags
+                        )
+                        match = re.search(r'Version=(\d+)', result.stdout)
+                        if match:
+                            chrome_version = int(match.group(1))
+                            print(f"[감지] 설치된 Chrome 버전: {chrome_version} (wmic)")
+                            break
+                    except Exception:
+                        pass
+
+                    if chrome_version:
                         break
         except Exception as e:
             print(f"[경고] Chrome 버전 감지 실패: {e}")
 
         print("[1/5] 브라우저 시작...")
-        # version_main 파라미터로 Chrome 버전 지정 (자동 드라이버 다운로드)
-        # Chrome 143+ 호환성을 위해 추가 설정
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                # 매 시도마다 새로운 옵션 객체 생성 (재사용 방지)
                 retry_options = uc.ChromeOptions()
                 retry_options.add_argument('--incognito')
                 retry_options.add_argument('--window-size=1280,900')
@@ -194,12 +210,10 @@ def web_login(email: str, password: str, headless: bool = False):
                     options=retry_options,
                     use_subprocess=True,
                     version_main=chrome_version,
-                    driver_executable_path=None,  # 자동 다운로드
+                    driver_executable_path=None,
                 )
-                # 브라우저 안정화 대기 (Chrome 143+ 대응)
                 time.sleep(3)
 
-                # 윈도우 핸들 확인 (여러 번 시도)
                 handle_check_retries = 3
                 for hc in range(handle_check_retries):
                     try:
@@ -211,7 +225,7 @@ def web_login(email: str, password: str, headless: bool = False):
                         else:
                             raise he
 
-                break  # 성공
+                break
             except Exception as e:
                 print(f"  [시도 {attempt+1}/{max_retries}] 드라이버 초기화 실패: {e}")
                 try:
@@ -231,11 +245,9 @@ def web_login(email: str, password: str, headless: bool = False):
         print("  완료")
 
         print("[2/5] 로그인 페이지 이동...")
-        # 페이지 이동 전 브라우저 상태 재확인
         page_load_retries = 3
         for plr in range(page_load_retries):
             try:
-                # 윈도우 핸들 확인 (브라우저가 살아있는지)
                 _ = driver.current_window_handle
                 driver.get("https://www.adidas.co.kr/account-login")
                 break

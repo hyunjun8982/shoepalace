@@ -15,6 +15,10 @@ export interface AdidasAccount {
   last_coupon_issued?: string;
   next_coupon_available_date?: string;
   fetch_status?: string;
+  web_fetch_status?: string;
+  mobile_fetch_status?: string;
+  web_issue_status?: string;
+  mobile_issue_status?: string;
   memo?: string;
   created_at: string;
   updated_at: string;

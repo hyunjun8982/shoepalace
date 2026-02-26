@@ -19,6 +19,10 @@ class AdidasAccountBase(BaseModel):
     owned_vouchers: Optional[str] = None
     is_active: bool = True
     fetch_status: Optional[str] = None
+    web_fetch_status: Optional[str] = None
+    mobile_fetch_status: Optional[str] = None
+    web_issue_status: Optional[str] = None
+    mobile_issue_status: Optional[str] = None
     memo: Optional[str] = None
     last_coupon_issued: Optional[datetime] = None
     next_coupon_available_date: Optional[str] = None
@@ -40,6 +44,10 @@ class AdidasAccountUpdate(BaseModel):
     owned_vouchers: Optional[str] = None
     is_active: Optional[bool] = None
     fetch_status: Optional[str] = None
+    web_fetch_status: Optional[str] = None
+    mobile_fetch_status: Optional[str] = None
+    web_issue_status: Optional[str] = None
+    mobile_issue_status: Optional[str] = None
     memo: Optional[str] = None
     session_cookies: Optional[str] = None
     last_coupon_issued: Optional[datetime] = None

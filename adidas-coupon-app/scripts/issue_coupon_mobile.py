@@ -1045,29 +1045,10 @@ def process_batch_mode(batch_json_path: str):
                         progress_data = {'id': acc_id, 'status': 'password_wrong', 'message': 'PASSWORD_WRONG'}
                         print(f"\n비밀번호 오류: {email}")
                     elif access_token == "BOT_BLOCKED":
-                        print(f"\n[BATCH_STOPPED] 봇 차단 감지 - 배치 즉시 중단: {email}")
+                        print(f"\n봇 차단: {email}")
                         account_result['message'] = '봇 차단'
                         account_result['error_type'] = 'bot_blocked'
-                        progress_data = {'id': acc_id, 'status': 'error', 'message': '봇 차단 - 배치 중단'}
-                        print(f"[PROGRESS] {json.dumps(progress_data, ensure_ascii=False)}")
-                        sys.stdout.flush()
-                        results.append(account_result)
-
-                        # 나머지 계정을 모두 스킵 처리
-                        for j in range(i + 1, len(accounts)):
-                            skip_acc = accounts[j]
-                            skip_result = {
-                                'id': skip_acc.get('id'),
-                                'email': skip_acc.get('email'),
-                                'success': False,
-                                'message': '봇 차단으로 배치 중단됨',
-                                'error_type': 'batch_stopped'
-                            }
-                            skip_progress = {'id': skip_acc.get('id'), 'status': 'error', 'message': '봇 차단으로 배치 중단됨'}
-                            print(f"[PROGRESS] {json.dumps(skip_progress, ensure_ascii=False)}")
-                            results.append(skip_result)
-                        sys.stdout.flush()
-                        break  # 배치 즉시 중단
+                        progress_data = {'id': acc_id, 'status': 'error', 'message': '봇 차단'}
                     else:
                         account_result['message'] = '로그인 실패'
                         account_result['error_type'] = 'login_failed'
@@ -1075,6 +1056,13 @@ def process_batch_mode(batch_json_path: str):
                         print(f"\n로그인 실패: {email}")
                     print(f"[PROGRESS] {json.dumps(progress_data, ensure_ascii=False)}")
                     sys.stdout.flush()
+
+                    # 로그인 실패 시에도 세션 정리 (다음 계정 로그인을 위해)
+                    try:
+                        driver.switch_to.context('NATIVE_APP')
+                    except:
+                        pass
+                    clear_webview_cookies(driver)
                 else:
                     # 로그인 성공 → 연속 BOT_BLOCKED 카운터 리셋
                     consecutive_bot_blocked = 0

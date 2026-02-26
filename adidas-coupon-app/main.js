@@ -225,6 +225,11 @@ ipcMain.handle('get-app-path', () => {
     return app.getAppPath();
 });
 
+ipcMain.handle('show-save-dialog', async (event, options) => {
+    const result = await dialog.showSaveDialog(mainWindow, options);
+    return result;
+});
+
 // Appium 실행 상태 확인 (외부에서 실행된 경우도 감지)
 ipcMain.handle('check-appium-status', async () => {
     const http = require('http');

@@ -1,8 +1,7 @@
 /**
  * 로컬 Express 서버 - DB 관리 및 API 제공
- * DB_TYPE 환경변수로 SQLite(개인) 또는 PostgreSQL(공용) 선택
- * - 배포용: SQLite (sql.js)
- * - 로컬 테스트: PostgreSQL (입출고관리시스템 공용 DB)
+ * PostgreSQL (입출고관리시스템 공용 DB: 129.212.227.252:5433) 직접 사용
+ * - sql.js(SQLite) → pg(PostgreSQL) 전환 완료
  */
 const express = require('express');
 const cors = require('cors');
@@ -27,11 +26,6 @@ function getWritableTempDir() {
     return tempDir;
 }
 
-// DB 타입 결정: 환경변수 또는 config 파일
-const DB_TYPE = process.env.DB_TYPE || 'sqlite'; // 'sqlite' 또는 'postgresql'
-const PG_CONNECTION = process.env.DATABASE_URL || 'postgresql://shoepalace_user:shoepalace_pass@133.186.221.84:5432/shoepalace';
-
-console.log(`[DB] 사용 DB 타입: ${DB_TYPE}`);
 
 const app = express();
 app.use(cors());
@@ -388,149 +382,39 @@ function broadcastLog(logEntry) {
     });
 }
 
-// SQLite DB (sql.js 사용)
-let db = null;
-let SQL = null;
-const dbPath = path.join(__dirname, 'adidas_accounts.db');
+// PostgreSQL 연결 설정
+const { Pool } = require('pg');
+const pool = new Pool({
+    host: '129.212.227.252',
+    port: 5433,
+    database: 'shoepalace',
+    user: 'shoepalace_user',
+    password: 'shoepalace_pass',
+});
+
+// DB 헬퍼 함수 (async)
+async function query(sql, params = []) {
+    const { rows } = await pool.query(sql, params);
+    return rows;
+}
+
+async function queryOne(sql, params = []) {
+    const { rows } = await pool.query(sql, params);
+    return rows[0] || null;
+}
+
+async function runQuery(sql, params = []) {
+    return pool.query(sql, params);
+}
 
 async function initDB() {
-    const initSqlJs = require('sql.js');
-
-    // sql.js 초기화
-    SQL = await initSqlJs();
-
-    // 기존 DB 파일 로드 또는 새로 생성
-    if (fs.existsSync(dbPath)) {
-        const fileBuffer = fs.readFileSync(dbPath);
-        db = new SQL.Database(fileBuffer);
-        console.log('[DB] 기존 데이터베이스 로드 완료');
-    } else {
-        db = new SQL.Database();
-        console.log('[DB] 새 데이터베이스 생성');
-    }
-
-    // 계정 테이블 생성
-    db.run(`
-        CREATE TABLE IF NOT EXISTS accounts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            name TEXT,
-            birthday TEXT,
-            phone TEXT,
-            adikr_barcode TEXT,
-            current_points INTEGER DEFAULT 0,
-            owned_vouchers TEXT,
-            is_active INTEGER DEFAULT 1,
-            fetch_status TEXT,
-            issue_status TEXT,
-            memo TEXT,
-            created_at TEXT DEFAULT (datetime('now', 'localtime')),
-            updated_at TEXT DEFAULT (datetime('now', 'localtime'))
-        )
-    `);
-
-    // 마이그레이션: 기존 DB에 issue_status 컬럼이 없으면 추가
     try {
-        db.run('ALTER TABLE accounts ADD COLUMN issue_status TEXT');
-        console.log('[DB] issue_status 컬럼 추가됨');
-    } catch (e) {
-        // 이미 존재하면 무시
+        await pool.query('SELECT 1');
+        addLog('[DB] PostgreSQL 연결 완료 (129.212.227.252:5433)');
+    } catch (err) {
+        addLog(`[DB] PostgreSQL 연결 실패: ${err.message}`);
+        throw err;
     }
-
-    // 마이그레이션: 웹/모바일 조회 현황 분리를 위한 컬럼 추가
-    let webColumnAdded = false;
-    try {
-        db.run('ALTER TABLE accounts ADD COLUMN web_fetch_status TEXT');
-        console.log('[DB] web_fetch_status 컬럼 추가됨');
-        webColumnAdded = true;
-    } catch (e) {
-        // 이미 존재하면 무시
-    }
-
-    try {
-        db.run('ALTER TABLE accounts ADD COLUMN mobile_fetch_status TEXT');
-        console.log('[DB] mobile_fetch_status 컬럼 추가됨');
-    } catch (e) {
-        // 이미 존재하면 무시
-    }
-
-    // 기존 fetch_status 데이터를 web_fetch_status로 이전 (아직 이전되지 않은 데이터만)
-    try {
-        const migrateResult = db.run(`UPDATE accounts SET web_fetch_status = '[웹브라우저] ' || fetch_status WHERE fetch_status IS NOT NULL AND fetch_status != '' AND (web_fetch_status IS NULL OR web_fetch_status = '')`);
-        console.log('[DB] 기존 fetch_status 데이터 이전 확인 완료');
-    } catch (e) {
-        console.log('[DB] fetch_status 이전 중 오류 (무시):', e.message);
-    }
-
-    // 마이그레이션: 웹/모바일 쿠폰 발급 현황 분리를 위한 컬럼 추가
-    try {
-        db.run('ALTER TABLE accounts ADD COLUMN web_issue_status TEXT');
-        console.log('[DB] web_issue_status 컬럼 추가됨');
-    } catch (e) {
-        // 이미 존재하면 무시
-    }
-
-    try {
-        db.run('ALTER TABLE accounts ADD COLUMN mobile_issue_status TEXT');
-        console.log('[DB] mobile_issue_status 컬럼 추가됨');
-    } catch (e) {
-        // 이미 존재하면 무시
-    }
-
-    // 기존 issue_status 데이터를 web_issue_status로 이전 (아직 이전되지 않은 데이터만)
-    try {
-        db.run(`UPDATE accounts SET web_issue_status = issue_status WHERE issue_status IS NOT NULL AND issue_status != '' AND (web_issue_status IS NULL OR web_issue_status = '') AND issue_status NOT LIKE '%[모바일]%'`);
-        db.run(`UPDATE accounts SET mobile_issue_status = issue_status WHERE issue_status IS NOT NULL AND issue_status != '' AND (mobile_issue_status IS NULL OR mobile_issue_status = '') AND issue_status LIKE '%[모바일]%'`);
-        console.log('[DB] 기존 issue_status 데이터 이전 확인 완료');
-    } catch (e) {
-        console.log('[DB] issue_status 이전 중 오류 (무시):', e.message);
-    }
-
-    saveDB();
-    console.log('[DB] SQLite 데이터베이스 초기화 완료');
-}
-
-// DB를 파일로 저장
-function saveDB() {
-    if (db) {
-        const data = db.export();
-        const buffer = Buffer.from(data);
-        fs.writeFileSync(dbPath, buffer);
-    }
-}
-
-// Helper: rows를 객체 배열로 변환
-function queryAll(sql, params = []) {
-    const stmt = db.prepare(sql);
-    if (params.length > 0) {
-        stmt.bind(params);
-    }
-    const results = [];
-    while (stmt.step()) {
-        results.push(stmt.getAsObject());
-    }
-    stmt.free();
-    return results;
-}
-
-function queryOne(sql, params = []) {
-    const stmt = db.prepare(sql);
-    if (params.length > 0) {
-        stmt.bind(params);
-    }
-    let result = null;
-    if (stmt.step()) {
-        result = stmt.getAsObject();
-    }
-    stmt.free();
-    return result;
-}
-
-function runQuery(sql, params = []) {
-    db.run(sql, params);
-    saveDB();
-    return { changes: db.getRowsModified(), lastInsertRowid: queryOne('SELECT last_insert_rowid() as id')?.id };
 }
 
 // 현재 시간을 [YY-MM-DD HH:MM] 형식으로 반환
@@ -547,9 +431,9 @@ function getNowTime() {
 // ========== 계정 API ==========
 
 // 계정 목록 조회
-app.get('/api/accounts', (req, res) => {
+app.get('/api/accounts', async (req, res) => {
     try {
-        const accounts = queryAll('SELECT * FROM accounts ORDER BY created_at DESC');
+        const accounts = await query('SELECT * FROM adidas_accounts ORDER BY created_at DESC');
         res.json(accounts);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -557,19 +441,19 @@ app.get('/api/accounts', (req, res) => {
 });
 
 // 계정 추가
-app.post('/api/accounts', (req, res) => {
+app.post('/api/accounts', async (req, res) => {
     try {
         const { email, password, name, birthday, phone, adikr_barcode, memo, is_active } = req.body;
 
-        runQuery(`
-            INSERT INTO accounts (email, password, name, birthday, phone, adikr_barcode, memo, is_active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `, [email, password, name || null, birthday || null, phone || null, adikr_barcode || null, memo || null, is_active !== false ? 1 : 0]);
+        const result = await pool.query(`
+            INSERT INTO adidas_accounts (email, password, name, birthday, phone, adikr_barcode, memo, is_active)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING id
+        `, [email, password, name || null, birthday || null, phone || null, adikr_barcode || null, memo || null, is_active !== false]);
 
-        const lastId = queryOne('SELECT last_insert_rowid() as id')?.id;
-        res.json({ id: lastId, message: '계정이 추가되었습니다' });
+        res.json({ id: result.rows[0].id, message: '계정이 추가되었습니다' });
     } catch (error) {
-        if (error.message.includes('UNIQUE constraint failed')) {
+        if (error.code === '23505') {
             res.status(400).json({ error: '이미 존재하는 이메일입니다' });
         } else {
             res.status(500).json({ error: error.message });
@@ -578,25 +462,25 @@ app.post('/api/accounts', (req, res) => {
 });
 
 // 계정 일괄 등록/수정
-app.post('/api/accounts/bulk-upsert', (req, res) => {
+app.post('/api/accounts/bulk-upsert', async (req, res) => {
     try {
         const accounts = req.body;
         let created = 0, updated = 0, errors = [];
 
         for (const acc of accounts) {
             try {
-                const existing = queryOne('SELECT id FROM accounts WHERE email = ?', [acc.email]);
+                const existing = await queryOne('SELECT id FROM adidas_accounts WHERE email = $1', [acc.email]);
                 if (existing) {
-                    runQuery(`
-                        UPDATE accounts SET password = ?, name = ?, birthday = ?, phone = ?, updated_at = datetime('now', 'localtime')
-                        WHERE email = ?
+                    await runQuery(`
+                        UPDATE adidas_accounts SET password = $1, name = $2, birthday = $3, phone = $4, updated_at = NOW()
+                        WHERE email = $5
                     `, [acc.password, acc.name || null, acc.birthday || null, acc.phone || null, acc.email]);
                     updated++;
                 } else {
-                    runQuery(`
-                        INSERT INTO accounts (email, password, name, birthday, phone, is_active)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    `, [acc.email, acc.password, acc.name || null, acc.birthday || null, acc.phone || null, 1]);
+                    await runQuery(`
+                        INSERT INTO adidas_accounts (email, password, name, birthday, phone, is_active)
+                        VALUES ($1, $2, $3, $4, $5, $6)
+                    `, [acc.email, acc.password, acc.name || null, acc.birthday || null, acc.phone || null, true]);
                     created++;
                 }
             } catch (e) {
@@ -611,16 +495,16 @@ app.post('/api/accounts/bulk-upsert', (req, res) => {
 });
 
 // 계정 수정
-app.put('/api/accounts/:id', (req, res) => {
+app.put('/api/accounts/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const { email, password, name, birthday, phone, adikr_barcode, memo, is_active } = req.body;
 
-        runQuery(`
-            UPDATE accounts
-            SET email = ?, password = ?, name = ?, birthday = ?, phone = ?, adikr_barcode = ?, memo = ?, is_active = ?, updated_at = datetime('now', 'localtime')
-            WHERE id = ?
-        `, [email, password, name || null, birthday || null, phone || null, adikr_barcode || null, memo || null, is_active ? 1 : 0, id]);
+        await runQuery(`
+            UPDATE adidas_accounts
+            SET email = $1, password = $2, name = $3, birthday = $4, phone = $5, adikr_barcode = $6, memo = $7, is_active = $8, updated_at = NOW()
+            WHERE id = $9
+        `, [email, password, name || null, birthday || null, phone || null, adikr_barcode || null, memo || null, is_active !== false, id]);
 
         res.json({ message: '계정이 수정되었습니다' });
     } catch (error) {
@@ -629,10 +513,10 @@ app.put('/api/accounts/:id', (req, res) => {
 });
 
 // 계정 삭제
-app.delete('/api/accounts/:id', (req, res) => {
+app.delete('/api/accounts/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        runQuery('DELETE FROM accounts WHERE id = ?', [id]);
+        await runQuery('DELETE FROM adidas_accounts WHERE id = $1', [id]);
         res.json({ message: '계정이 삭제되었습니다' });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -640,11 +524,11 @@ app.delete('/api/accounts/:id', (req, res) => {
 });
 
 // 계정 일괄 삭제
-app.post('/api/accounts/bulk-delete', (req, res) => {
+app.post('/api/accounts/bulk-delete', async (req, res) => {
     try {
         const { ids } = req.body;
-        const placeholders = ids.map(() => '?').join(',');
-        runQuery(`DELETE FROM accounts WHERE id IN (${placeholders})`, ids);
+        const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
+        await runQuery(`DELETE FROM adidas_accounts WHERE id IN (${placeholders})`, ids);
         res.json({ message: `${ids.length}개 계정이 삭제되었습니다` });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -652,11 +536,11 @@ app.post('/api/accounts/bulk-delete', (req, res) => {
 });
 
 // 계정 활성화/비활성화 토글
-app.post('/api/accounts/bulk-toggle-active', (req, res) => {
+app.post('/api/accounts/bulk-toggle-active', async (req, res) => {
     try {
         const { ids, is_active } = req.body;
-        const placeholders = ids.map(() => '?').join(',');
-        runQuery(`UPDATE accounts SET is_active = ?, updated_at = datetime('now', 'localtime') WHERE id IN (${placeholders})`, [is_active ? 1 : 0, ...ids]);
+        const placeholders = ids.map((_, i) => `$${i + 2}`).join(',');
+        await runQuery(`UPDATE adidas_accounts SET is_active = $1, updated_at = NOW() WHERE id IN (${placeholders})`, [is_active === true, ...ids]);
         res.json({ message: `${ids.length}개 계정이 ${is_active ? '활성화' : '비활성화'}되었습니다` });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -664,28 +548,23 @@ app.post('/api/accounts/bulk-toggle-active', (req, res) => {
 });
 
 // 계정 정보 업데이트 (Appium 결과)
-app.post('/api/accounts/:id/update-info', (req, res) => {
+app.post('/api/accounts/:id/update-info', async (req, res) => {
     try {
         const { id } = req.params;
         const { name, birthday, phone, adikr_barcode, current_points, owned_vouchers, fetch_status } = req.body;
 
         // 기존 데이터 조회
-        const existing = queryOne('SELECT * FROM accounts WHERE id = ?', [id]);
+        const existing = await queryOne('SELECT * FROM adidas_accounts WHERE id = $1', [id]);
         if (!existing) {
             return res.status(404).json({ error: '계정을 찾을 수 없습니다' });
         }
 
-        runQuery(`
-            UPDATE accounts
-            SET name = ?,
-                birthday = ?,
-                phone = ?,
-                adikr_barcode = ?,
-                current_points = ?,
-                owned_vouchers = ?,
-                fetch_status = ?,
-                updated_at = datetime('now', 'localtime')
-            WHERE id = ?
+        await runQuery(`
+            UPDATE adidas_accounts
+            SET name = $1, birthday = $2, phone = $3, adikr_barcode = $4,
+                current_points = $5, owned_vouchers = $6, fetch_status = $7,
+                updated_at = NOW()
+            WHERE id = $8
         `, [
             name || existing.name,
             birthday || existing.birthday,
@@ -704,12 +583,12 @@ app.post('/api/accounts/:id/update-info', (req, res) => {
 });
 
 // 쿠폰 판매 상태 업데이트
-app.post('/api/accounts/:id/voucher-sale', (req, res) => {
+app.post('/api/accounts/:id/voucher-sale', async (req, res) => {
     try {
         const { id } = req.params;
         const { voucher_index, sold, sold_to } = req.body;
 
-        const account = queryOne('SELECT owned_vouchers FROM accounts WHERE id = ?', [id]);
+        const account = await queryOne('SELECT owned_vouchers FROM adidas_accounts WHERE id = $1', [id]);
         if (!account || !account.owned_vouchers) {
             return res.status(404).json({ error: '계정 또는 쿠폰을 찾을 수 없습니다' });
         }
@@ -720,7 +599,7 @@ app.post('/api/accounts/:id/voucher-sale', (req, res) => {
             vouchers[voucher_index].sold_to = sold_to || '';
         }
 
-        runQuery('UPDATE accounts SET owned_vouchers = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?', [JSON.stringify(vouchers), id]);
+        await runQuery('UPDATE adidas_accounts SET owned_vouchers = $1, updated_at = NOW() WHERE id = $2', [JSON.stringify(vouchers), id]);
 
         res.json({ message: sold ? '판매완료로 표시되었습니다' : '판매 취소되었습니다' });
     } catch (error) {
@@ -812,9 +691,9 @@ app.post('/api/extract/bulk', async (req, res) => {
             return res.status(400).json({ error: '추출할 계정 ID가 없습니다' });
         }
 
-        const placeholders = ids.map(() => '?').join(',');
+        const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
         const accountsMap = new Map();
-        queryAll(`SELECT * FROM accounts WHERE id IN (${placeholders})`, ids).forEach(acc => {
+        (await query(`SELECT * FROM adidas_accounts WHERE id IN (${placeholders})`, ids)).forEach(acc => {
             accountsMap.set(acc.id, acc);
         });
 
@@ -846,11 +725,11 @@ app.post('/api/extract/bulk', async (req, res) => {
 });
 
 // 계정 정보 추출 (Appium) - 단일 계정
-app.post('/api/extract/:id', (req, res) => {
+app.post('/api/extract/:id', async (req, res) => {
     const { id } = req.params;
 
     try {
-        const account = queryOne('SELECT * FROM accounts WHERE id = ?', [id]);
+        const account = await queryOne('SELECT * FROM adidas_accounts WHERE id = $1', [id]);
         if (!account) {
             addLog(`[추출] 계정 ID ${id} 찾을 수 없음`);
             return res.status(404).json({ error: '계정을 찾을 수 없습니다' });
@@ -862,8 +741,8 @@ app.post('/api/extract/:id', (req, res) => {
         const modeLabel = extractMode === 'hybrid' ? '[웹+모바일]' : (effectiveMode === 'web' ? '[웹브라우저]' : '[모바일]');
         const statusColumn = effectiveMode === 'web' ? 'web_fetch_status' : 'mobile_fetch_status';
         addLog(`[추출] 시작 - extractMode=${extractMode}, effectiveMode=${effectiveMode}, statusColumn=${statusColumn}`);
-        runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [`${modeLabel} 조회 중... ${getNowTime()}`, id]);
-        updateProgress(parseInt(id), 'extract', 'processing', `조회 중... ${account.email}`);
+        runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [`${modeLabel} 조회 중... ${getNowTime()}`, id]).catch(e => addLog(`[DB 오류] ${e.message}`));
+        updateProgress(id, 'extract', 'processing', `조회 중... ${account.email}`);
 
         const scriptPath = getPythonScriptPath();
         const androidHome = (process.env.ANDROID_HOME || 'C:\\platform-tools').trim();
@@ -956,8 +835,8 @@ app.post('/api/extract/:id', (req, res) => {
                 if (result.emailMismatch) {
                     const mismatchMsg = `${modeLabel} 이메일 불일치 (응답: ${result.foundEmail}) ${getNowTime()}`;
                     addLog(`[추출] 실패 - 이메일 불일치: 요청=${account.email}, 응답=${result.foundEmail}`);
-                    runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [mismatchMsg, id]);
-                    updateProgress(parseInt(id), 'extract', 'error', mismatchMsg);
+                    runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [mismatchMsg, id]).catch(e => addLog(`[DB 오류] ${e.message}`));
+                    updateProgress(id, 'extract', 'error', mismatchMsg);
                 } else {
                     // DB 업데이트 - 모드에 따라 적절한 컬럼 업데이트
                     // 하이브리드 모드에서 웹/모바일 결과 표시
@@ -1022,16 +901,12 @@ app.post('/api/extract/:id', (req, res) => {
                         addLog(`[추출] 하이브리드 상태 저장: webStatus=${webStatus}, mobileStatus=${mobileStatus}, id=${id}`);
 
                         runQuery(`
-                            UPDATE accounts
-                            SET name = ?,
-                                phone = ?,
-                                adikr_barcode = ?,
-                                current_points = ?,
-                                owned_vouchers = ?,
-                                web_fetch_status = COALESCE(?, web_fetch_status),
-                                mobile_fetch_status = COALESCE(?, mobile_fetch_status),
-                                updated_at = datetime('now', 'localtime')
-                            WHERE id = ?
+                            UPDATE adidas_accounts
+                            SET name = $1, phone = $2, adikr_barcode = $3, current_points = $4, owned_vouchers = $5,
+                                web_fetch_status = COALESCE($6, web_fetch_status),
+                                mobile_fetch_status = COALESCE($7, mobile_fetch_status),
+                                updated_at = NOW()
+                            WHERE id = $8
                         `, [
                             result.name || account.name,
                             result.phone || account.phone,
@@ -1041,19 +916,14 @@ app.post('/api/extract/:id', (req, res) => {
                             webStatus,
                             mobileStatus,
                             id
-                        ]);
+                        ]).catch(e => addLog(`[DB 오류] ${e.message}`));
                     } else {
                         addLog(`[추출] 단일모드 상태 저장: statusColumn=${statusColumn}, successStatus=${successStatus}, id=${id}`);
                         runQuery(`
-                            UPDATE accounts
-                            SET name = ?,
-                                phone = ?,
-                                adikr_barcode = ?,
-                                current_points = ?,
-                                owned_vouchers = ?,
-                                ${statusColumn} = ?,
-                                updated_at = datetime('now', 'localtime')
-                            WHERE id = ?
+                            UPDATE adidas_accounts
+                            SET name = $1, phone = $2, adikr_barcode = $3, current_points = $4, owned_vouchers = $5,
+                                ${statusColumn} = $6, updated_at = NOW()
+                            WHERE id = $7
                         `, [
                             result.name || account.name,
                             result.phone || account.phone,
@@ -1062,10 +932,10 @@ app.post('/api/extract/:id', (req, res) => {
                             JSON.stringify(result.vouchers || []),
                             successStatus,
                             id
-                        ]);
+                        ]).catch(e => addLog(`[DB 오류] ${e.message}`));
                     }
                     addLog(`[추출] 성공 완료 - ${account.email}, extractMode=${extractMode}`);
-                    updateProgress(parseInt(id), 'extract', 'success', successStatus);
+                    updateProgress(id, 'extract', 'success', successStatus);
                 }
             } else {
                 // 에러 케이스: 비밀번호 틀림, 봇 차단, [ERROR] 메시지, 그 외 알 수 없는 오류
@@ -1111,8 +981,8 @@ app.post('/api/extract/:id', (req, res) => {
                 } else if (stdout.includes('[ERROR] PASSWORD_WRONG') || stdout.includes('잘못된 이메일/비밀번호')) {
                     errorMsg = `${modeLabel} 비밀번호 틀림 ${getNowTime()}`;
                     addLog(`[추출] 실패 - ${account.email}: ${errorMsg}`);
-                    runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [errorMsg, id]);
-                    updateProgress(parseInt(id), 'extract', 'password_wrong', errorMsg);
+                    runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [errorMsg, id]).catch(e => addLog(`[DB 오류] ${e.message}`));
+                    updateProgress(id, 'extract', 'password_wrong', errorMsg);
                     return;
                 } else if (stdout.includes('[ERROR] BOT_BLOCKED') || stdout.includes('BOT_BLOCKED')) {
                     // BOT_BLOCKED:에러메시지 형식에서 에러 메시지 추출
@@ -1128,16 +998,16 @@ app.post('/api/extract/:id', (req, res) => {
                     errorMsg = `${modeLabel} 알 수 없는 오류 ${getNowTime()}`;
                 }
                 addLog(`[추출] 실패 - ${account.email}: ${errorMsg}`);
-                runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [errorMsg, id]);
-                updateProgress(parseInt(id), 'extract', 'error', errorMsg);
+                runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [errorMsg, id]).catch(e => addLog(`[DB 오류] ${e.message}`));
+                updateProgress(id, 'extract', 'error', errorMsg);
             }
         });
 
         pythonProcess.on('error', (err) => {
             addLog(`[추출] Python 실행 오류: ${err.message}`);
             const errorMsg = `${modeLabel} 실행 오류 ${getNowTime()}`;
-            runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [errorMsg, id]);
-            updateProgress(parseInt(id), 'extract', 'error', errorMsg);
+            runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [errorMsg, id]).catch(e => addLog(`[DB 오류] ${e.message}`));
+            updateProgress(id, 'extract', 'error', errorMsg);
         });
 
         res.json({ message: `${account.email} 정보 조회를 시작합니다` });
@@ -1182,7 +1052,7 @@ async function processAccountsBatchMode(accounts) {
 
     // 모든 계정 상태를 '대기 중'으로 초기화
     for (const account of accounts) {
-        runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [`${modeLabel} 대기 중... ${getNowTime()}`, account.id]);
+        runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [`${modeLabel} 대기 중... ${getNowTime()}`, account.id]).catch(e => addLog(`[DB 오류] ${e.message}`));
         updateProgress(account.id, 'extract', 'waiting', `대기 중... ${account.email}`);
     }
 
@@ -1243,7 +1113,7 @@ async function processAccountsBatchMode(accounts) {
                     if (jsonStart !== -1) {
                         const jsonStr = line.substring(jsonStart);
                         const result = JSON.parse(jsonStr);
-                        processBatchResult(result, modeLabel, statusColumn);
+                        processBatchResult(result, modeLabel, statusColumn).catch(e => addLog(`[배치추출] DB 오류: ${e.message}`));
                     }
                 } catch (e) {
                     addLog(`[배치추출] 결과 파싱 오류: ${e.message}`);
@@ -1257,7 +1127,7 @@ async function processAccountsBatchMode(accounts) {
                     const email = emailMatch[1];
                     const account = accounts.find(a => a.email === email);
                     if (account) {
-                        runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [`${modeLabel} 조회 중... ${getNowTime()}`, account.id]);
+                        runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [`${modeLabel} 조회 중... ${getNowTime()}`, account.id]).catch(e => addLog(`[DB 오류] ${e.message}`));
                         updateProgress(account.id, 'extract', 'processing', `조회 중... ${email}`);
                     }
                 }
@@ -1319,7 +1189,7 @@ async function processAccountsBatchMode(accounts) {
             const progress = progressStore.get(account.id);
             if (progress && (progress.status === 'waiting' || progress.status === 'processing')) {
                 const errorMsg = `${modeLabel} 처리 중단 ${getNowTime()}`;
-                runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [errorMsg, account.id]);
+                runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [errorMsg, account.id]).catch(e => addLog(`[DB 오류] ${e.message}`));
                 updateProgress(account.id, 'extract', 'error', errorMsg);
                 addLog(`[배치추출] 미처리 계정: ${account.email}`);
             }
@@ -1335,7 +1205,7 @@ async function processAccountsBatchMode(accounts) {
         // 모든 계정을 오류 상태로 업데이트
         for (const account of accounts) {
             const errorMsg = `${modeLabel} 실행 오류 ${getNowTime()}`;
-            runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [errorMsg, account.id]);
+            runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [errorMsg, account.id]).catch(e => addLog(`[DB 오류] ${e.message}`));
             updateProgress(account.id, 'extract', 'error', errorMsg);
         }
 
@@ -1345,7 +1215,7 @@ async function processAccountsBatchMode(accounts) {
 }
 
 // 배치 결과 처리 (개별 계정 결과를 DB에 업데이트)
-function processBatchResult(result, modeLabel, statusColumn) {
+async function processBatchResult(result, modeLabel, statusColumn) {
     const accountId = result.id;
     const email = result.email;
 
@@ -1355,7 +1225,7 @@ function processBatchResult(result, modeLabel, statusColumn) {
     }
 
     // 기존 계정 정보 조회
-    const account = queryOne('SELECT * FROM accounts WHERE id = ?', [accountId]);
+    const account = await queryOne('SELECT * FROM adidas_accounts WHERE id = $1', [accountId]);
     if (!account) {
         addLog(`[배치추출] 계정을 찾을 수 없음: id=${accountId}`);
         return;
@@ -1374,7 +1244,7 @@ function processBatchResult(result, modeLabel, statusColumn) {
         if (foundEmail && foundEmail.toLowerCase() !== email.toLowerCase()) {
             const mismatchMsg = `${modeLabel} 이메일 불일치 (응답: ${foundEmail}) ${getNowTime()}`;
             addLog(`[배치추출] ${email} - 이메일 불일치: 응답=${foundEmail}`);
-            runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [mismatchMsg, accountId]);
+            await runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [mismatchMsg, accountId]);
             updateProgress(accountId, 'extract', 'error', mismatchMsg);
             return;
         }
@@ -1412,25 +1282,12 @@ function processBatchResult(result, modeLabel, statusColumn) {
 
         const successStatus = `${modeLabel} 조회 완료 ${getNowTime()}`;
 
-        runQuery(`
-            UPDATE accounts
-            SET name = ?,
-                phone = ?,
-                adikr_barcode = ?,
-                current_points = ?,
-                owned_vouchers = ?,
-                ${statusColumn} = ?,
-                updated_at = datetime('now', 'localtime')
-            WHERE id = ?
-        `, [
-            name,
-            phone,
-            barcode,
-            points,
-            voucherData,
-            successStatus,
-            accountId
-        ]);
+        await runQuery(`
+            UPDATE adidas_accounts
+            SET name = $1, phone = $2, adikr_barcode = $3, current_points = $4, owned_vouchers = $5,
+                ${statusColumn} = $6, updated_at = NOW()
+            WHERE id = $7
+        `, [name, phone, barcode, points, voucherData, successStatus, accountId]);
 
         addLog(`[배치추출] ${email} - 조회 완료 (이름: ${name}, 바코드: ${barcode}, 포인트: ${points})`);
         updateProgress(accountId, 'extract', 'success', successStatus);
@@ -1458,7 +1315,7 @@ function processBatchResult(result, modeLabel, statusColumn) {
         }
 
         addLog(`[배치추출] ${email} - ${errorMsg}`);
-        runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [errorMsg, accountId]);
+        await runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [errorMsg, accountId]);
         updateProgress(accountId, 'extract', progressStatus, errorMsg);
     }
 }
@@ -1470,7 +1327,7 @@ function extractAccountInfo(account) {
         const effectiveMode = extractMode === 'hybrid' ? 'web' : extractMode;
         const modeLabel = extractMode === 'hybrid' ? '[웹+모바일]' : (effectiveMode === 'web' ? '[웹브라우저]' : '[모바일]');
         const statusColumn = effectiveMode === 'web' ? 'web_fetch_status' : 'mobile_fetch_status';
-        runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [`${modeLabel} 조회 중... ${getNowTime()}`, account.id]);
+        runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [`${modeLabel} 조회 중... ${getNowTime()}`, account.id]).catch(e => addLog(`[DB 오류] ${e.message}`));
         updateProgress(account.id, 'extract', 'processing', `조회 중... ${account.email}`);
 
         const scriptPath = getPythonScriptPath();
@@ -1528,6 +1385,11 @@ function extractAccountInfo(account) {
         });
 
         pythonProcess.on('close', (code) => {
+            // stderr 로깅 (Python 크래시, import 오류 등 진단용)
+            if (stderr && stderr.trim().length > 0) {
+                addLog(`[일괄추출] ${account.email} - Python stderr: ${stderr.substring(0, 300)}`);
+            }
+
             // stdout에서 에러 관련 키워드 검색하여 로그 출력
             if (stdout.includes('ERROR') || stdout.includes('실패') || stdout.includes('오류')) {
                 // 에러 관련 줄만 추출하여 로그에 표시
@@ -1558,7 +1420,7 @@ function extractAccountInfo(account) {
                 if (result.emailMismatch) {
                     const mismatchMsg = `${modeLabel} 이메일 불일치 (응답: ${result.foundEmail}) ${getNowTime()}`;
                     addLog(`[일괄추출] ${account.email} - 이메일 불일치: 응답=${result.foundEmail}`);
-                    runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [mismatchMsg, account.id]);
+                    runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [mismatchMsg, account.id]).catch(e => addLog(`[DB 오류] ${e.message}`));
                     updateProgress(account.id, 'extract', 'error', mismatchMsg);
                 } else {
                     const successStatus = `${modeLabel} 조회 완료 ${getNowTime()}`;
@@ -1589,16 +1451,12 @@ function extractAccountInfo(account) {
                         addLog(`[일괄추출] ${account.email} - 하이브리드: webStatus=${webStatus}, mobileStatus=${mobileStatus}`);
 
                         runQuery(`
-                            UPDATE accounts
-                            SET name = ?,
-                                phone = ?,
-                                adikr_barcode = ?,
-                                current_points = ?,
-                                owned_vouchers = ?,
-                                web_fetch_status = COALESCE(?, web_fetch_status),
-                                mobile_fetch_status = COALESCE(?, mobile_fetch_status),
-                                updated_at = datetime('now', 'localtime')
-                            WHERE id = ?
+                            UPDATE adidas_accounts
+                            SET name = $1, phone = $2, adikr_barcode = $3, current_points = $4, owned_vouchers = $5,
+                                web_fetch_status = COALESCE($6, web_fetch_status),
+                                mobile_fetch_status = COALESCE($7, mobile_fetch_status),
+                                updated_at = NOW()
+                            WHERE id = $8
                         `, [
                             result.name || account.name,
                             result.phone || account.phone,
@@ -1608,18 +1466,13 @@ function extractAccountInfo(account) {
                             webStatus,
                             mobileStatus,
                             account.id
-                        ]);
+                        ]).catch(e => addLog(`[DB 오류] ${e.message}`));
                     } else {
                         runQuery(`
-                            UPDATE accounts
-                            SET name = ?,
-                                phone = ?,
-                                adikr_barcode = ?,
-                                current_points = ?,
-                                owned_vouchers = ?,
-                                ${statusColumn} = ?,
-                                updated_at = datetime('now', 'localtime')
-                            WHERE id = ?
+                            UPDATE adidas_accounts
+                            SET name = $1, phone = $2, adikr_barcode = $3, current_points = $4, owned_vouchers = $5,
+                                ${statusColumn} = $6, updated_at = NOW()
+                            WHERE id = $7
                         `, [
                             result.name || account.name,
                             result.phone || account.phone,
@@ -1628,7 +1481,7 @@ function extractAccountInfo(account) {
                             JSON.stringify(result.vouchers || []),
                             successStatus,
                             account.id
-                        ]);
+                        ]).catch(e => addLog(`[DB 오류] ${e.message}`));
                     }
                     addLog(`[일괄추출] ${account.email} - 조회 완료`);
                     updateProgress(account.id, 'extract', 'success', successStatus);
@@ -1651,12 +1504,18 @@ function extractAccountInfo(account) {
                 // [ERROR] 메시지 체크
                 const hasErrorMessage = stdout.includes('[ERROR]');
 
+                // 웹 크롤러 라이브러리 미설치 체크
+                const isLibraryMissing = stdout.includes('LIBRARY_MISSING') || stdout.includes('라이브러리가 없습니다');
+
                 // 에뮬레이터/Appium 연결 오류 체크 (모바일 모드)
                 const isNoDevice = stdout.includes('연결된 디바이스가 없습니다') || stdout.includes('NO_DEVICE') || stderr.includes('no devices');
                 const isAppiumNotInstalled = stdout.includes('APPIUM_NOT_AVAILABLE') || stdout.includes('Appium이 설치되지 않았습니다');
                 const isAppiumNotRunning = stderr.includes('Connection refused') || stderr.includes('Could not find a connected Android device') || stdout.includes('Appium 세션 없음');
 
-                if (isNoDevice) {
+                if (isLibraryMissing) {
+                    errorMsg = `${modeLabel} 웹 크롤러 설치 필요 (undetected-chromedriver 미설치) ${getNowTime()}`;
+                    addLog(`[일괄추출] ${account.email} - 웹 크롤러 라이브러리 미설치`);
+                } else if (isNoDevice) {
                     errorMsg = `${modeLabel} 모바일 연결 필요 (에뮬레이터 미연결) ${getNowTime()}`;
                     addLog(`[일괄추출] ${account.email} - 모바일 연결 필요 (에뮬레이터 미연결)`);
                 } else if (isAppiumNotInstalled) {
@@ -1669,7 +1528,7 @@ function extractAccountInfo(account) {
                     errorMsg = `${modeLabel} 비밀번호 틀림 ${getNowTime()}`;
                     addLog(`[일괄추출] ${account.email} - 비밀번호 틀림`);
                     // 비밀번호 오류는 별도 상태로 처리 (취합용)
-                    runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [errorMsg, account.id]);
+                    runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [errorMsg, account.id]).catch(e => addLog(`[DB 오류] ${e.message}`));
                     updateProgress(account.id, 'extract', 'password_wrong', errorMsg);
                     resolve();
                     return;
@@ -1689,7 +1548,7 @@ function extractAccountInfo(account) {
                     errorMsg = `${modeLabel} 알 수 없는 오류 ${getNowTime()}`;
                     addLog(`[일괄추출] ${account.email} - 알 수 없는 오류`);
                 }
-                runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [errorMsg, account.id]);
+                runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [errorMsg, account.id]).catch(e => addLog(`[DB 오류] ${e.message}`));
                 updateProgress(account.id, 'extract', 'error', errorMsg);
             }
             resolve();
@@ -1697,7 +1556,7 @@ function extractAccountInfo(account) {
 
         pythonProcess.on('error', () => {
             const errorMsg = `${modeLabel} 실행 오류 ${getNowTime()}`;
-            runQuery(`UPDATE accounts SET ${statusColumn} = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`, [errorMsg, account.id]);
+            runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [errorMsg, account.id]).catch(e => addLog(`[DB 오류] ${e.message}`));
             updateProgress(account.id, 'extract', 'error', errorMsg);
             resolve();
         });
@@ -1895,9 +1754,9 @@ app.post('/api/issue-coupon/bulk', async (req, res) => {
         // 요청에서 모드를 전달받거나, 없으면 서버의 extractMode 사용
         const issueMode = mode || extractMode;
 
-        const placeholders = ids.map(() => '?').join(',');
+        const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
         const accountsMap = new Map();
-        queryAll(`SELECT * FROM accounts WHERE id IN (${placeholders})`, ids).forEach(acc => {
+        (await query(`SELECT * FROM adidas_accounts WHERE id IN (${placeholders})`, ids)).forEach(acc => {
             accountsMap.set(acc.id, acc);
         });
 
@@ -1937,12 +1796,12 @@ app.post('/api/issue-coupon/bulk', async (req, res) => {
 });
 
 // 쿠폰 발급 - 단일 계정
-app.post('/api/issue-coupon/:id', (req, res) => {
+app.post('/api/issue-coupon/:id', async (req, res) => {
     const { id } = req.params;
     const { coupon_type, mode } = req.body; // 10000, 30000, 50000, 100000
 
     try {
-        const account = queryOne('SELECT * FROM accounts WHERE id = ?', [id]);
+        const account = await queryOne('SELECT * FROM adidas_accounts WHERE id = $1', [id]);
         if (!account) {
             addLog(`[쿠폰발급] 계정 ID ${id} 찾을 수 없음`);
             return res.status(404).json({ error: '계정을 찾을 수 없습니다' });
@@ -1961,9 +1820,9 @@ app.post('/api/issue-coupon/:id', (req, res) => {
         // 모바일 모드인 경우 모바일 발급 함수 사용
         if (issueMode === 'mobile') {
             // 상태 업데이트 (mobile_issue_status 사용)
-            runQuery('UPDATE accounts SET mobile_issue_status = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?',
-                [`[모바일] ${coupon_type}원 발급 중... ${getNowTime()}`, id]);
-            updateProgress(parseInt(id), 'issue', 'processing', `${coupon_type}원 발급 중...`);
+            runQuery('UPDATE adidas_accounts SET mobile_issue_status = $1, updated_at = NOW() WHERE id = $2',
+                [`[모바일] ${coupon_type}원 발급 중... ${getNowTime()}`, id]).catch(e => addLog(`[DB오류] ${e.message}`));
+            updateProgress(id, 'issue', 'processing', `${coupon_type}원 발급 중...`);
 
             res.json({ message: `[모바일] ${account.email} 쿠폰 발급(${coupon_type}원)을 시작합니다.` });
 
@@ -1974,8 +1833,8 @@ app.post('/api/issue-coupon/:id', (req, res) => {
 
         // 웹 브라우저 모드
         // 상태 업데이트 (web_issue_status 사용)
-        runQuery('UPDATE accounts SET web_issue_status = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?', [`[웹브라우저] ${coupon_type}원 발급 중... ${getNowTime()}`, id]);
-        updateProgress(parseInt(id), 'issue', 'processing', `${coupon_type}원 발급 중...`);
+        runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [`[웹브라우저] ${coupon_type}원 발급 중... ${getNowTime()}`, id]).catch(e => addLog(`[DB오류] ${e.message}`));
+        updateProgress(id, 'issue', 'processing', `${coupon_type}원 발급 중...`);
 
         const scriptPath = getIssueCouponScriptPath();
         if (!scriptPath) {
@@ -2058,15 +1917,15 @@ app.post('/api/issue-coupon/:id', (req, res) => {
                 const vouchers = result.vouchers ? JSON.stringify(result.vouchers) : null;
                 const successMsg = `[웹브라우저] ${coupon_type}원 발급 완료 ${getNowTime()}`;
                 runQuery(`
-                    UPDATE accounts
-                    SET current_points = ?,
-                        owned_vouchers = COALESCE(?, owned_vouchers),
-                        web_issue_status = ?,
-                        updated_at = datetime('now', 'localtime')
-                    WHERE id = ?
-                `, [newPoints, vouchers, successMsg, id]);
+                    UPDATE adidas_accounts
+                    SET current_points = $1,
+                        owned_vouchers = COALESCE($2, owned_vouchers),
+                        web_issue_status = $3,
+                        updated_at = NOW()
+                    WHERE id = $4
+                `, [newPoints, vouchers, successMsg, id]).catch(e => addLog(`[DB오류] ${e.message}`));
                 addLog(`[쿠폰발급] 성공 - ${account.email}: ${coupon_type}원 발급, 잔여 ${newPoints}P, 쿠폰 ${result.vouchers?.length || 0}개`);
-                updateProgress(parseInt(id), 'issue', 'success', successMsg);
+                updateProgress(id, 'issue', 'success', successMsg);
             } else {
                 // 발급 실패 (web_issue_status 사용)
                 // 에러 케이스: 비밀번호 틀림, 봇 차단, 포인트 부족, 대기 기간, 그 외 알 수 없는 오류
@@ -2102,27 +1961,27 @@ app.post('/api/issue-coupon/:id', (req, res) => {
                     const newPoints = result.remaining_points || 0;
                     const vouchers = result.vouchers ? JSON.stringify(result.vouchers) : null;
                     runQuery(`
-                        UPDATE accounts
-                        SET current_points = ?,
-                            owned_vouchers = COALESCE(?, owned_vouchers),
-                            web_issue_status = ?,
-                            updated_at = datetime('now', 'localtime')
-                        WHERE id = ?
-                    `, [newPoints, vouchers, errorMsg, id]);
+                        UPDATE adidas_accounts
+                        SET current_points = $1,
+                            owned_vouchers = COALESCE($2, owned_vouchers),
+                            web_issue_status = $3,
+                            updated_at = NOW()
+                        WHERE id = $4
+                    `, [newPoints, vouchers, errorMsg, id]).catch(e => addLog(`[DB오류] ${e.message}`));
                     addLog(`[쿠폰발급] 실패 - ${account.email}: ${errorMsg} (포인트: ${newPoints}P, 쿠폰: ${result.vouchers?.length || 0}개 업데이트됨)`);
                 } else {
-                    runQuery('UPDATE accounts SET web_issue_status = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?', [errorMsg, id]);
+                    runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [errorMsg, id]).catch(e => addLog(`[DB오류] ${e.message}`));
                     addLog(`[쿠폰발급] 실패 - ${account.email}: ${errorMsg}`);
                 }
-                updateProgress(parseInt(id), 'issue', progressStatus, errorMsg);
+                updateProgress(id, 'issue', progressStatus, errorMsg);
             }
         });
 
         pythonProcess.on('error', (err) => {
             addLog(`[쿠폰발급] Python 실행 오류: ${err.message}`);
             const errorMsg = `[웹브라우저] 실행 오류 ${getNowTime()}`;
-            runQuery('UPDATE accounts SET web_issue_status = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?', [errorMsg, id]);
-            updateProgress(parseInt(id), 'issue', 'error', errorMsg);
+            runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [errorMsg, id]).catch(e => addLog(`[DB오류] ${e.message}`));
+            updateProgress(id, 'issue', 'error', errorMsg);
         });
 
         res.json({ message: `${account.email} 쿠폰 발급(${coupon_type}원)을 시작합니다` });
@@ -2178,8 +2037,8 @@ async function processIssueCouponMobileSequentially(accounts, coupon_types) {
 
     // 모든 계정 상태를 '대기 중'으로 초기화 (mobile_issue_status 사용)
     for (const account of accounts) {
-        runQuery('UPDATE accounts SET mobile_issue_status = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?',
-            [`[모바일] ${couponTypesStr} 대기 중... ${getNowTime()}`, account.id]);
+        runQuery('UPDATE adidas_accounts SET mobile_issue_status = $1, updated_at = NOW() WHERE id = $2',
+            [`[모바일] ${couponTypesStr} 대기 중... ${getNowTime()}`, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
         updateProgress(account.id, 'issue', 'waiting', `대기 중... ${account.email}`);
     }
 
@@ -2254,26 +2113,26 @@ async function processIssueCouponMobileSequentially(accounts, coupon_types) {
                     // DB 상태 업데이트 (mobile_issue_status 사용) - 변환된 메시지 사용
                     const statusMsg = `[모바일] ${displayMessage} ${getNowTime()}`;
                     addLog(`[쿠폰발급-DEBUG] id=${progress.id}, progress.message=${progress.message}, displayMessage=${displayMessage}, statusMsg=${statusMsg}`);
-                    runQuery('UPDATE accounts SET mobile_issue_status = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?', [statusMsg, progress.id]);
+                    runQuery('UPDATE adidas_accounts SET mobile_issue_status = $1, updated_at = NOW() WHERE id = $2', [statusMsg, progress.id]).catch(e => addLog(`[DB오류] ${e.message}`));
 
                     if (progress.status === 'success' || progress.status === 'error' || progress.status === 'warning' || progress.status === 'password_wrong') {
                         // 포인트와 쿠폰 목록 업데이트 (vouchers가 있으면 전체 대체)
                         if (progress.data) {
                             if (progress.data.vouchers && Array.isArray(progress.data.vouchers)) {
                                 runQuery(`
-                                    UPDATE accounts
-                                    SET current_points = COALESCE(?, current_points),
-                                        owned_vouchers = ?,
-                                        updated_at = datetime('now', 'localtime')
-                                    WHERE id = ?
-                                `, [progress.data.remaining_points, JSON.stringify(progress.data.vouchers), progress.id]);
+                                    UPDATE adidas_accounts
+                                    SET current_points = COALESCE($1, current_points),
+                                        owned_vouchers = $2,
+                                        updated_at = NOW()
+                                    WHERE id = $3
+                                `, [progress.data.remaining_points, JSON.stringify(progress.data.vouchers), progress.id]).catch(e => addLog(`[DB오류] ${e.message}`));
                             } else if (progress.data.remaining_points !== undefined) {
                                 runQuery(`
-                                    UPDATE accounts
-                                    SET current_points = ?,
-                                        updated_at = datetime('now', 'localtime')
-                                    WHERE id = ?
-                                `, [progress.data.remaining_points, progress.id]);
+                                    UPDATE adidas_accounts
+                                    SET current_points = $1,
+                                        updated_at = NOW()
+                                    WHERE id = $2
+                                `, [progress.data.remaining_points, progress.id]).catch(e => addLog(`[DB오류] ${e.message}`));
                             }
                         }
 
@@ -2337,8 +2196,8 @@ async function processIssueCouponMobileSequentially(accounts, coupon_types) {
                         const email = emailMatch[1];
                         const account = accounts.find(a => a.email === email);
                         if (account) {
-                            runQuery('UPDATE accounts SET mobile_issue_status = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?',
-                                [`[모바일] ${couponTypesStr} 발급 중... ${getNowTime()}`, account.id]);
+                            runQuery('UPDATE adidas_accounts SET mobile_issue_status = $1, updated_at = NOW() WHERE id = $2',
+                                [`[모바일] ${couponTypesStr} 발급 중... ${getNowTime()}`, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
                             updateProgress(account.id, 'issue', 'processing', `${couponTypesStr} 발급 중...`);
                         }
                     }
@@ -2353,7 +2212,7 @@ async function processIssueCouponMobileSequentially(accounts, coupon_types) {
                         if (account) {
                             const statusMsg = `[모바일] 비밀번호 틀림 ${getNowTime()}`;
                             addLog(`[쿠폰발급-fallback] ${email} - 비밀번호 오류 감지`);
-                            runQuery('UPDATE accounts SET mobile_issue_status = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?', [statusMsg, account.id]);
+                            runQuery('UPDATE adidas_accounts SET mobile_issue_status = $1, updated_at = NOW() WHERE id = $2', [statusMsg, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
                             updateProgress(account.id, 'issue', 'password_wrong', `비밀번호 틀림`);
                         }
                     }
@@ -2383,11 +2242,11 @@ async function processIssueCouponMobileSequentially(accounts, coupon_types) {
             if (vouchers.length > 0) {
                 const vouchersJson = JSON.stringify(vouchers);
                 runQuery(`
-                    UPDATE accounts
-                    SET owned_vouchers = ?,
-                        updated_at = datetime('now', 'localtime')
-                    WHERE id = ?
-                `, [vouchersJson, accId]);
+                    UPDATE adidas_accounts
+                    SET owned_vouchers = $1,
+                        updated_at = NOW()
+                    WHERE id = $2
+                `, [vouchersJson, accId]).catch(e => addLog(`[DB오류] ${e.message}`));
             }
         }
 
@@ -2417,7 +2276,7 @@ async function processIssueCouponMobileSequentially(accounts, coupon_types) {
 function issueCouponForAccount(account, coupon_type, isHybridMode = false) {
     return new Promise((resolve) => {
         // 상태 업데이트 (web_issue_status 사용)
-        runQuery('UPDATE accounts SET web_issue_status = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?', [`[웹브라우저] ${coupon_type}원 발급 중... ${getNowTime()}`, account.id]);
+        runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [`[웹브라우저] ${coupon_type}원 발급 중... ${getNowTime()}`, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
         if (!isHybridMode) {
             updateProgress(account.id, 'issue', 'processing', `[웹브라우저] ${coupon_type}원 발급 중...`);
         }
@@ -2425,7 +2284,7 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false) {
         const scriptPath = getIssueCouponScriptPath();
         if (!scriptPath) {
             const errorMsg = `[웹브라우저] 스크립트 없음 ${getNowTime()}`;
-            runQuery('UPDATE accounts SET web_issue_status = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?', [errorMsg, account.id]);
+            runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [errorMsg, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
             if (!isHybridMode) {
                 updateProgress(account.id, 'issue', 'error', errorMsg);
             }
@@ -2490,13 +2349,13 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false) {
                 const successMsg = `[웹브라우저] ${coupon_type}원 발급 완료 ${getNowTime()}`;
                 // web_issue_status 사용, 쿠폰 목록도 업데이트
                 runQuery(`
-                    UPDATE accounts
-                    SET current_points = ?,
-                        owned_vouchers = COALESCE(?, owned_vouchers),
-                        web_issue_status = ?,
-                        updated_at = datetime('now', 'localtime')
-                    WHERE id = ?
-                `, [newPoints, vouchers, successMsg, account.id]);
+                    UPDATE adidas_accounts
+                    SET current_points = $1,
+                        owned_vouchers = COALESCE($2, owned_vouchers),
+                        web_issue_status = $3,
+                        updated_at = NOW()
+                    WHERE id = $4
+                `, [newPoints, vouchers, successMsg, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
                 addLog(`[쿠폰발급] id=${account.id} ✓ ${coupon_type}원 발급완료 (${newPoints}P)`);
                 if (!isHybridMode) {
                     updateProgress(account.id, 'issue', 'success', successMsg);
@@ -2549,17 +2408,17 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false) {
                     const newPoints = result.remaining_points || 0;
                     const vouchers = result.vouchers ? JSON.stringify(result.vouchers) : null;
                     runQuery(`
-                        UPDATE accounts
-                        SET current_points = ?,
-                            owned_vouchers = COALESCE(?, owned_vouchers),
-                            web_issue_status = ?,
-                            updated_at = datetime('now', 'localtime')
-                        WHERE id = ?
-                    `, [newPoints, vouchers, errorMsg, account.id]);
+                        UPDATE adidas_accounts
+                        SET current_points = $1,
+                            owned_vouchers = COALESCE($2, owned_vouchers),
+                            web_issue_status = $3,
+                            updated_at = NOW()
+                        WHERE id = $4
+                    `, [newPoints, vouchers, errorMsg, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
                     const statusIcon = progressStatus === 'warning' ? '!' : '✗';
                     addLog(`[쿠폰발급] id=${account.id} ${statusIcon} ${displayError} (${newPoints}P)`);
                 } else {
-                    runQuery('UPDATE accounts SET web_issue_status = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?', [errorMsg, account.id]);
+                    runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [errorMsg, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
                     addLog(`[쿠폰발급] id=${account.id} ✗ ${displayError}`);
                 }
                 if (!isHybridMode) {
@@ -2578,7 +2437,7 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false) {
 
         pythonProcess.on('error', (err) => {
             const errorMsg = `[웹브라우저] 실행 오류 ${getNowTime()}`;
-            runQuery('UPDATE accounts SET web_issue_status = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?', [errorMsg, account.id]);
+            runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [errorMsg, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
             if (!isHybridMode) {
                 updateProgress(account.id, 'issue', 'error', errorMsg);
             }
@@ -2729,22 +2588,22 @@ function issueCouponMobileSingle(account, coupon_type) {
                 if (newPoints !== undefined && vouchers) {
                     // 포인트와 쿠폰 정보가 있으면 함께 갱신 (1달 미경과 등도 포함)
                     runQuery(`
-                        UPDATE accounts
-                        SET current_points = ?,
-                            owned_vouchers = ?,
-                            mobile_issue_status = ?,
-                            mobile_fetch_status = ?,
-                            updated_at = datetime('now', 'localtime')
-                        WHERE id = ?
-                    `, [newPoints, vouchers, statusMsg, `조회 완료 ${getNowTime()}`, account.id]);
+                        UPDATE adidas_accounts
+                        SET current_points = $1,
+                            owned_vouchers = $2,
+                            mobile_issue_status = $3,
+                            mobile_fetch_status = $4,
+                            updated_at = NOW()
+                        WHERE id = $5
+                    `, [newPoints, vouchers, statusMsg, `조회 완료 ${getNowTime()}`, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
                 } else {
                     // 정보가 없으면 상태만 갱신
                     runQuery(`
-                        UPDATE accounts
-                        SET mobile_issue_status = ?,
-                            updated_at = datetime('now', 'localtime')
-                        WHERE id = ?
-                    `, [statusMsg, account.id]);
+                        UPDATE adidas_accounts
+                        SET mobile_issue_status = $1,
+                            updated_at = NOW()
+                        WHERE id = $2
+                    `, [statusMsg, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
                 }
                 resolve(result);
             } else {
@@ -2838,17 +2697,17 @@ function processIssueCouponMobileForHybrid(accounts, coupon_type) {
 
                             // DB 상태 업데이트 - 변환된 메시지 사용
                             const statusMsg = `[모바일] ${displayMessage} ${getNowTime()}`;
-                            runQuery('UPDATE accounts SET mobile_issue_status = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?', [statusMsg, progress.id]);
+                            runQuery('UPDATE adidas_accounts SET mobile_issue_status = $1, updated_at = NOW() WHERE id = $2', [statusMsg, progress.id]).catch(e => addLog(`[DB오류] ${e.message}`));
 
                             if (progress.status === 'success' || progress.status === 'error' || progress.status === 'warning' || progress.status === 'password_wrong') {
                                 if (progress.data) {
                                     // 포인트와 쿠폰 목록 업데이트 (vouchers가 있으면 전체 대체)
                                     if (progress.data.vouchers && Array.isArray(progress.data.vouchers)) {
-                                        runQuery('UPDATE accounts SET current_points = COALESCE(?, current_points), owned_vouchers = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?',
-                                            [progress.data.remaining_points, JSON.stringify(progress.data.vouchers), progress.id]);
+                                        runQuery('UPDATE adidas_accounts SET current_points = COALESCE($1, current_points), owned_vouchers = $2, updated_at = NOW() WHERE id = $3',
+                                            [progress.data.remaining_points, JSON.stringify(progress.data.vouchers), progress.id]).catch(e => addLog(`[DB오류] ${e.message}`));
                                     } else if (progress.data.remaining_points !== undefined) {
-                                        runQuery('UPDATE accounts SET current_points = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?',
-                                            [progress.data.remaining_points, progress.id]);
+                                        runQuery('UPDATE adidas_accounts SET current_points = $1, updated_at = NOW() WHERE id = $2',
+                                            [progress.data.remaining_points, progress.id]).catch(e => addLog(`[DB오류] ${e.message}`));
                                     }
                                 }
                             }
@@ -2864,29 +2723,31 @@ function processIssueCouponMobileForHybrid(accounts, coupon_type) {
                 }
 
                 if (line.includes('[VOUCHER]')) {
-                    try {
-                        const jsonStart = line.indexOf('{');
-                        if (jsonStart !== -1) {
-                            const jsonStr = line.substring(jsonStart);
-                            const voucherData = JSON.parse(jsonStr);
-                            const accId = voucherData.id;
-                            const voucher = voucherData.voucher;
+                    (async () => {
+                        try {
+                            const jsonStart = line.indexOf('{');
+                            if (jsonStart !== -1) {
+                                const jsonStr = line.substring(jsonStart);
+                                const voucherData = JSON.parse(jsonStr);
+                                const accId = voucherData.id;
+                                const voucher = voucherData.voucher;
 
-                            const existing = queryOne('SELECT owned_vouchers FROM accounts WHERE id = ?', [accId]);
-                            let vouchers = [];
-                            if (existing && existing.owned_vouchers) {
-                                try { vouchers = JSON.parse(existing.owned_vouchers); } catch {}
+                                const existing = await queryOne('SELECT owned_vouchers FROM adidas_accounts WHERE id = $1', [accId]);
+                                let vouchers = [];
+                                if (existing && existing.owned_vouchers) {
+                                    try { vouchers = JSON.parse(existing.owned_vouchers); } catch {}
+                                }
+                                const exists = vouchers.some(v => v.code === voucher.code);
+                                if (!exists) {
+                                    vouchers.push(voucher);
+                                    runQuery('UPDATE adidas_accounts SET owned_vouchers = $1, updated_at = NOW() WHERE id = $2',
+                                        [JSON.stringify(vouchers), accId]).catch(e => addLog(`[DB오류] ${e.message}`));
+                                }
                             }
-                            const exists = vouchers.some(v => v.code === voucher.code);
-                            if (!exists) {
-                                vouchers.push(voucher);
-                                runQuery('UPDATE accounts SET owned_vouchers = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?',
-                                    [JSON.stringify(vouchers), accId]);
-                            }
+                        } catch (e) {
+                            // 파싱 오류 무시
                         }
-                    } catch (e) {
-                        // 파싱 오류 무시
-                    }
+                    })();
                 }
             }
         });
@@ -2978,184 +2839,6 @@ app.get('/api/batch/status', (req, res) => {
 app.post('/api/batch/abort', (req, res) => {
     const result = abortBatchProcess();
     res.json(result);
-});
-
-// ========== 입출고관리시스템 동기화 API ==========
-
-// 입출고관리시스템에서 계정 정보 가져오기 (바코드 없는 계정만 업데이트)
-app.post('/api/sync-from-backend', async (req, res) => {
-    const http = require('http');
-
-    addLog('[동기화] 입출고관리시스템에서 계정 정보 동기화 시작');
-
-    // 입출고관리시스템 API 호출 설정
-    const backendHost = '133.186.221.84';
-    const backendPort = 8000;
-
-    // 1단계: 로그인하여 토큰 획득
-    const loginData = JSON.stringify({ username: 'admin', password: 'admin123' });
-
-    const loginPromise = new Promise((resolve, reject) => {
-        const loginReq = http.request({
-            hostname: backendHost,
-            port: backendPort,
-            path: '/api/v1/login/access-token',
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Content-Length': Buffer.byteLength('username=admin&password=admin123')
-            }
-        }, (loginRes) => {
-            let data = '';
-            loginRes.on('data', chunk => data += chunk);
-            loginRes.on('end', () => {
-                try {
-                    const result = JSON.parse(data);
-                    if (result.access_token) {
-                        resolve(result.access_token);
-                    } else {
-                        reject(new Error('로그인 실패: 토큰을 받지 못했습니다'));
-                    }
-                } catch (e) {
-                    reject(new Error(`로그인 응답 파싱 실패: ${e.message}`));
-                }
-            });
-        });
-        loginReq.on('error', reject);
-        loginReq.write('username=admin&password=admin123');
-        loginReq.end();
-    });
-
-    try {
-        const accessToken = await loginPromise;
-        addLog('[동기화] 입출고관리시스템 로그인 성공');
-
-        // 2단계: 계정 목록 조회
-        const accountsPromise = new Promise((resolve, reject) => {
-            const accountsReq = http.request({
-                hostname: backendHost,
-                port: backendPort,
-                path: '/api/v1/adidas-accounts/',
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                    'Accept': 'application/json'
-                }
-            }, (accountsRes) => {
-                let data = '';
-                accountsRes.on('data', chunk => data += chunk);
-                accountsRes.on('end', () => {
-                    try {
-                        const result = JSON.parse(data);
-                        resolve(result);
-                    } catch (e) {
-                        reject(new Error(`계정 목록 파싱 실패: ${e.message}`));
-                    }
-                });
-            });
-            accountsReq.on('error', reject);
-            accountsReq.end();
-        });
-
-        const backendAccounts = await accountsPromise;
-        addLog(`[동기화] 입출고관리시스템 계정 ${backendAccounts.length}개 조회 완료`);
-
-        // 3단계: 로컬 DB에서 바코드가 없는 계정 조회
-        const localAccounts = queryAll('SELECT id, email, adikr_barcode FROM accounts');
-        const localAccountMap = new Map();
-        localAccounts.forEach(acc => {
-            localAccountMap.set(acc.email.toLowerCase(), acc);
-        });
-
-        // 4단계: 매칭 및 업데이트
-        let updatedCount = 0;
-        let skippedCount = 0;
-        let notFoundCount = 0;
-
-        for (const backendAcc of backendAccounts) {
-            const email = backendAcc.email?.toLowerCase();
-            if (!email) continue;
-
-            const localAcc = localAccountMap.get(email);
-
-            if (!localAcc) {
-                // 로컬에 없는 계정
-                notFoundCount++;
-                continue;
-            }
-
-            // 이미 바코드가 있는 계정은 절대 업데이트하지 않음
-            if (localAcc.adikr_barcode && localAcc.adikr_barcode.trim() !== '') {
-                skippedCount++;
-                continue;
-            }
-
-            // 백엔드에서 가져올 정보가 있는지 확인
-            const hasInfo = backendAcc.name || backendAcc.phone || backendAcc.birthday ||
-                           backendAcc.adikr_barcode || backendAcc.current_points !== null;
-
-            if (!hasInfo) {
-                skippedCount++;
-                continue;
-            }
-
-            // 업데이트 (NULL이 아닌 값만 업데이트)
-            const updateFields = [];
-            const updateValues = [];
-
-            if (backendAcc.name) {
-                updateFields.push('name = ?');
-                updateValues.push(backendAcc.name);
-            }
-            if (backendAcc.phone) {
-                updateFields.push('phone = ?');
-                updateValues.push(backendAcc.phone);
-            }
-            if (backendAcc.birthday) {
-                updateFields.push('birthday = ?');
-                updateValues.push(backendAcc.birthday);
-            }
-            if (backendAcc.adikr_barcode) {
-                updateFields.push('adikr_barcode = ?');
-                updateValues.push(backendAcc.adikr_barcode);
-            }
-            if (backendAcc.current_points !== null && backendAcc.current_points !== undefined) {
-                updateFields.push('current_points = ?');
-                updateValues.push(backendAcc.current_points);
-            }
-            if (backendAcc.owned_vouchers) {
-                updateFields.push('owned_vouchers = ?');
-                updateValues.push(backendAcc.owned_vouchers);
-            }
-
-            if (updateFields.length > 0) {
-                updateFields.push("updated_at = datetime('now', 'localtime')");
-                updateValues.push(localAcc.id);
-
-                runQuery(
-                    `UPDATE accounts SET ${updateFields.join(', ')} WHERE id = ?`,
-                    updateValues
-                );
-                updatedCount++;
-                addLog(`[동기화] ${email} 업데이트 완료`);
-            }
-        }
-
-        addLog(`[동기화] 완료 - 업데이트: ${updatedCount}개, 스킵(바코드있음): ${skippedCount}개, 로컬에없음: ${notFoundCount}개`);
-
-        res.json({
-            success: true,
-            message: `동기화 완료`,
-            updated: updatedCount,
-            skipped: skippedCount,
-            notFound: notFoundCount,
-            total: backendAccounts.length
-        });
-
-    } catch (error) {
-        addLog(`[동기화] 오류: ${error.message}`);
-        res.status(500).json({ error: error.message });
-    }
 });
 
 // ========== Appium 세션 API ==========

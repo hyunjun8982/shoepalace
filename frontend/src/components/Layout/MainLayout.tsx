@@ -372,13 +372,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           label: '아디다스 구매비교 (임시)',
           roles: ['admin'],
         },
-        // 아디다스 쿠폰 메뉴 비활성화
-        // {
-        //   key: '/adidas',
-        //   icon: <GiftOutlined />,
-        //   label: '아디다스 쿠폰',
-        //   roles: ['admin'],
-        // },
+        {
+          key: '/adidas',
+          icon: <GiftOutlined />,
+          label: '아디다스 쿠폰',
+          roles: ['admin'],
+        },
       ],
     },
   ];

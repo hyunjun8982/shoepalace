@@ -31,8 +31,8 @@ def get_adidas_accounts(
     db: Session = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_active_user),
 ):
-    """아디다스 계정 목록 조회 (생성 순서대로)"""
-    accounts = db.query(AdidasAccount).order_by(AdidasAccount.created_at.asc()).offset(skip).limit(limit).all()
+    """아디다스 계정 목록 조회 (최신 순)"""
+    accounts = db.query(AdidasAccount).order_by(AdidasAccount.created_at.desc()).offset(skip).limit(limit).all()
     return accounts
 
 

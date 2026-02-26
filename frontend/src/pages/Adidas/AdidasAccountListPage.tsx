@@ -19,6 +19,7 @@ import {
   Badge,
   Progress,
   Radio,
+  Alert,
 } from 'antd';
 import {
   PlusOutlined,
@@ -47,6 +48,20 @@ import dayjs from 'dayjs';
 const { RangePicker } = DatePicker;
 const { Option } = Select;
 
+// 쿠폰 종류 카테고리 (getCouponDisplayInfo 정규화 이름 기준)
+const COUPON_CATEGORIES = [
+  { key: '10만원', label: '10만원권' },
+  { key: '5만원', label: '5만원권' },
+  { key: '3만원', label: '3만원권' },
+  { key: '1만원', label: '1만원권' },
+  { key: '3천원', label: '3천원권' },
+  { key: '20% 할인', label: '20% (생일)' },
+  { key: '15% 할인', label: '15%' },
+  { key: '10% 할인', label: '10% (웰컴)' },
+  { key: '5% 할인', label: '5%' },
+  { key: '스타벅스', label: '스타벅스' },
+];
+
 const AdidasAccountListPage: React.FC = () => {
   const [accounts, setAccounts] = useState<AdidasAccount[]>([]);
   const [loading, setLoading] = useState(false);
@@ -67,15 +82,44 @@ const AdidasAccountListPage: React.FC = () => {
 
   // 필터링 상태
   const [searchText, setSearchText] = useState('');
-  const [birthdayMonthFilter, setBirthdayMonthFilter] = useState<string[]>([]); // 다중 선택: ['1', '2', '3', ...]
-  const [couponFilter, setCouponFilter] = useState<string[]>([]); // 다중 선택: ['has_coupon', 'no_coupon', '5%', '10%', '15%', '100000']
-  const [statusFilter, setStatusFilter] = useState<string[]>([]); // 다중 선택: ['info_error', 'coupon_error', 'success', 'processing']
+  const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('active');
+  const [emailTypeFilter, setEmailTypeFilter] = useState<'all' | 'official' | 'catchall'>('all');
+  const [fetchDateFrom, setFetchDateFrom] = useState<string | null>(null); // 이후 (from)
+  const [fetchDateTo, setFetchDateTo] = useState<string | null>(null);     // 이전 (to)
+  const [birthdayMonthFilter, setBirthdayMonthFilter] = useState<string[]>([]);
+  const [couponFilter, setCouponFilter] = useState<string[]>([]); // 쿠폰 description 다중 선택
+  const [statusFilter, setStatusFilter] = useState<string[]>([]); // 'success' | 'error'
   const [minPoints, setMinPoints] = useState<string>('');
   const [maxPoints, setMaxPoints] = useState<string>('');
+
+  // 뷰 모드: 'card' | 'table'
+  const [viewMode, setViewMode] = useState<'card' | 'table'>('card');
+
+  // 카드 상세 팝업
+  const [detailModalVisible, setDetailModalVisible] = useState(false);
+  const [detailAccount, setDetailAccount] = useState<AdidasAccount | null>(null);
+
+  // 쿠폰 펼치기 상태 (account id Set)
+  const [expandedVouchers, setExpandedVouchers] = useState<Set<string>>(new Set());
+
+  // 일괄 활성화 토글 상태
+  const [bulkActiveToggle, setBulkActiveToggle] = useState(true);
 
   // 바코드 모달 상태
   const [barcodeModalVisible, setBarcodeModalVisible] = useState(false);
   const [selectedBarcode, setSelectedBarcode] = useState<{url: string, email: string} | null>(null);
+
+  // 상대 경로를 nginx 절대 URL로 변환
+  // 개발(포트 3000): http://localhost/uploads/... (nginx 포트 80)
+  // 운영(포트 80/443): 상대 경로 그대로 사용 (same-origin)
+  const getStaticUrl = (path: string): string => {
+    if (!path || path.startsWith('http')) return path;
+    const { protocol, hostname, port } = window.location;
+    if (port && port !== '80' && port !== '443') {
+      return `${protocol}//${hostname}${path}`;
+    }
+    return path;
+  };
 
   // 쿠폰 판매 모달 상태
   const [voucherSaleModalVisible, setVoucherSaleModalVisible] = useState(false);
@@ -132,11 +176,31 @@ const AdidasAccountListPage: React.FC = () => {
     localStorage.setItem('adidas_accounts_pageSize', pageSize.toString());
   }, [pageSize]);
 
+  const autoGenerateMissingBarcodes = async (accountList: AdidasAccount[]) => {
+    const missing = accountList.filter(acc => acc.adikr_barcode && !acc.barcode_image_url);
+    if (missing.length === 0) return;
+    const results = await Promise.allSettled(
+      missing.map(acc => api.post(`/adidas-accounts/${acc.id}/generate-barcode`))
+    );
+    setAccounts(prev => {
+      const updated = [...prev];
+      missing.forEach((acc, i) => {
+        const result = results[i];
+        if (result.status === 'fulfilled') {
+          const idx = updated.findIndex(a => a.id === acc.id);
+          if (idx !== -1) updated[idx] = { ...updated[idx], barcode_image_url: result.value.data.barcode_url };
+        }
+      });
+      return updated;
+    });
+  };
+
   const loadAccounts = async () => {
     setLoading(true);
     try {
       const data = await adidasAccountService.getAccounts();
       setAccounts(data);
+      autoGenerateMissingBarcodes(data);
     } catch (error) {
       message.error('계정 목록을 불러오는데 실패했습니다');
     } finally {
@@ -144,25 +208,27 @@ const AdidasAccountListPage: React.FC = () => {
     }
   };
 
-  // 실제 계정들이 보유한 쿠폰 종류를 추출
+  const knownDomains = ['gmail.com', 'naver.com', 'kakao.com', 'daum.net', 'hanmail.net', 'hotmail.com', 'outlook.com', 'yahoo.com', 'icloud.com', 'me.com', 'live.com', 'msn.com'];
+
+  // 실제 계정들이 보유한 쿠폰 종류를 추출 (모든 포맷 정규화)
   const availableCouponTypes = useMemo(() => {
     const couponSet = new Set<string>();
-
     accounts.forEach(account => {
       if (account.owned_vouchers) {
         try {
           const vouchers = JSON.parse(account.owned_vouchers);
-          vouchers.forEach((voucher: any) => {
-            if (voucher.description) {
-              couponSet.add(voucher.description);
+          vouchers.forEach((v: any) => {
+            let desc = v.description || v.name;
+            if (!desc && v.value) {
+              const val = Number(v.value);
+              desc = val <= 100 ? `${val}% 할인` : `${val.toLocaleString()}원 할인`;
             }
+            if (!desc && v.amount) desc = `${Number(v.amount).toLocaleString()}원 할인`;
+            if (desc) couponSet.add(desc);
           });
-        } catch (e) {
-          // JSON 파싱 실패 시 무시
-        }
+        } catch {}
       }
     });
-
     return Array.from(couponSet).sort();
   }, [accounts]);
 
@@ -241,9 +307,12 @@ const AdidasAccountListPage: React.FC = () => {
   const handleGenerateBarcode = async (accountId: string) => {
     try {
       message.loading({ content: '바코드 이미지 생성 중...', key: 'barcode' });
-      await api.post(`/adidas-accounts/${accountId}/generate-barcode`);
+      const result = await api.post(`/adidas-accounts/${accountId}/generate-barcode`);
       message.success({ content: '바코드 이미지가 생성되었습니다', key: 'barcode' });
-      loadAccounts();
+      // 전체 재로드 대신 해당 계정만 로컬 업데이트 (정렬 유지)
+      setAccounts(prev => prev.map(acc =>
+        acc.id === accountId ? { ...acc, barcode_image_url: result.data.barcode_url } : acc
+      ));
     } catch (error: any) {
       const errorMsg = error.response?.data?.detail || '바코드 생성에 실패했습니다';
       message.error({ content: errorMsg, key: 'barcode' });
@@ -322,10 +391,7 @@ const AdidasAccountListPage: React.FC = () => {
         try {
           if (!account.barcode_image_url) continue;
 
-          // 절대 URL로 변환
-          const imageUrl = account.barcode_image_url.startsWith('http')
-            ? account.barcode_image_url
-            : `${window.location.origin}${account.barcode_image_url}`;
+          const imageUrl = getStaticUrl(account.barcode_image_url);
 
           console.log(`Fetching barcode for ${account.email}: ${imageUrl}`);
 
@@ -697,7 +763,10 @@ const AdidasAccountListPage: React.FC = () => {
         '생일': acc.birthday || '',
         'ADIKR바코드': acc.adikr_barcode || '',
         '전화번호': acc.phone || '',
-        '조회현황': acc.fetch_status || '',
+        '웹조회현황': acc.web_fetch_status || '',
+        '모바일조회현황': acc.mobile_fetch_status || '',
+        '웹발급현황': acc.web_issue_status || '',
+        '모바일발급현황': acc.mobile_issue_status || '',
         '메모': acc.memo || '',
       }));
 
@@ -869,103 +938,135 @@ const AdidasAccountListPage: React.FC = () => {
   const filteredAccounts = useMemo(() => {
     let filtered = [...accounts];
 
-    // 검색어 필터
+    // 1. 검색어 필터 (이메일, 이름, 전화번호, 쿠폰코드)
     if (searchText) {
       const search = searchText.toLowerCase();
-      filtered = filtered.filter(acc =>
-        acc.email?.toLowerCase().includes(search) ||
-        acc.name?.toLowerCase().includes(search) ||
-        acc.phone?.toLowerCase().includes(search)
-      );
-    }
-
-    // 생일 월별 필터 (다중 선택)
-    if (birthdayMonthFilter.length > 0) {
       filtered = filtered.filter(acc => {
-        if (!acc.birthday) return false;
-        const birthday = dayjs(acc.birthday, 'YYYY-MM-DD');
-        if (!birthday.isValid()) return false;
-        const month = (birthday.month() + 1).toString(); // dayjs month는 0부터 시작
-        return birthdayMonthFilter.includes(month);
+        if (acc.email?.toLowerCase().includes(search)) return true;
+        if (acc.name?.toLowerCase().includes(search)) return true;
+        if (acc.phone?.toLowerCase().includes(search)) return true;
+        // 쿠폰 코드 검색
+        if (acc.owned_vouchers) {
+          try {
+            const vouchers = JSON.parse(acc.owned_vouchers);
+            return vouchers.some((v: any) => {
+              const code = v.code;
+              return code && code.toLowerCase().includes(search);
+            });
+          } catch {}
+        }
+        return false;
       });
     }
 
-    // 쿠폰 필터 (다중 선택 - OR 조건)
-    if (couponFilter.length > 0) {
-      filtered = filtered.filter(acc => {
-        const vouchers = acc.owned_vouchers;
+    // 2. 계정 상태 필터
+    if (activeFilter !== 'all') {
+      filtered = filtered.filter(acc => activeFilter === 'active' ? acc.is_active : !acc.is_active);
+    }
 
-        // 각 필터 조건을 체크
-        return couponFilter.some(filterValue => {
-          if (filterValue === 'no_coupon') {
-            // 쿠폰 없음
-            if (!vouchers) return true;
-            try {
-              const voucherList = JSON.parse(vouchers);
-              return voucherList.length === 0;
-            } catch {
-              return true;
-            }
-          } else if (filterValue === 'has_coupon') {
-            // 쿠폰 있음
-            if (!vouchers) return false;
-            try {
-              const voucherList = JSON.parse(vouchers);
-              return voucherList.length > 0;
-            } catch {
-              return false;
-            }
-          } else {
-            // 특정 쿠폰 종류 (5%, 10%, 15%, 100,000)
-            if (!vouchers) return false;
-            try {
-              const voucherList = JSON.parse(vouchers);
-              return voucherList.some((v: any) =>
-                v.description?.includes(filterValue)
-              );
-            } catch {
-              return false;
-            }
-          }
-        });
+    // 3. 이메일 유형 필터
+    if (emailTypeFilter !== 'all') {
+      filtered = filtered.filter(acc => {
+        const domain = acc.email.split('@')[1]?.toLowerCase() || '';
+        const isOfficial = knownDomains.includes(domain);
+        return emailTypeFilter === 'official' ? isOfficial : !isOfficial;
       });
     }
 
-    // 조회 현황 필터 (다중 선택 - OR 조건)
+    // 4. 조회 일자 필터 (from ~ to 범위)
+    if (fetchDateFrom || fetchDateTo) {
+      filtered = filtered.filter(acc => {
+        const allDates = [acc.web_fetch_status, acc.mobile_fetch_status, acc.web_issue_status, acc.mobile_issue_status, acc.fetch_status]
+          .filter(Boolean)
+          .map(s => {
+            const m = s!.match(/\[(\d{2})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})\]/);
+            if (!m) return null;
+            return new Date(2000 + parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]), parseInt(m[4]), parseInt(m[5]));
+          })
+          .filter((d): d is Date => d !== null);
+        if (allDates.length === 0) return false;
+        const latest = allDates.reduce((a, b) => a > b ? a : b);
+        if (fetchDateFrom) {
+          const from = dayjs(fetchDateFrom).startOf('day').toDate();
+          if (latest < from) return false;
+        }
+        if (fetchDateTo) {
+          const to = dayjs(fetchDateTo).endOf('day').toDate();
+          if (latest > to) return false;
+        }
+        return true;
+      });
+    }
+
+    // 5. 조회 현황 필터 (가장 최근 상태 기준)
     if (statusFilter.length > 0) {
       filtered = filtered.filter(acc => {
-        const fetchStatus = acc.fetch_status?.toLowerCase() || '';
-
-        // 각 필터 조건을 체크
-        return statusFilter.some(filterValue => {
-          if (filterValue === 'info_error') {
-            // 정보 조회 오류 (로그인 실패, 인증 오류 등)
-            return (
-              fetchStatus.includes('로그인 실패') ||
-              fetchStatus.includes('로그인 오류') ||
-              fetchStatus.includes('인증 실패') ||
-              fetchStatus.includes('인증 오류') ||
-              (fetchStatus.includes('정보') && fetchStatus.includes('오류'))
-            );
-          } else if (filterValue === 'coupon_error') {
-            // 쿠폰 발급 실패/오류
-            return (
-              fetchStatus.includes('포인트 부족') ||
-              (fetchStatus.includes('쿠폰') && (fetchStatus.includes('실패') || fetchStatus.includes('오류')))
-            );
-          } else if (filterValue === 'success') {
-            // 조회 완료
-            return fetchStatus.includes('완료');
-          } else if (filterValue === 'processing') {
-            // 조회 중
-            return fetchStatus.includes('조회 중');
-          }
+        // getMostRecentStatusStr 인라인 (useMemo 내부라 헬퍼 직접 호출 불가)
+        const candidates = [
+          acc.web_fetch_status, acc.mobile_fetch_status, acc.web_issue_status, acc.mobile_issue_status,
+          (!acc.web_fetch_status && !acc.mobile_fetch_status) ? acc.fetch_status : null,
+        ].filter(Boolean) as string[];
+        if (candidates.length === 0) return false;
+        const withDate = candidates
+          .map(s => { const m = s.match(/\[(\d{2})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})\]/); if (!m) return null; return { s, d: new Date(2000+parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]), parseInt(m[4]), parseInt(m[5])) }; })
+          .filter((x): x is { s: string; d: Date } => x !== null);
+        const latest = withDate.length > 0 ? withDate.reduce((a, b) => a.d > b.d ? a : b).s : candidates[0];
+        // 오류: 네트워크/인증 오류만 (포인트 부족/버튼 없음/발급 실패 = 완료 처리)
+        const isError = latest.includes('오류') || latest.includes('에러') ||
+          latest.includes('차단') || latest.includes('비밀번호') || latest.includes('BOT') ||
+          latest.includes('틀림') || latest.includes('중...');
+        const isSuccess = !isError && (
+          latest.includes('완료') || latest.includes('미경과') ||
+          latest.includes('포인트 부족') || latest.includes('버튼 없음') || latest.includes('발급 실패')
+        );
+        return statusFilter.some(f => {
+          if (f === 'error') return isError;
+          if (f === 'success') return isSuccess;
           return false;
         });
       });
     }
 
-    // 포인트 범위 필터
+    // 6. 쿠폰 필터 (카테고리 다중 선택 - OR 조건, getCouponDisplayInfo 정규화 이름 기준)
+    if (couponFilter.length > 0) {
+      filtered = filtered.filter(acc => {
+        if (!acc.owned_vouchers) return false;
+        try {
+          const voucherList = JSON.parse(acc.owned_vouchers);
+          return couponFilter.some(categoryKey => {
+            return voucherList.some((v: any) => {
+              let desc = v.description || v.name;
+              if (!desc && v.value) { const val = Number(v.value); desc = val <= 100 ? `${val}% 할인` : `${val.toLocaleString()}원 할인`; }
+              if (!desc && v.amount) desc = `${Number(v.amount).toLocaleString()}원 할인`;
+              if (!desc) return false;
+              // getCouponDisplayInfo는 컴포넌트 내부에 정의되어 있으므로 인라인 매핑 사용
+              const d = desc.toLowerCase();
+              let normalized = '';
+              if (d === '1원 상품권') normalized = '5% 할인';
+              else if (d === '2원 상품권') normalized = '10% 할인';
+              else if (d === '3원 상품권') normalized = '15% 할인';
+              else if (d === '4원 상품권' || d === '20원 상품권') normalized = '20% 할인';
+              else if (d.includes('100,000') || d.includes('100000') || d.includes('10만') || d.includes('100k') || d.includes('_100k')) normalized = '10만원';
+              else if (d.includes('50,000') || d.includes('50000') || d.includes('5만') || d.includes('50k')) normalized = '5만원';
+              else if (d.includes('30,000') || d.includes('30000') || d.includes('3만') || d.includes('30k')) normalized = '3만원';
+              else if (d.includes('20,000') || d.includes('20000') || d.includes('2만') || d.includes('20k')) normalized = '2만원';
+              else if (d.includes('10,000') || d.includes('10000') || d.includes('1만') || d.includes('10k')) normalized = '1만원';
+              else if (d.includes('5,000') || d.includes('5000') || /\b5k\b/.test(d)) normalized = '5천원';
+              else if (d.includes('3,000') || d.includes('3000') || /\b3k\b/.test(d)) normalized = '3천원';
+              else if (d.includes('30%')) normalized = '30% 할인';
+              else if (d.includes('20%')) normalized = '20% 할인';
+              else if (d.includes('15%')) normalized = '15% 할인';
+              else if (d.includes('10%')) normalized = '10% 할인';
+              else if (d.includes('5%')) normalized = '5% 할인';
+              else if (d.includes('스타벅스') || d.includes('starbucks')) normalized = '스타벅스';
+              return normalized === categoryKey;
+            });
+          });
+        } catch { return false; }
+      });
+    }
+
+    // 7. 포인트 범위 필터
     if (minPoints || maxPoints) {
       filtered = filtered.filter(acc => {
         const points = acc.current_points || 0;
@@ -975,8 +1076,177 @@ const AdidasAccountListPage: React.FC = () => {
       });
     }
 
+    // 8. 생일 월별 필터 (다중 선택)
+    if (birthdayMonthFilter.length > 0) {
+      filtered = filtered.filter(acc => {
+        if (!acc.birthday) return false;
+        const birthday = dayjs(acc.birthday, 'YYYY-MM-DD');
+        if (!birthday.isValid()) return false;
+        return birthdayMonthFilter.includes((birthday.month() + 1).toString());
+      });
+    }
+
     return filtered;
-  }, [accounts, searchText, birthdayMonthFilter, couponFilter, statusFilter, minPoints, maxPoints]);
+  }, [accounts, searchText, activeFilter, emailTypeFilter, fetchDateFrom, fetchDateTo, birthdayMonthFilter, couponFilter, statusFilter, minPoints, maxPoints]);
+
+  // ===== 쿠폰 유틸리티 =====
+  const getCouponDisplayInfo = (description: string) => {
+    if (!description) return { name: '기타', sortValue: 0, icon: '🎫' };
+    const desc = description.toLowerCase();
+    if (desc === '1원 상품권') return { name: '5% 할인', sortValue: 5000, icon: '🏷️' };
+    if (desc === '2원 상품권') return { name: '10% 할인', sortValue: 10000, icon: '🏷️' };
+    if (desc === '3원 상품권') return { name: '15% 할인', sortValue: 15000, icon: '🏷️' };
+    if (desc === '4원 상품권' || desc === '20원 상품권') return { name: '20% 할인', sortValue: 20000, icon: '🏷️' };
+    if (desc.includes('100,000') || desc.includes('100000') || desc.includes('10만') || desc.includes('100k') || desc.includes('_100k')) return { name: '10만원', sortValue: 100000, icon: '💰' };
+    if (desc.includes('50,000') || desc.includes('50000') || desc.includes('5만') || desc.includes('50k')) return { name: '5만원', sortValue: 50000, icon: '💵' };
+    if (desc.includes('30,000') || desc.includes('30000') || desc.includes('3만') || desc.includes('30k')) return { name: '3만원', sortValue: 30000, icon: '💵' };
+    if (desc.includes('20,000') || desc.includes('20000') || desc.includes('2만') || desc.includes('20k')) return { name: '2만원', sortValue: 20000, icon: '💵' };
+    if (desc.includes('10,000') || desc.includes('10000') || desc.includes('1만') || desc.includes('10k')) return { name: '1만원', sortValue: 10000, icon: '💵' };
+    if (desc.includes('5,000') || desc.includes('5000') || /\b5k\b/.test(desc)) return { name: '5천원', sortValue: 5000, icon: '💵' };
+    if (desc.includes('3,000') || desc.includes('3000') || /\b3k\b/.test(desc)) return { name: '3천원', sortValue: 3000, icon: '💵' };
+    if (desc.includes('30%') || desc.includes('30per')) return { name: '30% 할인', sortValue: 30000, icon: '🏷️' };
+    if (desc.includes('20%') || desc.includes('20per')) return { name: '20% 할인', sortValue: 20000, icon: '🏷️' };
+    if (desc.includes('15%') || desc.includes('15per')) return { name: '15% 할인', sortValue: 15000, icon: '🏷️' };
+    if (desc.includes('10%') || desc.includes('10per')) return { name: '10% 할인', sortValue: 10000, icon: '🏷️' };
+    if (desc.includes('5%') || desc.includes('5per')) return { name: '5% 할인', sortValue: 5000, icon: '🏷️' };
+    if (desc.includes('네이버') || desc.includes('naver')) return { name: '네이버', sortValue: 1000, icon: '🎁' };
+    if (desc.includes('스타벅스') || desc.includes('starbucks')) return { name: '스타벅스', sortValue: 1000, icon: '☕' };
+    if (desc.includes('tier') || desc.includes('티어')) return { name: '티어쿠폰', sortValue: 500, icon: '⭐' };
+    let name = description.startsWith('KR_') ? description.substring(3) : description;
+    name = name.replace(/_/g, ' ').trim();
+    if (name.length > 10) name = name.substring(0, 9) + '…';
+    return { name, sortValue: 0, icon: '🎫' };
+  };
+
+  // DB에 혼재하는 포맷을 통일: {description, code, expiry, sold, sold_to}
+  // 포맷1(구): name, expiryDate, code, value
+  // 포맷2(신): description, code, expiry, sold, sold_to
+  // 포맷3(FastAPI): description, amount, issued_at, type
+  const normalizeVoucher = (v: any) => {
+    // value 필드(숫자)로 description 보완
+    let desc = v.description || v.name;
+    if (!desc && v.value) {
+      const val = Number(v.value);
+      if (val <= 100) desc = `${val}% 할인`;          // 10, 20, 30 등 → 퍼센트
+      else desc = `${val.toLocaleString()}원 할인`;   // 3000, 5000 등 → 금액
+    }
+    if (!desc && v.amount) desc = `${Number(v.amount).toLocaleString()}원 할인`;
+    return {
+      description: desc || 'N/A',
+      code: (v.code && v.code !== 'N/A') ? v.code : undefined,
+      expiry: v.expiry || v.expiryDate || undefined,
+      sold: v.sold || false,
+      sold_to: v.sold_to || '',
+    };
+  };
+
+  const isVoucherExpired = (expiry: string | undefined): boolean => {
+    if (!expiry || expiry === 'N/A') return false;
+    try { return new Date(expiry) < new Date(); } catch { return false; }
+  };
+
+  const isVoucherExpiringSoon = (expiry: string | undefined): boolean => {
+    if (!expiry || expiry === 'N/A') return false;
+    try {
+      const exp = new Date(expiry);
+      const now = new Date();
+      return exp >= now && exp <= new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    } catch { return false; }
+  };
+
+  const sortVouchers = (vouchers: any[]): any[] =>
+    [...vouchers].sort((a, b) => {
+      if (a.sold !== b.sold) return a.sold ? 1 : -1;
+      const aExp = isVoucherExpired(a.expiry), bExp = isVoucherExpired(b.expiry);
+      if (aExp !== bExp) return aExp ? 1 : -1;
+      return getCouponDisplayInfo(b.description).sortValue - getCouponDisplayInfo(a.description).sortValue;
+    });
+
+  // ===== 상태 파싱 유틸리티 =====
+  // 상태 문자열에서 [YY-MM-DD HH:MM] 패턴으로 날짜 파싱
+  const parseStatusDate = (status: string | undefined): Date | null => {
+    if (!status) return null;
+    const match = status.match(/\[(\d{2})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})\]/);
+    if (!match) return null;
+    const [, yy, mm, dd, hh, min] = match;
+    return new Date(2000 + parseInt(yy), parseInt(mm) - 1, parseInt(dd), parseInt(hh), parseInt(min));
+  };
+
+  // 4개 상태 필드 중 가장 최근 날짜 반환
+  const getLatestStatusDate = (record: AdidasAccount): Date | null => {
+    const dates = [
+      parseStatusDate(record.web_fetch_status),
+      parseStatusDate(record.mobile_fetch_status),
+      parseStatusDate(record.web_issue_status),
+      parseStatusDate(record.mobile_issue_status),
+      parseStatusDate(record.fetch_status),
+    ].filter((d): d is Date => d !== null);
+    if (dates.length === 0) return null;
+    return dates.reduce((a, b) => (a > b ? a : b));
+  };
+
+  // 4개 상태 필드 중 가장 최근 상태 문자열 반환 (날짜 있는 것 우선, 없으면 첫 번째 값)
+  const getMostRecentStatusStr = (record: AdidasAccount): string | null => {
+    const candidates = [
+      record.web_fetch_status,
+      record.mobile_fetch_status,
+      record.web_issue_status,
+      record.mobile_issue_status,
+      (!record.web_fetch_status && !record.mobile_fetch_status) ? record.fetch_status : null,
+    ].filter(Boolean) as string[];
+    if (candidates.length === 0) return null;
+    // 날짜 있는 것들로 가장 최근 것 선택
+    const withDate = candidates
+      .map(s => ({ s, d: parseStatusDate(s) }))
+      .filter((x): x is { s: string; d: Date } => x.d !== null);
+    if (withDate.length > 0) {
+      return withDate.reduce((a, b) => a.d > b.d ? a : b).s;
+    }
+    return candidates[0];
+  };
+
+  // 상태 텍스트에서 색상 결정
+  const getStatusColor = (text: string): string => {
+    if (text.includes('조회 중') || text.includes('발급 중') || text.includes('처리 중')) return 'processing';
+    if (text.includes('완료')) return 'success';
+    if (text.includes('실패') || text.includes('오류') || text.includes('포인트 부족') || text.includes('틀림')) return 'error';
+    if (text.includes('미경과') || text.includes('부족') || text.includes('없음')) return 'warning';
+    return 'default';
+  };
+
+  // 만료 임박 쿠폰 알림 (7일 이내)
+  const expiringCouponAlerts = useMemo(() => {
+    const alerts: { email: string; couponName: string; expiry: string; code?: string }[] = [];
+    accounts.forEach(acc => {
+      if (!acc.owned_vouchers) return;
+      try {
+        const vouchers = JSON.parse(acc.owned_vouchers);
+        vouchers.forEach((v: any) => {
+          const nv = normalizeVoucher(v);
+          if (!nv.sold && isVoucherExpiringSoon(nv.expiry) && !isVoucherExpired(nv.expiry)) {
+            alerts.push({ email: acc.email, couponName: nv.description, expiry: nv.expiry || '', code: nv.code });
+          }
+        });
+      } catch {}
+    });
+    return alerts;
+  }, [accounts]);
+
+  // 만료 임박 쿠폰 종류별 그룹핑
+  const groupedExpiringAlerts = useMemo(() => {
+    const map = new Map<string, { couponName: string; expiry: string; code?: string }[]>();
+    expiringCouponAlerts.forEach(a => {
+      const name = getCouponDisplayInfo(a.couponName).name;
+      if (!map.has(name)) map.set(name, []);
+      map.get(name)!.push(a);
+    });
+    // sortValue 내림차순으로 정렬
+    return Array.from(map.entries()).sort((a, b) => {
+      const va = getCouponDisplayInfo(a[1][0].couponName).sortValue;
+      const vb = getCouponDisplayInfo(b[1][0].couponName).sortValue;
+      return vb - va;
+    });
+  }, [expiringCouponAlerts]);
 
   const columns = [
     {
@@ -984,7 +1254,6 @@ const AdidasAccountListPage: React.FC = () => {
       key: 'index',
       width: 50,
       render: (_: any, __: any, index: number) => {
-        // 페이지당 연속 번호 계산
         return (currentPage - 1) * pageSize + index + 1;
       },
     },
@@ -992,7 +1261,7 @@ const AdidasAccountListPage: React.FC = () => {
       title: '사용',
       dataIndex: 'is_active',
       key: 'is_active',
-      width: 70,
+      width: 55,
       align: 'center' as 'center',
       render: (isActive: boolean) =>
         isActive ? (
@@ -1002,66 +1271,76 @@ const AdidasAccountListPage: React.FC = () => {
         ),
     },
     {
-      title: '이메일',
-      dataIndex: 'email',
-      key: 'email',
-      width: 180,
-      render: (email: string) => (
-        <span
-          onClick={() => {
-            navigator.clipboard.writeText(email);
-            message.success('이메일이 복사되었습니다');
-          }}
-          style={{ cursor: 'pointer' }}
-        >
-          {email}
-        </span>
-      ),
-    },
-    {
-      title: '비밀번호',
-      dataIndex: 'password',
-      key: 'password',
-      width: 100,
-      render: (password: string) => (
-        <span
-          onClick={() => {
-            navigator.clipboard.writeText(password);
-            message.success('비밀번호가 복사되었습니다');
-          }}
-          style={{ cursor: 'pointer' }}
-        >
-          {password}
-        </span>
+      title: '이메일/비밀번호',
+      key: 'email_password',
+      width: 200,
+      render: (_: any, record: AdidasAccount) => (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <span
+            onClick={() => {
+              navigator.clipboard.writeText(record.email);
+              message.success('이메일이 복사되었습니다');
+            }}
+            style={{ cursor: 'pointer', fontSize: '12px' }}
+          >
+            {record.email}
+          </span>
+          <span
+            onClick={() => {
+              navigator.clipboard.writeText(record.password);
+              message.success('비밀번호가 복사되었습니다');
+            }}
+            style={{ cursor: 'pointer', fontSize: '12px', color: '#888', fontFamily: 'monospace' }}
+          >
+            {record.password}
+          </span>
+        </div>
       ),
     },
     {
       title: '생일',
       dataIndex: 'birthday',
       key: 'birthday',
-      width: 70,
+      width: 60,
       render: (birthday: string) => {
         if (!birthday) return '-';
-        // YYYY-MM-DD -> MM/DD 형식으로 변환
         const parts = birthday.split('-');
         if (parts.length === 3) {
-          const monthDay = `${parts[1]}/${parts[2]}`;
-          return <strong>{monthDay}</strong>;
+          return <strong>{`${parts[1]}/${parts[2]}`}</strong>;
         }
         return <strong>{birthday}</strong>;
       },
     },
     {
-      title: 'ADIKR 바코드',
+      title: '이름/전화번호',
+      dataIndex: 'name',
+      key: 'name',
+      width: 120,
+      render: (name: string, record: AdidasAccount) => {
+        const phone = record.phone;
+        const convertedPhone = phone ? phone.replace(/^\+82\s*/, '0') : null;
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+            <div style={{ fontWeight: '500', fontSize: '12px' }}>{convertedPhone || '-'}</div>
+            {name && (
+              <div style={{ fontSize: '11px', color: '#999' }}>{name}</div>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      title: '바코드',
       dataIndex: 'adikr_barcode',
       key: 'adikr_barcode',
-      width: 125,
+      width: 115,
       render: (barcode: string) => barcode ? (
         <strong style={{
           fontFamily: 'monospace',
+          fontSize: '12px',
           letterSpacing: '1px',
           background: '#f0f0f0',
-          padding: '4px 8px',
+          padding: '3px 6px',
           borderRadius: '4px',
           display: 'inline-block'
         }}>
@@ -1070,69 +1349,36 @@ const AdidasAccountListPage: React.FC = () => {
       ) : '-',
     },
     {
-      title: '바코드 이미지',
+      title: '바코드이미지',
       dataIndex: 'barcode_image_url',
       key: 'barcode_image_url',
-      width: 120,
+      width: 100,
       align: 'center' as 'center',
       render: (image: string, record: AdidasAccount) => {
         if (image) {
+          const src = getStaticUrl(image);
           return (
             <img
-              src={image}
+              src={src}
               alt="barcode"
-              style={{ maxWidth: '100px', maxHeight: '40px', cursor: 'pointer' }}
+              style={{ maxWidth: '90px', maxHeight: '36px', cursor: 'pointer' }}
               onClick={() => {
-                setSelectedBarcode({ url: image, email: record.email });
+                setSelectedBarcode({ url: src, email: record.email });
                 setBarcodeModalVisible(true);
               }}
             />
           );
-        } else if (record.adikr_barcode) {
-          return (
-            <Button
-              size="small"
-              onClick={() => handleGenerateBarcode(record.id)}
-              style={{
-                backgroundColor: '#4a5f7f',
-                color: '#fff',
-                border: 'none'
-              }}
-            >
-              생성
-            </Button>
-          );
-        } else {
-          return '-';
         }
+        return <span style={{ color: '#ccc', fontSize: '11px' }}>{record.adikr_barcode ? '생성중…' : '-'}</span>;
       },
     },
     {
-      title: '이름/전화번호',
-      dataIndex: 'name',
-      key: 'name',
-      width: 130,
-      render: (name: string, record: AdidasAccount) => {
-        const phone = record.phone;
-        const convertedPhone = phone ? phone.replace(/^\+82\s*/, '0') : null;
-
-        return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            <div style={{ fontWeight: '500' }}>{convertedPhone || '-'}</div>
-            {name && (
-              <div style={{ fontSize: '12px', color: '#999' }}>{name}</div>
-            )}
-          </div>
-        );
-      },
-    },
-    {
-      title: '현재 포인트',
+      title: '포인트',
       dataIndex: 'current_points',
       key: 'current_points',
-      width: 110,
+      width: 85,
       render: (points: number) => points ? (
-        <strong style={{ color: '#1890ff', fontSize: '14px' }}>
+        <strong style={{ color: '#1890ff', fontSize: '13px' }}>
           {points.toLocaleString()}P
         </strong>
       ) : '-',
@@ -1141,93 +1387,216 @@ const AdidasAccountListPage: React.FC = () => {
       title: '보유 쿠폰',
       dataIndex: 'owned_vouchers',
       key: 'owned_vouchers',
-      width: 180,
+      width: 190,
       render: (vouchers: string, record: AdidasAccount) => {
-        if (!vouchers) return <span style={{ color: '#999' }}>없음</span>;
+        if (!vouchers) return <span style={{ color: '#999', fontSize: '12px' }}>없음</span>;
         try {
-          const voucherList = JSON.parse(vouchers);
-          if (voucherList.length === 0) {
-            return <span style={{ color: '#999' }}>없음</span>;
-          }
-          // 할인율 내림차순 정렬 (원본 인덱스 유지)
-          const indexedVouchers = voucherList.map((v: any, idx: number) => ({ ...v, originalIndex: idx }));
-          const sortedVouchers = indexedVouchers.sort((a: any, b: any) => {
-            const getPercent = (desc: string) => {
-              const match = desc.match(/(\d+)%/);
-              return match ? parseInt(match[1]) : 0;
-            };
-            return getPercent(b.description) - getPercent(a.description);
-          });
+          const rawList = JSON.parse(vouchers);
+          if (rawList.length === 0) return <span style={{ color: '#999', fontSize: '12px' }}>없음</span>;
+          const indexed = rawList.map((v: any, idx: number) => ({ ...normalizeVoucher(v), _idx: idx }));
+          const sorted = sortVouchers(indexed);
+          const isExpanded = expandedVouchers.has(record.id);
 
-          return (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              {sortedVouchers.map((v: any) => (
-                <div
-                  key={v.originalIndex}
-                  onClick={() => handleVoucherClick(record.id, v.originalIndex, v)}
-                  style={{ cursor: 'pointer', position: 'relative' }}
-                >
-                  <Tag
-                    color={v.sold ? 'default' : 'volcano'}
-                    style={{
-                      borderRadius: '8px',
-                      padding: '2px 8px',
-                      fontWeight: '500',
-                      fontSize: '12px',
-                      border: v.sold ? '1px solid #d9d9d9' : '1px solid #ff7875',
-                      margin: 0,
-                      width: 'fit-content',
-                      opacity: v.sold ? 0.7 : 1,
-                      textDecoration: v.sold ? 'line-through' : 'none',
-                    }}
-                  >
-                    {v.sold && <span style={{ color: '#52c41a', marginRight: 4 }}>✓</span>}
-                    🎫 {v.description}
-                  </Tag>
-                  {v.sold && v.sold_to && (
-                    <div style={{ fontSize: '10px', color: '#52c41a', marginTop: 1 }}>
-                      판매: {v.sold_to}
+          const renderCard = (v: any) => {
+            const info = getCouponDisplayInfo(v.description);
+            const expired = isVoucherExpired(v.expiry);
+            const expiringSoon = isVoucherExpiringSoon(v.expiry);
+            const expiryShort = v.expiry && v.expiry !== 'N/A'
+              ? v.expiry.slice(5).replace('-', '/')
+              : '-';
+
+            // Electron 앱 색상 그대로
+            const bgMain = v.sold || expired ? '#6b7280' : '#166534';
+            const bgRight = v.sold || expired ? '#d4d4d4' : '#fef9c3';
+            const expiryColor = v.sold || expired ? '#525252' : (expiringSoon ? '#dc2626' : '#713f12');
+            const borderStyle = expiringSoon && !v.sold && !expired
+              ? '2px solid #ef4444'
+              : '2px solid transparent';
+
+            return (
+              <div
+                key={v._idx}
+                style={{
+                  display: 'flex',
+                  width: '100%',
+                  maxWidth: 200,
+                  height: 50,
+                  borderRadius: 6,
+                  overflow: 'hidden',
+                  cursor: 'default',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.15)',
+                  border: borderStyle,
+                  marginBottom: 4,
+                  opacity: v.sold || expired ? 0.65 : 1,
+                  filter: v.sold || expired ? 'grayscale(0.6)' : 'none',
+                  flexShrink: 0,
+                  position: 'relative',
+                }}
+              >
+                {/* 왼쪽: 쿠폰명 + 코드 */}
+                <div style={{
+                  flex: 1,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'center',
+                  padding: '5px 8px 5px 10px',
+                  background: bgMain,
+                  color: 'white',
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  position: 'relative',
+                }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.1 }}>
+                    {info.name}
+                  </div>
+                  {v.code && (
+                    <div
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigator.clipboard.writeText(v.code);
+                        message.success('쿠폰 코드 복사됨');
+                      }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 2,
+                        marginTop: 3,
+                        background: v.sold || expired ? '#d4d4d4' : '#fef9c3',
+                        color: v.sold || expired ? '#525252' : '#713f12',
+                        fontSize: 9,
+                        fontWeight: 600,
+                        padding: '1px 5px',
+                        borderRadius: 3,
+                        maxWidth: '100%',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        fontFamily: 'monospace',
+                        letterSpacing: '0.3px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {v.code} 📋
+                    </div>
+                  )}
+                  {v.sold && (
+                    <div style={{
+                      position: 'absolute', top: '50%', left: '50%',
+                      transform: 'translate(-50%, -50%)',
+                      fontSize: 10, fontWeight: 600, color: '#fff',
+                      background: 'rgba(0,0,0,0.7)', padding: '3px 8px', borderRadius: 4,
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {v.sold_to ? `→ ${v.sold_to}` : '판매완료'}
                     </div>
                   )}
                 </div>
-              ))}
+                {/* 오른쪽: 유효기간 */}
+                <div style={{
+                  width: 44,
+                  background: bgRight,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  padding: '4px 4px',
+                  borderLeft: '1px dashed #a3a3a3',
+                  borderRadius: '0 6px 6px 0',
+                  flexShrink: 0,
+                }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: expiryColor, textAlign: 'center', lineHeight: 1.2 }}>
+                    {expiryShort}
+                  </div>
+                </div>
+              </div>
+            );
+          };
+
+          const visibleCards = isExpanded ? sorted : [sorted[0]];
+          const hasMore = sorted.length > 1;
+
+          return (
+            <div>
+              {visibleCards.map(v => renderCard(v))}
+              {hasMore && (
+                <div
+                  style={{ fontSize: 11, color: '#1890ff', cursor: 'pointer', textAlign: 'center', paddingTop: 1 }}
+                  onClick={() => setExpandedVouchers(prev => {
+                    const next = new Set(prev);
+                    isExpanded ? next.delete(record.id) : next.add(record.id);
+                    return next;
+                  })}
+                >
+                  {isExpanded ? '▲ 접기' : `▼ +${sorted.length - 1}개`}
+                </div>
+              )}
             </div>
           );
         } catch {
-          return <span style={{ color: '#999' }}>없음</span>;
+          return <span style={{ color: '#999', fontSize: '12px' }}>없음</span>;
         }
       },
     },
     {
-      title: '조회 현황',
-      dataIndex: 'fetch_status',
-      key: 'fetch_status',
-      width: 220,
-      render: (fetchStatus: string) => {
-        if (!fetchStatus) return '-';
+      title: '조회일자',
+      key: 'latest_status_date',
+      width: 80,
+      align: 'center' as 'center',
+      render: (_: any, record: AdidasAccount) => {
+        const latest = getLatestStatusDate(record);
+        if (!latest) return <span style={{ color: '#999' }}>-</span>;
+        const m = latest.getMonth() + 1;
+        const d = latest.getDate();
+        const hh = String(latest.getHours()).padStart(2, '0');
+        const mm = String(latest.getMinutes()).padStart(2, '0');
+        return (
+          <div style={{ fontSize: '12px', textAlign: 'center' }}>
+            <div>{`${m}/${d}`}</div>
+            <div style={{ color: '#888' }}>{`${hh}:${mm}`}</div>
+          </div>
+        );
+      },
+    },
+    {
+      title: '조회상태',
+      key: 'status_summary',
+      width: 140,
+      render: (_: any, record: AdidasAccount) => {
+        const allFields = [
+          { label: '웹조회', value: record.web_fetch_status },
+          { label: '모바일', value: record.mobile_fetch_status },
+          { label: '웹발급', value: record.web_issue_status },
+          { label: '모발급', value: record.mobile_issue_status },
+          ...(!record.web_fetch_status && !record.mobile_fetch_status && record.fetch_status
+            ? [{ label: '조회', value: record.fetch_status }]
+            : []),
+        ].filter(f => f.value);
 
-        // 줄바꿈으로 분리 (정보조회 + 쿠폰발급)
-        const lines = fetchStatus.split('\n');
+        if (allFields.length === 0) return <span style={{ color: '#999' }}>-</span>;
+
+        const getShortStatus = (text: string): { label: string; color: string } => {
+          if (text.includes('중...')) return { label: '진행중', color: '#1890ff' };
+          if (text.includes('완료')) return { label: '완료', color: '#52c41a' };
+          if (text.includes('비밀번호') || text.includes('비번')) return { label: '비번오류', color: '#fa8c16' };
+          if (text.includes('차단') || text.includes('BOT')) return { label: '차단', color: '#ff4d4f' };
+          if (text.includes('포인트 부족')) return { label: 'P부족', color: '#faad14' };
+          if (text.includes('미경과')) return { label: '미경과', color: '#faad14' };
+          if (text.includes('버튼 없음')) return { label: '버튼없음', color: '#faad14' };
+          if (text.includes('실패') || text.includes('오류') || text.includes('에러')) return { label: '오류', color: '#ff4d4f' };
+          if (text.includes('대기')) return { label: '대기', color: '#d9d9d9' };
+          const core = text.replace(/\[[^\]]*\]/g, '').trim();
+          return { label: core.length > 5 ? core.substring(0, 5) + '…' : core, color: '#8c8c8c' };
+        };
 
         return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            {lines.map((line, index) => {
-              // 각 줄에 따라 색상 지정
-              let color = 'default';
-              if (line.includes('조회 중')) {
-                color = 'processing';
-              } else if (line.includes('완료')) {
-                color = 'success';
-              } else if (line.includes('실패') || line.includes('오류') || line.includes('포인트 부족')) {
-                color = 'error';
-              } else if (line.includes('다음 발급일')) {
-                color = 'warning';
-              }
-
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+            {allFields.map((f, i) => {
+              const { label: sLabel, color } = getShortStatus(f.value!);
               return (
-                <Tag key={index} color={color}>
-                  {line}
-                </Tag>
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                  <span style={{ fontSize: '10px', color: '#aaa', minWidth: 32 }}>{f.label}</span>
+                  <span style={{ fontSize: '11px', color, fontWeight: 600 }}>{sLabel}</span>
+                </div>
               );
             })}
           </div>
@@ -1237,64 +1606,34 @@ const AdidasAccountListPage: React.FC = () => {
     {
       title: '작업',
       key: 'action',
-      width: 170,
+      width: 80,
       fixed: 'right' as 'right',
       render: (_: any, record: AdidasAccount) => (
-        <div style={{ display: 'flex', gap: '4px' }}>
-          {record.is_active && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <Button
-                size="small"
-                onClick={() => handleFetchAccountInfo(record.id)}
-                style={{
-                  backgroundColor: '#4a5f7f',
-                  color: '#fff',
-                  border: 'none',
-                  padding: '0 12px'
-                }}
-              >
-                정보조회
-              </Button>
-              <Button
-                size="small"
-                onClick={() => handleIssueCoupon(record.id)}
-                style={{
-                  backgroundColor: '#4a5f7f',
-                  color: '#fff',
-                  border: 'none',
-                  padding: '0 12px'
-                }}
-              >
-                쿠폰발급
-              </Button>
-            </div>
-          )}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <Button
+            type="text"
+            icon={<EditOutlined />}
+            onClick={() => handleEdit(record)}
+            size="small"
+            style={{ color: '#000', padding: '0 8px' }}
+          >
+            수정
+          </Button>
+          <Popconfirm
+            title="정말 삭제하시겠습니까?"
+            onConfirm={() => handleDelete(record.id)}
+            okText="삭제"
+            cancelText="취소"
+          >
             <Button
               type="text"
-              icon={<EditOutlined />}
-              onClick={() => handleEdit(record)}
+              icon={<DeleteOutlined />}
               size="small"
               style={{ color: '#000', padding: '0 8px' }}
             >
-              수정
+              삭제
             </Button>
-            <Popconfirm
-              title="정말 삭제하시겠습니까?"
-              onConfirm={() => handleDelete(record.id)}
-              okText="삭제"
-              cancelText="취소"
-            >
-              <Button
-                type="text"
-                icon={<DeleteOutlined />}
-                size="small"
-                style={{ color: '#000', padding: '0 8px' }}
-              >
-                삭제
-              </Button>
-            </Popconfirm>
-          </div>
+          </Popconfirm>
         </div>
       ),
     },
@@ -1309,34 +1648,38 @@ const AdidasAccountListPage: React.FC = () => {
           <div style={{ width: '100%', padding: '8px 0' }}>
             {/* 첫 번째 줄 */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              {/* 1줄 왼쪽: 검색, 포인트 필터 */}
+              {/* 1줄 왼쪽: 검색 + 전체 선택 */}
               <Space size="middle">
                 <Input
-                  placeholder="이메일, 이름 검색"
+                  placeholder="이메일, 이름, 쿠폰코드 검색"
                   prefix={<SearchOutlined />}
                   value={searchText}
                   onChange={(e) => setSearchText(e.target.value)}
                   style={{ width: 200 }}
                   allowClear
                 />
-                <Input
-                  placeholder="최소 포인트"
-                  value={minPoints}
-                  onChange={(e) => setMinPoints(e.target.value.replace(/\D/g, ''))}
-                  style={{ width: 110 }}
-                  allowClear
-                />
-                <Input
-                  placeholder="최대 포인트"
-                  value={maxPoints}
-                  onChange={(e) => setMaxPoints(e.target.value.replace(/\D/g, ''))}
-                  style={{ width: 110 }}
-                  allowClear
-                />
+                <Checkbox
+                  checked={filteredAccounts.length > 0 && selectedRowKeys.length === filteredAccounts.length}
+                  indeterminate={selectedRowKeys.length > 0 && selectedRowKeys.length < filteredAccounts.length}
+                  onChange={e => {
+                    if (e.target.checked) setSelectedRowKeys(filteredAccounts.map(a => a.id));
+                    else setSelectedRowKeys([]);
+                  }}
+                >
+                  <span style={{ fontSize: 12 }}>전체 선택</span>
+                </Checkbox>
               </Space>
 
               {/* 1줄 오른쪽: 기본 버튼 */}
               <Space size="middle">
+                <Radio.Group
+                  value={viewMode}
+                  onChange={(e) => setViewMode(e.target.value)}
+                  size="small"
+                >
+                  <Radio.Button value="card" style={{ color: viewMode === 'card' ? '#4a5f7f' : '#888', fontWeight: viewMode === 'card' ? 600 : 400 }}>카드</Radio.Button>
+                  <Radio.Button value="table" style={{ color: viewMode === 'table' ? '#4a5f7f' : '#888', fontWeight: viewMode === 'table' ? 600 : 400 }}>표</Radio.Button>
+                </Radio.Group>
                 <Button
                   icon={<ReloadOutlined />}
                   onClick={loadAccounts}
@@ -1345,110 +1688,116 @@ const AdidasAccountListPage: React.FC = () => {
                   새로고침
                 </Button>
                 <Button
-                  icon={<UploadOutlined />}
+                  icon={<PlusOutlined />}
                   onClick={() => setBulkPasteModalVisible(true)}
                   size="small"
-                >
-                  일괄 등록
-                </Button>
-                <Button
-                  icon={<DownloadOutlined />}
-                  onClick={handleExcelDownload}
-                  disabled={accounts.length === 0}
-                  size="small"
-                >
-                  Excel 다운로드
-                </Button>
-                <Button
-                  icon={<PlusOutlined />}
-                  onClick={handleAdd}
-                  size="small"
-                  style={{
-                    backgroundColor: '#4a5f7f',
-                    color: '#fff',
-                    border: 'none'
-                  }}
+                  style={{ backgroundColor: '#4a5f7f', color: '#fff', border: 'none' }}
                 >
                   계정 추가
                 </Button>
               </Space>
             </div>
 
-            {/* 두 번째 줄 */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              {/* 2줄 왼쪽: 생일, 쿠폰, 상태 필터 */}
-              <Space size="middle">
-                {/* 생일 월 필터 */}
-                <Dropdown
-                  trigger={['click']}
-                  dropdownRender={() => (
-                    <div style={{
-                      backgroundColor: 'white',
-                      border: '1px solid #d9d9d9',
-                      borderRadius: 6,
-                      padding: '8px',
-                      boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
-                    }}>
-                      <Checkbox.Group
-                        value={birthdayMonthFilter}
-                        onChange={(values) => setBirthdayMonthFilter(values as string[])}
-                      >
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
-                          <Checkbox value="1">1월</Checkbox>
-                          <Checkbox value="2">2월</Checkbox>
-                          <Checkbox value="3">3월</Checkbox>
-                          <Checkbox value="4">4월</Checkbox>
-                          <Checkbox value="5">5월</Checkbox>
-                          <Checkbox value="6">6월</Checkbox>
-                          <Checkbox value="7">7월</Checkbox>
-                          <Checkbox value="8">8월</Checkbox>
-                          <Checkbox value="9">9월</Checkbox>
-                          <Checkbox value="10">10월</Checkbox>
-                          <Checkbox value="11">11월</Checkbox>
-                          <Checkbox value="12">12월</Checkbox>
-                        </div>
-                      </Checkbox.Group>
-                    </div>
-                  )}
-                >
-                  <Badge count={birthdayMonthFilter.length} offset={[-5, 5]}>
+            {/* 두 번째 줄: 필터 */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+              <Space size={6} wrap>
+                {/* 계정 상태 */}
+                <Radio.Group value={activeFilter} onChange={e => setActiveFilter(e.target.value)} size="small" buttonStyle="solid">
+                  <Radio.Button value="all">전체</Radio.Button>
+                  <Radio.Button value="active">활성</Radio.Button>
+                  <Radio.Button value="inactive">비활성</Radio.Button>
+                </Radio.Group>
+
+                {/* 이메일 유형 */}
+                <Select value={emailTypeFilter} onChange={setEmailTypeFilter} size="small" style={{ width: 110 }}>
+                  <Option value="all">이메일 전체</Option>
+                  <Option value="official">공식이메일</Option>
+                  <Option value="catchall">캐치올</Option>
+                </Select>
+
+                {/* 조회 현황 */}
+                <Dropdown trigger={['click']} dropdownRender={() => (
+                  <div style={{ backgroundColor: 'white', border: '1px solid #d9d9d9', borderRadius: 6, padding: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+                    <Checkbox.Group value={statusFilter} onChange={v => setStatusFilter(v as string[])}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <Checkbox value="success">완료</Checkbox>
+                        <Checkbox value="error">오류</Checkbox>
+                      </div>
+                    </Checkbox.Group>
+                  </div>
+                )}>
+                  <Badge count={statusFilter.length} offset={[-5, 5]}>
                     <Button size="small" icon={<FilterOutlined />}>
-                      생일 월 {birthdayMonthFilter.length > 0 && `(${birthdayMonthFilter.length})`}
+                      조회현황 {statusFilter.length > 0 && `(${statusFilter.length})`}
                     </Button>
                   </Badge>
                 </Dropdown>
 
-                {/* 쿠폰 필터 */}
-                <Dropdown
-                  trigger={['click']}
-                  dropdownRender={() => (
-                    <div style={{
-                      backgroundColor: 'white',
-                      border: '1px solid #d9d9d9',
-                      borderRadius: 6,
-                      padding: '8px',
-                      boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-                      maxHeight: '400px',
-                      overflowY: 'auto'
-                    }}>
-                      <Checkbox.Group
-                        value={couponFilter}
-                        onChange={(values) => setCouponFilter(values as string[])}
-                      >
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                          <Checkbox value="has_coupon">쿠폰 있음</Checkbox>
-                          <Checkbox value="no_coupon">쿠폰 없음</Checkbox>
-                          {availableCouponTypes.length > 0 && <div style={{ borderTop: '1px solid #d9d9d9', margin: '4px 0' }} />}
-                          {availableCouponTypes.map(couponType => (
-                            <Checkbox key={couponType} value={couponType}>
-                              {couponType}
-                            </Checkbox>
-                          ))}
-                        </div>
-                      </Checkbox.Group>
-                    </div>
-                  )}
-                >
+                {/* 조회 일자 (from ~ to) */}
+                <Space size={2}>
+                  <DatePicker
+                    size="small"
+                    style={{ width: 105 }}
+                    value={fetchDateFrom ? dayjs(fetchDateFrom) : null}
+                    placeholder="조회일 이후"
+                    onChange={date => setFetchDateFrom(date ? date.format('YYYY-MM-DD') : null)}
+                    allowClear
+                  />
+                  <span style={{ fontSize: 11, color: '#aaa' }}>~</span>
+                  <DatePicker
+                    size="small"
+                    style={{ width: 105 }}
+                    value={fetchDateTo ? dayjs(fetchDateTo) : null}
+                    placeholder="조회일 이전"
+                    onChange={date => setFetchDateTo(date ? date.format('YYYY-MM-DD') : null)}
+                    allowClear
+                  />
+                </Space>
+
+                {/* 포인트 */}
+                <Dropdown trigger={['click']} dropdownRender={() => (
+                  <div style={{ backgroundColor: 'white', border: '1px solid #d9d9d9', borderRadius: 6, padding: '10px 12px', boxShadow: '0 2px 8px rgba(0,0,0,0.15)', width: 200 }}>
+                    <div style={{ marginBottom: 8, fontSize: 12, color: '#888' }}>포인트 범위</div>
+                    <Space size={6}>
+                      <Input
+                        placeholder="최소P"
+                        value={minPoints}
+                        onChange={e => setMinPoints(e.target.value.replace(/\D/g, ''))}
+                        style={{ width: 84 }}
+                        size="small"
+                        allowClear
+                      />
+                      <span style={{ color: '#aaa' }}>~</span>
+                      <Input
+                        placeholder="최대P"
+                        value={maxPoints}
+                        onChange={e => setMaxPoints(e.target.value.replace(/\D/g, ''))}
+                        style={{ width: 84 }}
+                        size="small"
+                        allowClear
+                      />
+                    </Space>
+                  </div>
+                )}>
+                  <Badge dot={!!(minPoints || maxPoints)} offset={[-4, 4]}>
+                    <Button size="small" icon={<FilterOutlined />}>
+                      포인트 {(minPoints || maxPoints) ? `(${minPoints||'0'}~${maxPoints||'∞'})` : ''}
+                    </Button>
+                  </Badge>
+                </Dropdown>
+
+                {/* 쿠폰 */}
+                <Dropdown trigger={['click']} dropdownRender={() => (
+                  <div style={{ backgroundColor: 'white', border: '1px solid #d9d9d9', borderRadius: 6, padding: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+                    <Checkbox.Group value={couponFilter} onChange={v => setCouponFilter(v as string[])}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {COUPON_CATEGORIES.map(cat => (
+                          <Checkbox key={cat.key} value={cat.key}>{cat.label}</Checkbox>
+                        ))}
+                      </div>
+                    </Checkbox.Group>
+                  </div>
+                )}>
                   <Badge count={couponFilter.length} offset={[-5, 5]}>
                     <Button size="small" icon={<FilterOutlined />}>
                       쿠폰 {couponFilter.length > 0 && `(${couponFilter.length})`}
@@ -1456,127 +1805,61 @@ const AdidasAccountListPage: React.FC = () => {
                   </Badge>
                 </Dropdown>
 
-                {/* 상태 필터 */}
-                <Dropdown
-                  trigger={['click']}
-                  dropdownRender={() => (
-                    <div style={{
-                      backgroundColor: 'white',
-                      border: '1px solid #d9d9d9',
-                      borderRadius: 6,
-                      padding: '8px',
-                      boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
-                    }}>
-                      <Checkbox.Group
-                        value={statusFilter}
-                        onChange={(values) => setStatusFilter(values as string[])}
-                      >
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                          <Checkbox value="info_error">정보 조회 오류</Checkbox>
-                          <Checkbox value="coupon_error">쿠폰 발급 실패</Checkbox>
-                          <Checkbox value="success">조회 완료</Checkbox>
-                          <Checkbox value="processing">조회 중</Checkbox>
-                        </div>
-                      </Checkbox.Group>
-                    </div>
-                  )}
-                >
-                  <Badge count={statusFilter.length} offset={[-5, 5]}>
+                {/* 생일 월 */}
+                <Dropdown trigger={['click']} dropdownRender={() => (
+                  <div style={{ backgroundColor: 'white', border: '1px solid #d9d9d9', borderRadius: 6, padding: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+                    <Checkbox.Group value={birthdayMonthFilter} onChange={v => setBirthdayMonthFilter(v as string[])}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                        {Array.from({ length: 12 }, (_, i) => (
+                          <Checkbox key={i+1} value={String(i+1)}>{i+1}월</Checkbox>
+                        ))}
+                      </div>
+                    </Checkbox.Group>
+                  </div>
+                )}>
+                  <Badge count={birthdayMonthFilter.length} offset={[-5, 5]}>
                     <Button size="small" icon={<FilterOutlined />}>
-                      상태 {statusFilter.length > 0 && `(${statusFilter.length})`}
+                      생일 {birthdayMonthFilter.length > 0 && `(${birthdayMonthFilter.length})`}
                     </Button>
                   </Badge>
                 </Dropdown>
+
+                {/* 필터 초기화 */}
+                {(activeFilter !== 'active' || emailTypeFilter !== 'all' || fetchDateFrom || fetchDateTo || statusFilter.length > 0 || couponFilter.length > 0 || minPoints || maxPoints || birthdayMonthFilter.length > 0) && (
+                  <Button size="small" onClick={() => { setActiveFilter('active'); setEmailTypeFilter('all'); setFetchDateFrom(null); setFetchDateTo(null); setStatusFilter([]); setCouponFilter([]); setMinPoints(''); setMaxPoints(''); setBirthdayMonthFilter([]); }}>
+                    초기화
+                  </Button>
+                )}
               </Space>
 
               {/* 2줄 오른쪽: 선택 시 활성화 버튼 */}
               {selectedRowKeys.length > 0 && (
-                <Space size="middle">
+                <Space size={8} align="center">
                   <span style={{ color: '#666', fontWeight: 500, fontSize: '13px' }}>
                     {selectedRowKeys.length}개 선택
                   </span>
                   <Button
-                    icon={<GlobalOutlined />}
-                    onClick={handleBulkWebFetchInfo}
-                    size="small"
-                    style={{
-                      backgroundColor: '#1890ff',
-                      color: '#fff',
-                      border: 'none'
-                    }}
-                  >
-                    웹 정보조회
-                  </Button>
-                  <Button
-                    icon={<MobileOutlined />}
-                    onClick={handleBulkFetchInfo}
-                    size="small"
-                    style={{
-                      backgroundColor: '#4a5f7f',
-                      color: '#fff',
-                      border: 'none'
-                    }}
-                  >
-                    모바일 정보조회
-                  </Button>
-                  <Button
-                    onClick={handleBulkIssueCoupon}
-                    size="small"
-                    style={{
-                      backgroundColor: '#4a5f7f',
-                      color: '#fff',
-                      border: 'none'
-                    }}
-                  >
-                    선택 쿠폰발급
-                  </Button>
-                  <Button
-                    onClick={handleBulkGenerateBarcode}
-                    size="small"
-                    style={{
-                      backgroundColor: '#4a5f7f',
-                      color: '#fff',
-                      border: 'none'
-                    }}
-                  >
-                    선택 바코드 생성
-                  </Button>
-                  <Button
                     icon={<DownloadOutlined />}
                     onClick={handleBulkDownloadBarcode}
                     size="small"
-                    style={{
-                      backgroundColor: '#237804',
-                      color: '#fff',
-                      border: 'none'
-                    }}
+                    style={{ backgroundColor: '#237804', color: '#fff', border: 'none' }}
                   >
-                    선택 바코드 다운로드
+                    바코드 다운로드
                   </Button>
-                  <Button
-                    icon={<CheckCircleOutlined />}
-                    onClick={handleBulkActivate}
-                    size="small"
-                    style={{
-                      backgroundColor: '#52c41a',
-                      color: '#fff',
-                      border: 'none'
-                    }}
-                  >
-                    선택 활성화
-                  </Button>
-                  <Button
-                    icon={<CloseCircleOutlined />}
-                    onClick={handleBulkDeactivate}
-                    size="small"
-                    style={{
-                      backgroundColor: '#faad14',
-                      color: '#fff',
-                      border: 'none'
-                    }}
-                  >
-                    선택 비활성화
-                  </Button>
+                  {/* 활성/비활성 토글 */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '0 4px', border: '1px solid #d9d9d9', borderRadius: 6, background: '#fafafa', height: 24 }}>
+                    <span style={{ fontSize: 11, color: '#666' }}>비활성</span>
+                    <Switch
+                      size="small"
+                      checked={bulkActiveToggle}
+                      onChange={(checked) => {
+                        setBulkActiveToggle(checked);
+                        if (checked) handleBulkActivate();
+                        else handleBulkDeactivate();
+                      }}
+                    />
+                    <span style={{ fontSize: 11, color: '#666' }}>활성</span>
+                  </div>
                   <Popconfirm
                     title={`선택한 ${selectedRowKeys.length}개 계정을 삭제하시겠습니까?`}
                     onConfirm={handleBulkDelete}
@@ -1584,7 +1867,7 @@ const AdidasAccountListPage: React.FC = () => {
                     cancelText="취소"
                   >
                     <Button danger icon={<DeleteOutlined />} size="small">
-                      선택 삭제
+                      삭제
                     </Button>
                   </Popconfirm>
                 </Space>
@@ -1594,31 +1877,337 @@ const AdidasAccountListPage: React.FC = () => {
         }
       >
 
-        <Table
-          columns={columns}
-          dataSource={filteredAccounts}
-          rowKey="id"
-          loading={loading}
-          rowSelection={{
-            selectedRowKeys,
-            onChange: (selectedKeys) => setSelectedRowKeys(selectedKeys),
-          }}
-          scroll={{ x: 'max-content' }}
-          pagination={{
-            current: currentPage,
-            pageSize: pageSize,
-            pageSizeOptions: ['20', '50', '100', '200', '500'],
-            showSizeChanger: true,
-            showTotal: (total) => `총 ${total}개`,
-            onChange: (page, size) => {
-              setCurrentPage(page);
-              if (size !== pageSize) {
-                setPageSize(size);
-                setCurrentPage(1); // 페이지 크기 변경 시 1페이지로
-              }
-            },
-          }}
-        />
+        {viewMode === 'card' ? (
+          /* ===== 카드 뷰 ===== */
+          <div>
+            {/* 만료 임박 쿠폰 알림 배너 - 종류별 그룹 */}
+            {groupedExpiringAlerts.length > 0 && (
+              <div style={{ marginBottom: 12, padding: '8px 12px', backgroundColor: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#92400e', marginBottom: 8 }}>
+                  ⚠️ 만료 임박 쿠폰 {expiringCouponAlerts.length}개 (7일 이내)
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {groupedExpiringAlerts.map(([typeName, items]) => (
+                    <div
+                      key={typeName}
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'row',
+                        border: '1.5px solid #ef4444',
+                        borderRadius: 5,
+                        overflow: 'hidden',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {/* 왼쪽: 종류명 + 개수 */}
+                      <div style={{
+                        background: '#166534',
+                        padding: '4px 8px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        minWidth: 48,
+                      }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap' }}>{typeName}</span>
+                        <span style={{ fontSize: 10, color: '#bbf7d0', whiteSpace: 'nowrap' }}>×{items.length}</span>
+                      </div>
+                      {/* 오른쪽: 쿠폰 목록 (코드 + 만료일) */}
+                      <div style={{ background: '#fef9c3', padding: '3px 6px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 2 }}>
+                        {items.map((a, j) => {
+                          const expiryShort = a.expiry ? a.expiry.slice(5).replace('-', '/') : '-';
+                          return (
+                            <div key={j} style={{ display: 'flex', alignItems: 'center', gap: 4, lineHeight: 1.2 }}>
+                              <span style={{ fontSize: 9, fontWeight: 700, color: '#dc2626', whiteSpace: 'nowrap' }}>{expiryShort}</span>
+                              {a.code && (
+                                <span
+                                  onClick={() => { navigator.clipboard.writeText(a.code!); message.success('코드 복사'); }}
+                                  style={{ fontSize: 8, color: '#713f12', fontFamily: 'monospace', whiteSpace: 'nowrap', cursor: 'pointer', textDecoration: 'underline dotted' }}
+                                >{a.code}</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {loading && <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>불러오는 중...</div>}
+            {!loading && filteredAccounts.length === 0 && (
+              <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>계정이 없습니다</div>
+            )}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))',
+              gap: 10,
+              padding: '4px 0',
+              alignItems: 'start',
+            }}>
+              {filteredAccounts
+                .slice((currentPage - 1) * pageSize, currentPage * pageSize)
+                .map((record) => {
+                  const isSelected = selectedRowKeys.includes(record.id);
+
+                  // 가장 최근 상태 문자열 기준으로 overallStatus 결정
+                  const mostRecentStatus = getMostRecentStatusStr(record);
+                  let overallStatus: 'success' | 'error' | 'none' = 'none';
+                  if (mostRecentStatus) {
+                    const isErr = mostRecentStatus.includes('오류') || mostRecentStatus.includes('에러') ||
+                      mostRecentStatus.includes('차단') || mostRecentStatus.includes('비밀번호') ||
+                      mostRecentStatus.includes('BOT') || mostRecentStatus.includes('틀림') ||
+                      mostRecentStatus.includes('중...');
+                    const isOk = !isErr && (
+                      mostRecentStatus.includes('완료') || mostRecentStatus.includes('미경과') ||
+                      mostRecentStatus.includes('포인트 부족') || mostRecentStatus.includes('버튼 없음') ||
+                      mostRecentStatus.includes('발급 실패')
+                    );
+                    if (isErr) overallStatus = 'error';
+                    else if (isOk) overallStatus = 'success';
+                  }
+
+                  const statusMap = {
+                    success: { bg: '#16a34a', label: '완료' },
+                    error:   { bg: '#dc2626', label: '오류' },
+                    none:    { bg: '#9ca3af', label: '-' },
+                  };
+                  const { bg: statusBg, label: statusLabel } = statusMap[overallStatus];
+
+                  const latestDate = getLatestStatusDate(record);
+                  const dateStr = latestDate
+                    ? `${latestDate.getMonth()+1}/${latestDate.getDate()} ${String(latestDate.getHours()).padStart(2,'0')}:${String(latestDate.getMinutes()).padStart(2,'0')}`
+                    : null;
+
+                  const bdParts = record.birthday?.split('-');
+                  const bdShort = bdParts?.length === 3 ? `${bdParts[1]}/${bdParts[2]}` : null;
+
+                  let sortedVouchers: any[] = [];
+                  try {
+                    if (record.owned_vouchers) {
+                      const raw = JSON.parse(record.owned_vouchers);
+                      sortedVouchers = sortVouchers(raw.map((v: any, i: number) => ({ ...normalizeVoucher(v), _idx: i })));
+                    }
+                  } catch {}
+
+                  // 공식이메일 vs 캐치올 판별
+                  const knownDomains = ['gmail.com', 'naver.com', 'kakao.com', 'daum.net', 'hanmail.net', 'hotmail.com', 'outlook.com', 'yahoo.com', 'icloud.com', 'me.com', 'live.com', 'msn.com'];
+                  const emailDomain = record.email.split('@')[1]?.toLowerCase() || '';
+                  const isOfficialEmail = knownDomains.includes(emailDomain);
+
+                  // 헤더 테마
+                  // 공식이메일: 하늘색 계열, 캐치올: 연보라 계열 (둘 다 밝은 파스텔)
+                  const hdrBg     = !record.is_active ? '#f4f4f4' : isOfficialEmail ? '#f0f9ff' : '#faf5ff';
+                  const hdrBorder = !record.is_active ? '#e0e0e0' : isOfficialEmail ? '#bae6fd' : '#e9d5ff';
+                  const hdrEmail  = !record.is_active ? '#777' : isOfficialEmail ? '#0369a1' : '#6d28d9';
+                  const hdrPw     = !record.is_active ? '#999' : '#374151';
+                  const hdrDate   = !record.is_active ? '#999' : '#374151';
+
+                  return (
+                    <div
+                      key={record.id}
+                      onClick={() => { setDetailAccount(record); setDetailModalVisible(true); }}
+                      style={{
+                        width: '100%',
+                        border: isSelected ? '2px solid #1890ff' : '1px solid #e2e8f0',
+                        borderRadius: 8,
+                        backgroundColor: '#fff',
+                        boxShadow: isSelected ? '0 0 0 3px #bfdbfe' : '0 1px 3px rgba(0,0,0,0.07)',
+                        overflow: 'hidden',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        cursor: 'pointer',
+                        opacity: record.is_active ? 1 : 0.65,
+                      }}
+                    >
+                      {/* ── 헤더: 활성상태 + 계정정보 + 조회현황 ── */}
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: '8px 10px 7px',
+                        borderBottom: `1px solid ${hdrBorder}`,
+                        backgroundColor: hdrBg,
+                        gap: 7,
+                      }}>
+                        {/* 체크박스 + 활성 dot */}
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, flexShrink: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              setSelectedRowKeys(prev =>
+                                e.target.checked ? [...prev, record.id] : prev.filter(k => k !== record.id)
+                              );
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ cursor: 'pointer', width: 13, height: 13 }}
+                          />
+                          <span style={{
+                            width: 7, height: 7, borderRadius: '50%',
+                            backgroundColor: record.is_active ? '#22c55e' : '#ef4444',
+                            display: 'inline-block',
+                          }} />
+                        </div>
+
+                        {/* 이메일 + 비밀번호 */}
+                        <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.4 }}>
+                            <span
+                              style={{ color: hdrEmail, cursor: 'copy' }}
+                              onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(record.email); message.success('이메일 복사'); }}
+                            >{record.email}</span>
+                          </div>
+                          <div style={{ fontSize: 10, fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.3, marginTop: 1 }}>
+                            <span
+                              style={{ color: hdrPw, cursor: 'copy' }}
+                              onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(record.password); message.success('비밀번호 복사'); }}
+                            >{record.password}</span>
+                          </div>
+                        </div>
+
+                        {/* 조회일자 + 상태뱃지 */}
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3, flexShrink: 0 }}>
+                          {dateStr && <span style={{ fontSize: 10, fontWeight: 700, color: hdrDate, whiteSpace: 'nowrap' }}>{dateStr}</span>}
+                          <span style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 3,
+                            fontSize: 10, fontWeight: 700,
+                            padding: '1px 7px', borderRadius: 8,
+                            backgroundColor: statusBg,
+                            color: '#fff',
+                          }}>
+                            {statusLabel}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* ── 정보 줄: 포인트 | 생일 | 바코드 (3등분) ── */}
+                      <div style={{
+                        display: 'flex',
+                        borderBottom: '1px solid #ebebeb',
+                        backgroundColor: '#f7f8fa',
+                      }}>
+                        <div style={{ flex: 1, padding: '4px 6px', textAlign: 'center', borderRight: '1px solid #ebebeb' }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: record.current_points != null && record.current_points > 0 ? '#2563eb' : '#6b7280' }}>
+                            {record.current_points != null ? `${record.current_points.toLocaleString()}P` : '-P'}
+                          </span>
+                        </div>
+                        <div style={{ flex: 1, padding: '4px 6px', textAlign: 'center', borderRight: '1px solid #ebebeb' }}>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: '#111827' }}>🎂 {bdShort || '-'}</span>
+                        </div>
+                        <div style={{ flex: 1, padding: '4px 6px', textAlign: 'center', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <span style={{ fontSize: 9, fontWeight: 700, color: '#111827', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {record.adikr_barcode || '-'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* ── 쿠폰 목록 (한 줄에 2개) ── */}
+                      <div style={{ padding: '6px 8px 7px', display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        {sortedVouchers.length === 0 ? (
+                          <span style={{ fontSize: 10, color: '#bbb', padding: '2px 2px' }}>쿠폰 없음</span>
+                        ) : (
+                          <>
+                            {sortedVouchers.slice(0, 2).map((v) => {
+                              const info = getCouponDisplayInfo(v.description);
+                              const expired = isVoucherExpired(v.expiry);
+                              const expiryShort = v.expiry && v.expiry !== 'N/A' ? v.expiry.slice(5).replace('-', '/') : '-';
+                              const bgMain = v.sold || expired ? '#6b7280' : '#166534';
+                              const bgRight = v.sold || expired ? '#d4d4d4' : '#fef9c3';
+                              const expiryColor = v.sold || expired ? '#525252' : '#713f12';
+                              const expiringSoon = isVoucherExpiringSoon(v.expiry);
+                              return (
+                                <div
+                                  key={v._idx}
+                                  style={{
+                                    display: 'flex',
+                                    width: 'calc(50% - 2px)',
+                                    height: 30,
+                                    borderRadius: 3,
+                                    overflow: 'hidden',
+                                    cursor: 'default',
+                                    border: expiringSoon && !v.sold && !expired ? '1.5px solid #ef4444' : '1.5px solid transparent',
+                                    opacity: v.sold || expired ? 0.6 : 1,
+                                    boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                                    flexShrink: 0,
+                                  }}
+                                >
+                                  <div style={{ background: bgMain, padding: '2px 6px', display: 'flex', flexDirection: 'column', justifyContent: 'center', flex: 1, position: 'relative', minWidth: 0 }}>
+                                    <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.3 }}>{info.name}</span>
+                                    {v.code && (
+                                      <span
+                                        onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(v.code); message.success('코드 복사'); }}
+                                        style={{ fontSize: 8, color: '#fef9c3', fontFamily: 'monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.2, cursor: 'pointer' }}
+                                      >{v.code}</span>
+                                    )}
+                                    {v.sold && (
+                                      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.55)', fontSize: 9, color: '#fff', fontWeight: 600 }}>
+                                        {v.sold_to ? `→${v.sold_to}` : '판매'}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div style={{ background: bgRight, width: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', borderLeft: '1px dashed #a3a3a3', flexShrink: 0 }}>
+                                    <span style={{ fontSize: 9, fontWeight: 700, color: expiryColor, textAlign: 'center', lineHeight: 1.2, whiteSpace: 'nowrap' }}>{expiryShort}</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            {sortedVouchers.length > 2 && (
+                              <div style={{ width: '100%', fontSize: 9, color: '#4b5563', lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                외 {sortedVouchers.slice(2).map(v => getCouponDisplayInfo(v.description).name).join(' · ')} 총 {sortedVouchers.length}개
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+            {/* 페이지네이션 */}
+            <div style={{ marginTop: 16, textAlign: 'right' }}>
+              <Space>
+                <span style={{ color: '#666', fontSize: 13 }}>총 {filteredAccounts.length}개</span>
+                <Select value={pageSize} onChange={(v) => { setPageSize(v); setCurrentPage(1); }} size="small" style={{ width: 90 }}>
+                  {[20, 50, 100, 200].map(n => <Option key={n} value={n}>{n}개씩</Option>)}
+                </Select>
+                <Button size="small" disabled={currentPage === 1} onClick={() => setCurrentPage(1)}>«</Button>
+                <Button size="small" disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)}>‹</Button>
+                <span style={{ fontSize: 13, padding: '0 8px' }}>{currentPage} / {Math.max(1, Math.ceil(filteredAccounts.length / pageSize))}</span>
+                <Button size="small" disabled={currentPage >= Math.ceil(filteredAccounts.length / pageSize)} onClick={() => setCurrentPage(p => p + 1)}>›</Button>
+                <Button size="small" disabled={currentPage >= Math.ceil(filteredAccounts.length / pageSize)} onClick={() => setCurrentPage(Math.ceil(filteredAccounts.length / pageSize))}>»</Button>
+              </Space>
+            </div>
+          </div>
+        ) : (
+          /* ===== 표 뷰 (백업) ===== */
+          <Table
+            columns={columns}
+            dataSource={filteredAccounts}
+            rowKey="id"
+            loading={loading}
+            rowSelection={{
+              selectedRowKeys,
+              onChange: (selectedKeys) => setSelectedRowKeys(selectedKeys),
+            }}
+            scroll={{ x: 'max-content' }}
+            pagination={{
+              current: currentPage,
+              pageSize: pageSize,
+              pageSizeOptions: ['20', '50', '100', '200', '500'],
+              showSizeChanger: true,
+              showTotal: (total) => `총 ${total}개`,
+              onChange: (page, size) => {
+                setCurrentPage(page);
+                if (size !== pageSize) {
+                  setPageSize(size);
+                  setCurrentPage(1);
+                }
+              },
+            }}
+          />
+        )}
       </Card>
 
       <Modal
@@ -2193,6 +2782,257 @@ const AdidasAccountListPage: React.FC = () => {
             </div>
           )}
         </div>
+      </Modal>
+
+      {/* 카드 상세 팝업 */}
+      <Modal
+        title={null}
+        open={detailModalVisible}
+        onCancel={() => { setDetailModalVisible(false); setDetailAccount(null); }}
+        footer={null}
+        width={500}
+        styles={{ body: { padding: 0 } }}
+      >
+        {detailAccount && (() => {
+          const acc = detailAccount;
+          const allStatusValues = [
+            acc.web_fetch_status, acc.mobile_fetch_status,
+            acc.web_issue_status, acc.mobile_issue_status,
+            (!acc.web_fetch_status && !acc.mobile_fetch_status) ? acc.fetch_status : null,
+          ].filter(Boolean) as string[];
+
+          let sortedVouchers: any[] = [];
+          try {
+            if (acc.owned_vouchers) {
+              const raw = JSON.parse(acc.owned_vouchers);
+              sortedVouchers = sortVouchers(raw.map((v: any, i: number) => ({ ...normalizeVoucher(v), _idx: i })));
+            }
+          } catch {}
+
+          const StatusRow = ({ label, value }: { label: string; value?: string | null }) => {
+            if (!value) return null;
+            const isError = value.includes('실패') || value.includes('오류') || value.includes('에러') || value.includes('차단') || value.includes('BOT');
+            const isSuccess = value.includes('완료');
+            const isWarning = value.includes('미경과') || value.includes('부족') || value.includes('버튼 없음');
+            const color = isError ? '#ff4d4f' : isSuccess ? '#52c41a' : isWarning ? '#faad14' : '#666';
+            return (
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #f5f5f5' }}>
+                <span style={{ fontSize: 12, color: '#999', minWidth: 90 }}>{label}</span>
+                <span style={{ fontSize: 12, color, fontWeight: isError || isSuccess ? 600 : 400, textAlign: 'right', flex: 1 }}>{value}</span>
+              </div>
+            );
+          };
+
+          return (
+            <div>
+              {/* 헤더 */}
+              <div style={{
+                padding: '16px 20px',
+                background: acc.is_active ? '#1e3a5f' : '#4a4a4a',
+                borderRadius: '8px 8px 0 0',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}>
+                <div>
+                  <div style={{ color: '#fff', fontWeight: 700, fontSize: 15 }}>{acc.email}</div>
+                  <div style={{ color: '#aac4e0', fontSize: 12, marginTop: 2 }}>{acc.name || ''} {acc.phone || ''}</div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{
+                    width: 10, height: 10, borderRadius: '50%',
+                    backgroundColor: acc.is_active ? '#52c41a' : '#ff4d4f',
+                    display: 'inline-block',
+                  }} />
+                  <span style={{ color: '#aac4e0', fontSize: 12 }}>{acc.is_active ? '활성' : '비활성'}</span>
+                </div>
+              </div>
+
+              {/* 본문 */}
+              <div style={{ padding: '16px 20px' }}>
+                {/* 기본 정보 */}
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: '#999', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 0.5 }}>계정 정보</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #f5f5f5' }}>
+                    <span style={{ fontSize: 12, color: '#999', minWidth: 90 }}>비밀번호</span>
+                    <span
+                      style={{ fontSize: 12, color: '#333', fontFamily: 'monospace', cursor: 'pointer' }}
+                      onClick={() => { navigator.clipboard.writeText(acc.password); message.success('비밀번호 복사'); }}
+                    >{acc.password} 📋</span>
+                  </div>
+                  {acc.birthday && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #f5f5f5' }}>
+                      <span style={{ fontSize: 12, color: '#999', minWidth: 90 }}>생일</span>
+                      <span style={{ fontSize: 12, color: '#333' }}>{acc.birthday}</span>
+                    </div>
+                  )}
+                  {acc.current_points != null && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #f5f5f5' }}>
+                      <span style={{ fontSize: 12, color: '#999', minWidth: 90 }}>포인트</span>
+                      <span style={{ fontSize: 12, color: '#1890ff', fontWeight: 700 }}>{acc.current_points.toLocaleString()}P</span>
+                    </div>
+                  )}
+                  {acc.adikr_barcode && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #f5f5f5', alignItems: 'center' }}>
+                      <span style={{ fontSize: 12, color: '#999', minWidth: 90 }}>ADIKR 바코드</span>
+                      <span
+                        style={{ fontSize: 11, color: '#333', fontFamily: 'monospace', cursor: 'pointer' }}
+                        onClick={() => { navigator.clipboard.writeText(acc.adikr_barcode!); message.success('바코드 복사'); }}
+                      >{acc.adikr_barcode} 📋</span>
+                    </div>
+                  )}
+                  {acc.memo && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #f5f5f5' }}>
+                      <span style={{ fontSize: 12, color: '#999', minWidth: 90 }}>메모</span>
+                      <span style={{ fontSize: 12, color: '#666' }}>{acc.memo}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* 바코드 이미지 */}
+                {acc.barcode_image_url && (
+                  <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <img
+                      src={getStaticUrl(acc.barcode_image_url)}
+                      alt="barcode"
+                      style={{ maxWidth: '100%', height: 'auto', maxHeight: 64, borderRadius: 4, flex: 1 }}
+                    />
+                    <Button
+                      size="small"
+                      icon={<DownloadOutlined />}
+                      onClick={async () => {
+                        try {
+                          const res = await fetch(getStaticUrl(acc.barcode_image_url!));
+                          const blob = await res.blob();
+                          const objectUrl = URL.createObjectURL(blob);
+                          const link = document.createElement('a');
+                          link.href = objectUrl;
+                          link.download = `barcode_${acc.email}.png`;
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                          URL.revokeObjectURL(objectUrl);
+                        } catch {
+                          message.error('바코드 다운로드에 실패했습니다');
+                        }
+                      }}
+                      style={{ flexShrink: 0 }}
+                    />
+                  </div>
+                )}
+
+                {/* 조회 상태 */}
+                {allStatusValues.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: '#999', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 0.5 }}>조회 상태</div>
+                    <StatusRow label="웹 정보조회" value={acc.web_fetch_status} />
+                    <StatusRow label="웹 쿠폰발급" value={acc.web_issue_status} />
+                    <StatusRow label="모바일 정보조회" value={acc.mobile_fetch_status} />
+                    <StatusRow label="모바일 쿠폰발급" value={acc.mobile_issue_status} />
+                    {!acc.web_fetch_status && !acc.mobile_fetch_status && (
+                      <StatusRow label="조회 상태" value={acc.fetch_status} />
+                    )}
+                  </div>
+                )}
+
+                {/* 보유 쿠폰 */}
+                {sortedVouchers.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: '#999', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 0.5 }}>보유 쿠폰 ({sortedVouchers.length}개)</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                      {sortedVouchers.map((v) => {
+                        const info = getCouponDisplayInfo(v.description);
+                        const expired = isVoucherExpired(v.expiry);
+                        const expiryShort = v.expiry && v.expiry !== 'N/A' ? v.expiry.slice(5).replace('-', '/') : '-';
+                        const bgMain = v.sold || expired ? '#6b7280' : '#166534';
+                        const bgRight = v.sold || expired ? '#d4d4d4' : '#fef9c3';
+                        const expiryColor = v.sold || expired ? '#525252' : '#713f12';
+                        return (
+                          <div key={v._idx} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                            {/* 쿠폰 카드 */}
+                            <div
+                              style={{
+                                display: 'flex', height: 40, borderRadius: 5, overflow: 'hidden', flex: 1,
+                                opacity: v.sold || expired ? 0.65 : 1,
+                                boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+                              }}
+                            >
+                              <div style={{ background: bgMain, padding: '4px 10px', display: 'flex', flexDirection: 'column', justifyContent: 'center', flex: 1, position: 'relative', minWidth: 0 }}>
+                                <span style={{ fontSize: 12, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{info.name}</span>
+                                {v.code && (
+                                  <span
+                                    onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(v.code); message.success('코드 복사'); }}
+                                    style={{ fontSize: 9, background: '#fef9c3', color: '#713f12', borderRadius: 2, padding: '0 3px', marginTop: 1, fontFamily: 'monospace', cursor: 'pointer', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}
+                                  >{v.code} 📋</span>
+                                )}
+                                {v.sold && (
+                                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.55)', fontSize: 10, color: '#fff', fontWeight: 600 }}>
+                                    {v.sold_to ? `→ ${v.sold_to}` : '판매완료'}
+                                  </div>
+                                )}
+                              </div>
+                              <div style={{ background: bgRight, width: 38, display: 'flex', alignItems: 'center', justifyContent: 'center', borderLeft: '1px dashed #a3a3a3', flexShrink: 0 }}>
+                                <span style={{ fontSize: 9, fontWeight: 700, color: expiryColor, textAlign: 'center', lineHeight: 1.3 }}>{expiryShort}</span>
+                              </div>
+                            </div>
+                            {/* 사용 처리 버튼 */}
+                            <Button
+                              size="small"
+                              onClick={() => handleVoucherClick(acc.id, v._idx, v)}
+                              style={{
+                                flexShrink: 0,
+                                fontSize: 11,
+                                height: 40,
+                                padding: '0 8px',
+                                backgroundColor: v.sold ? '#f5f5f5' : '#1e3a5f',
+                                color: v.sold ? '#999' : '#fff',
+                                border: 'none',
+                                borderRadius: 5,
+                              }}
+                            >
+                              {v.sold ? '취소' : '사용'}
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* 하단 버튼 */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 8, paddingTop: 12, borderTop: '1px solid #f0f0f0' }}>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <Popconfirm
+                      title="이 계정을 삭제하시겠습니까?"
+                      onConfirm={() => {
+                        handleDelete(acc.id);
+                        setDetailModalVisible(false);
+                        setDetailAccount(null);
+                      }}
+                      okText="삭제"
+                      cancelText="취소"
+                    >
+                      <Button danger icon={<DeleteOutlined />}>삭제</Button>
+                    </Popconfirm>
+                    <Button
+                      icon={<EditOutlined />}
+                      onClick={() => {
+                        setDetailModalVisible(false);
+                        setDetailAccount(null);
+                        handleEdit(acc);
+                      }}
+                    >
+                      수정
+                    </Button>
+                  </div>
+                  <Button onClick={() => { setDetailModalVisible(false); setDetailAccount(null); }}>
+                    닫기
+                  </Button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </Modal>
     </div>
   );

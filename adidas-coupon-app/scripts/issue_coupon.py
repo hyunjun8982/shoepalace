@@ -227,52 +227,40 @@ def web_login_and_issue_coupon(email: str, password: str, coupon_type: str):
 
     try:
         print("\n[1/5] 브라우저 시작...")
-        # Chrome 옵션 설정 (최소한의 옵션으로 안정성 확보)
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 print(f"  [시도 {attempt+1}/{max_retries}] Chrome 초기화 중...")
                 options = uc.ChromeOptions()
-                options.add_argument('--incognito')  # 시크릿 모드
+                options.add_argument('--incognito')
                 options.add_argument('--window-size=1280,900')
                 options.add_argument('--lang=ko-KR')
                 options.add_argument('--disable-blink-features=AutomationControlled')
                 options.add_argument('--no-first-run')
                 options.add_argument('--no-default-browser-check')
                 options.add_argument('--disable-popup-blocking')
-
-                # 로그 레벨 설정으로 Chrome 내부 오류 확인
                 options.add_argument('--log-level=3')
                 options.add_argument('--silent')
 
-                print("  ChromeDriver 시작 중...")
-                # driver_executable_path=None으로 설정하여 올바른 버전 자동 다운로드
                 driver = uc.Chrome(
                     options=options,
                     use_subprocess=True,
                     driver_executable_path=None,
-                    version_main=144  # Chrome 144 버전 명시
                 )
-                print("  ChromeDriver 시작 완료")
+                time.sleep(2)
 
-                time.sleep(2)  # 브라우저 안정화 대기
-
-                # 윈도우 핸들 확인 (브라우저 살아있는지)
-                print("  브라우저 핸들 확인 중...")
                 for hc in range(5):
                     try:
                         handle = driver.current_window_handle
-                        print(f"  브라우저 핸들 확인 성공: {handle[:20]}...")
                         break
                     except Exception as he:
                         if hc < 4:
-                            print(f"    핸들 확인 재시도 {hc+1}/5...")
                             time.sleep(1)
                         else:
                             raise Exception(f"윈도우 핸들 확인 실패: {he}")
 
                 print("  브라우저 초기화 성공")
-                break  # 성공
+                break
             except Exception as e:
                 print(f"  [오류] 드라이버 초기화 실패: {e}")
                 import traceback
@@ -284,7 +272,6 @@ def web_login_and_issue_coupon(email: str, password: str, coupon_type: str):
                     pass
                 driver = None
                 if attempt < max_retries - 1:
-                    print(f"  3초 후 재시도...")
                     time.sleep(3)
                 else:
                     raise Exception(f"브라우저 시작 실패 ({max_retries}회 시도): {e}")
@@ -296,7 +283,6 @@ def web_login_and_issue_coupon(email: str, password: str, coupon_type: str):
         print("  완료")
 
         print("[2/5] 로그인 페이지 이동...")
-        # 페이지 이동 전 브라우저 상태 확인
         for plr in range(3):
             try:
                 _ = driver.current_window_handle

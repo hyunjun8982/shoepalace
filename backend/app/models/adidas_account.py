@@ -36,7 +36,11 @@ class AdidasAccount(Base):
     next_coupon_available_date = Column(String, nullable=True, comment="다음 쿠폰 발급 가능 날짜")
 
     # 조회 현황
-    fetch_status = Column(String, nullable=True, comment="조회 현황")
+    fetch_status = Column(String, nullable=True, comment="조회 현황 (레거시)")
+    web_fetch_status = Column(String, nullable=True, comment="웹브라우저 조회 현황")
+    mobile_fetch_status = Column(String, nullable=True, comment="모바일 조회 현황")
+    web_issue_status = Column(String, nullable=True, comment="웹브라우저 쿠폰 발급 현황")
+    mobile_issue_status = Column(String, nullable=True, comment="모바일 쿠폰 발급 현황")
 
     # 메모
     memo = Column(String, nullable=True, comment="메모")

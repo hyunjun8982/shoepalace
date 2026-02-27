@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.db.database import SessionLocal, engine
-from app.models import User, Brand, Product, NaverShoppingFilter
+from app.models import User, Brand, Product, NaverShoppingFilter, CodefSetting
 from app.core.security import get_password_hash
 from app.models.user import UserRole
 import uuid
@@ -96,6 +96,136 @@ def run_migrations() -> None:
             conn.rollback()
             print(f"Migration skipped or failed: {e}")
 
+        # codef_accounts 테이블 생성 (없으면 생성, user_id 포함)
+        try:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS codef_accounts (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id UUID NOT NULL REFERENCES users(id),
+                    organization VARCHAR(10) NOT NULL,
+                    login_id VARCHAR(200),
+                    card_no VARCHAR(200),
+                    connected_id VARCHAR(200),
+                    owner_name VARCHAR(100),
+                    is_connected BOOLEAN DEFAULT FALSE,
+                    connected_at TIMESTAMP,
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    UNIQUE(user_id, organization)
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_codef_accounts_user_id ON codef_accounts(user_id)"))
+            conn.commit()
+            print("Migration: codef_accounts table ensured")
+        except Exception as e:
+            conn.rollback()
+            print(f"Migration skipped or failed: {e}")
+
+        # codef_accounts에 client_type 컬럼 추가 + unique constraint 변경
+        try:
+            conn.execute(text("ALTER TABLE codef_accounts ADD COLUMN IF NOT EXISTS client_type VARCHAR(1) NOT NULL DEFAULT 'P'"))
+            # 기존 (user_id, organization) constraint 삭제, (user_id, organization, client_type)로 변경
+            conn.execute(text("""
+                DO $$ BEGIN
+                    ALTER TABLE codef_accounts DROP CONSTRAINT IF EXISTS uix_codef_account_user_org;
+                EXCEPTION WHEN OTHERS THEN NULL;
+                END $$;
+            """))
+            conn.execute(text("""
+                DO $$ BEGIN
+                    ALTER TABLE codef_accounts ADD CONSTRAINT uix_codef_account_user_org_type
+                        UNIQUE (user_id, organization, client_type);
+                EXCEPTION WHEN duplicate_object THEN NULL;
+                END $$;
+            """))
+            conn.commit()
+            print("Migration: codef_accounts.client_type column + unique constraint updated")
+        except Exception as e:
+            conn.rollback()
+            print(f"Migration skipped or failed: {e}")
+
+        # codef_accounts에 account_no 컬럼 추가 (은행 계좌번호)
+        try:
+            conn.execute(text("ALTER TABLE codef_accounts ADD COLUMN IF NOT EXISTS account_no VARCHAR(100)"))
+            conn.commit()
+            print("Migration: codef_accounts.account_no column added")
+        except Exception as e:
+            conn.rollback()
+            print(f"Migration skipped or failed: {e}")
+
+        # card_transactions에 user_id, owner_name 컬럼 추가
+        try:
+            conn.execute(text("ALTER TABLE card_transactions ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id)"))
+            conn.execute(text("ALTER TABLE card_transactions ADD COLUMN IF NOT EXISTS owner_name VARCHAR(100)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_card_transactions_user_id ON card_transactions(user_id)"))
+            conn.commit()
+            print("Migration: card_transactions.user_id, owner_name columns added")
+        except Exception as e:
+            conn.rollback()
+            print(f"Migration skipped or failed: {e}")
+
+        # bank_transactions 테이블 생성
+        try:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS bank_transactions (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id UUID REFERENCES users(id),
+                    owner_name VARCHAR(100),
+                    organization VARCHAR(10) NOT NULL,
+                    account_no VARCHAR(50),
+                    account_name VARCHAR(100),
+                    account_holder VARCHAR(100),
+                    tr_date DATE NOT NULL,
+                    tr_time VARCHAR(10),
+                    description1 VARCHAR(200),
+                    description2 VARCHAR(200),
+                    description3 VARCHAR(200),
+                    description4 VARCHAR(200),
+                    tr_amount_out NUMERIC(15,2) NOT NULL DEFAULT 0,
+                    tr_amount_in NUMERIC(15,2) NOT NULL DEFAULT 0,
+                    balance NUMERIC(15,2) NOT NULL DEFAULT 0,
+                    currency VARCHAR(10) DEFAULT 'KRW',
+                    synced_at TIMESTAMP,
+                    raw_data TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    CONSTRAINT uix_bank_transaction_unique UNIQUE (
+                        organization, account_no, tr_date, tr_time,
+                        tr_amount_out, tr_amount_in, balance
+                    )
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_bank_transactions_user_id ON bank_transactions(user_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_bank_transactions_organization ON bank_transactions(organization)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_bank_transactions_tr_date ON bank_transactions(tr_date)"))
+            conn.commit()
+            print("Migration: bank_transactions table created")
+        except Exception as e:
+            conn.rollback()
+            print(f"Migration skipped or failed: {e}")
+
+        # codef_api_logs 테이블 생성 (API 호출 제한 추적)
+        try:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS codef_api_logs (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    endpoint VARCHAR(300) NOT NULL,
+                    user_id UUID,
+                    status_code INTEGER,
+                    res_code VARCHAR(20),
+                    error_message TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_codef_api_logs_created_at ON codef_api_logs(created_at)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_codef_api_logs_user_id ON codef_api_logs(user_id)"))
+            conn.commit()
+            print("Migration: codef_api_logs table created")
+        except Exception as e:
+            conn.rollback()
+            print(f"Migration skipped or failed: {e}")
+
 def init_db() -> None:
     """데이터베이스 초기화"""
     # 테이블 생성 (이미 존재하면 무시)
@@ -167,6 +297,22 @@ def init_db() -> None:
             if not existing_filter:
                 new_filter = NaverShoppingFilter(mall_name=filter_name)
                 db.add(new_filter)
+
+        # CODEF API 기본 설정 생성
+        codef_defaults = [
+            {"setting_key": "client_id", "setting_value": "", "description": "CODEF Client ID", "is_encrypted": False},
+            {"setting_key": "client_secret", "setting_value": "", "description": "CODEF Client Secret", "is_encrypted": True},
+            {"setting_key": "public_key", "setting_value": "", "description": "CODEF RSA Public Key", "is_encrypted": False},
+            {"setting_key": "connected_id", "setting_value": "", "description": "CODEF Connected ID", "is_encrypted": False},
+            {"setting_key": "use_demo", "setting_value": "true", "description": "DEMO 서버 사용 여부 (true/false)", "is_encrypted": False},
+        ]
+        for setting_data in codef_defaults:
+            existing = db.query(CodefSetting).filter(
+                CodefSetting.setting_key == setting_data["setting_key"]
+            ).first()
+            if not existing:
+                new_setting = CodefSetting(**setting_data)
+                db.add(new_setting)
 
         db.commit()
     finally:

@@ -39,6 +39,9 @@ import AdidasComparisonPage from './pages/AdidasComparison/AdidasComparisonPage'
 import PoizonPriceComparisonPage from './pages/Poizon/PoizonPriceComparisonPage';
 import MobilePhotoCapturePage from './pages/Mobile/MobilePhotoCapturePage';
 import MobileReceiptCapturePage from './pages/Mobile/MobileReceiptCapturePage';
+import CardTransactionListPage from './pages/CardTransaction/CardTransactionListPage';
+import BankTransactionListPage from './pages/BankTransaction/BankTransactionListPage';
+import CodefSettingsPage from './pages/Admin/CodefSettingsPage';
 
 // Ant Design 한국어 설정
 const antdConfig = {
@@ -185,6 +188,12 @@ const App: React.FC = () => {
                       <Route path="/chat" element={<ChatListPage />} />
                       <Route path="/chat/:roomId" element={<ChatRoomPage />} />
 
+                      {/* 카드 내역 관리 */}
+                      <Route path="/card-transactions" element={<CardTransactionListPage />} />
+
+                      {/* 은행 거래내역 관리 */}
+                      <Route path="/bank-transactions" element={<BankTransactionListPage />} />
+
                       {/* 정산 관리 */}
                       <Route path="/settlements" element={<SettlementListPage />} />
 
@@ -217,12 +226,12 @@ const App: React.FC = () => {
                       {/* 보고서 */}
                       <Route path="/reports" element={<div>보고서 페이지 (개발 예정)</div>} />
 
-                      {/* 설정 */}
+                      {/* CODEF 설정 (관리자) */}
                       <Route
-                        path="/settings"
+                        path="/settings/codef"
                         element={
                           <ProtectedRoute requiredRole="admin">
-                            <div>설정 페이지 (개발 예정)</div>
+                            <CodefSettingsPage />
                           </ProtectedRoute>
                         }
                       />

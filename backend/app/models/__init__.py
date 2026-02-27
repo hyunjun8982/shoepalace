@@ -11,3 +11,8 @@ from .poizon_product import PoizonProduct
 from .naver_shopping_filter import NaverShoppingFilter
 from .adidas_comparison import AdidasComparisonPurchase, AdidasComparisonSale, AdidasComparisonInventory
 from .poizon_price_watch import PoizonPriceWatch
+from .codef_setting import CodefSetting
+from .codef_account import CodefAccount
+from .card_transaction import CardTransaction
+from .codef_api_log import CodefApiLog
+from .bank_transaction import BankTransaction

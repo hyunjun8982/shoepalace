@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { Form, Input, Button, Card, Typography, message, Space, App } from 'antd';
-import { UserOutlined, LockOutlined, MailOutlined, IdcardOutlined, ArrowLeftOutlined } from '@ant-design/icons';
+import { UserOutlined, LockOutlined, MailOutlined, IdcardOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { userService } from '../../services/user';
 import { UserCreate, UserRole } from '../../types/user';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 const RegisterPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
@@ -60,7 +60,7 @@ const RegisterPage: React.FC = () => {
     <div
       style={{
         minHeight: '100vh',
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        background: '#1a1d2e',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -69,8 +69,8 @@ const RegisterPage: React.FC = () => {
     >
       <Card
         style={{
-          width: 450,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+          width: 400,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
           borderRadius: 8,
         }}
       >
@@ -83,10 +83,7 @@ const RegisterPage: React.FC = () => {
               (e.target as HTMLImageElement).style.display = 'none';
             }}
           />
-          <Title level={2} style={{ margin: 0, color: '#1890ff' }}>
-            회원가입
-          </Title>
-          <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 16 }}>입출고 관리시스템</Text>
+          <Text style={{ display: 'block', fontSize: 18, fontWeight: 500, color: '#262626' }}>회원가입</Text>
         </div>
 
         <Form
@@ -169,7 +166,7 @@ const RegisterPage: React.FC = () => {
             />
           </Form.Item>
 
-          <Form.Item style={{ marginBottom: 16 }}>
+          <Form.Item style={{ marginBottom: 0 }}>
             <Button
               type="primary"
               htmlType="submit"
@@ -177,8 +174,6 @@ const RegisterPage: React.FC = () => {
               size="large"
               block
               style={{
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                border: 'none',
                 height: 48,
                 borderRadius: 6,
               }}
@@ -186,30 +181,15 @@ const RegisterPage: React.FC = () => {
               회원가입
             </Button>
           </Form.Item>
-
-          <Form.Item style={{ marginBottom: 0 }}>
-            <Button
-              type="default"
-              size="large"
-              block
-              icon={<ArrowLeftOutlined />}
-              onClick={() => navigate('/login')}
-              style={{
-                height: 48,
-                borderRadius: 6,
-              }}
-            >
-              로그인으로 돌아가기
-            </Button>
-          </Form.Item>
         </Form>
 
-        <div style={{ marginTop: 16, textAlign: 'center' }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            회원가입 후 구매자 권한이 부여됩니다.
-            <br />
-            추가 권한이 필요한 경우 관리자에게 문의하세요.
-          </Text>
+        <div style={{ marginTop: 24, textAlign: 'center' }}>
+          <Space>
+            <Text type="secondary">이미 계정이 있으신가요?</Text>
+            <Button type="link" onClick={() => navigate('/login')} style={{ padding: 0 }}>
+              로그인
+            </Button>
+          </Space>
         </div>
       </Card>
     </div>

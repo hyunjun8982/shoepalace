@@ -26,3 +26,5 @@ Appium-Python-Client==3.1.1
 # 웹 크롤링 (봇 감지 우회)
 undetected-chromedriver==3.5.5
 selenium==4.16.0
+# CODEF API RSA 암호화
+pycryptodome==3.20.0

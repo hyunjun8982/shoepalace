@@ -786,9 +786,13 @@ def _bulk_extract_accounts_task(account_list: list):
                 if "current_points" in data:
                     account.current_points = data["current_points"]
 
-                # 보유 쿠폰 업데이트
+                # 보유 쿠폰 업데이트 (사라진 코드도 보존 - 오프라인 사용 후 온라인 재사용 가능)
                 if "vouchers" in data:
-                    account.owned_vouchers = json.dumps(data["vouchers"], ensure_ascii=False)
+                    new_vouchers = data["vouchers"]
+                    existing_v = json.loads(account.owned_vouchers) if account.owned_vouchers else []
+                    new_codes = {v.get("code") for v in new_vouchers if v.get("code") and v.get("code") != "N/A"}
+                    historical = [v for v in existing_v if v.get("code") and v.get("code") != "N/A" and v.get("code") not in new_codes]
+                    account.owned_vouchers = json.dumps(new_vouchers + historical, ensure_ascii=False)
 
                 # 조회 시간 업데이트
                 account.last_fetch = datetime.utcnow()
@@ -995,11 +999,18 @@ def _extract_account_info_task(account_id: str, email: str, password: str):
             # 기존 DB의 쿠폰 목록
             existing_vouchers = json.loads(account.owned_vouchers) if account.owned_vouchers else []
 
-            # 수동으로 추가한 쿠폰만 추출 (type이 "discount_voucher"인 것들)
-            manual_vouchers = [v for v in existing_vouchers if v.get("type") == "discount_voucher"]
+            # 새 목록에 없는 기존 쿠폰 보존:
+            # (1) 코드가 있는데 API 결과에 없는 것 → 오프라인 사용으로 제거됐어도 코드 유지
+            # (2) 수동 발급 쿠폰 (type == "discount_voucher")
+            new_codes = {v.get("code") for v in extracted_vouchers if v.get("code") and v.get("code") != "N/A"}
+            kept_from_existing = [
+                v for v in existing_vouchers
+                if (v.get("code") and v.get("code") != "N/A" and v.get("code") not in new_codes)
+                or v.get("type") == "discount_voucher"
+            ]
 
-            # 앱에서 추출한 쿠폰 + 수동 발급한 쿠폰 병합
-            all_vouchers = extracted_vouchers + manual_vouchers
+            # 앱에서 추출한 쿠폰 + 보존된 기존 쿠폰
+            all_vouchers = extracted_vouchers + kept_from_existing
 
             account.owned_vouchers = json.dumps(all_vouchers, ensure_ascii=False)
         except Exception as e:

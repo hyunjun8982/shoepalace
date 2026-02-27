@@ -417,6 +417,23 @@ async function initDB() {
     }
 }
 
+/**
+ * 쿠폰 병합: 새 목록 + 이전에 있었지만 사라진 쿠폰(코드 기준) 보존
+ * - 아디다스 오프라인 사용 후 API에서 제거돼도 코드가 남아 온라인 재사용 가능
+ */
+function mergeVouchers(newVouchers, existingVouchersJson) {
+    let existing = [];
+    try { existing = JSON.parse(existingVouchersJson || '[]'); } catch {}
+    const newCodes = new Set(
+        newVouchers.filter(v => v.code && v.code !== 'N/A').map(v => v.code)
+    );
+    // 이전에 있었지만 새 목록에 없는 쿠폰 → 코드가 있는 것만 보존
+    const historical = existing.filter(v =>
+        v.code && v.code !== 'N/A' && !newCodes.has(v.code)
+    );
+    return [...newVouchers, ...historical];
+}
+
 // 현재 시간을 [YY-MM-DD HH:MM] 형식으로 반환
 function getNowTime() {
     const now = new Date();
@@ -912,7 +929,7 @@ app.post('/api/extract/:id', async (req, res) => {
                             result.phone || account.phone,
                             result.barcode || account.adikr_barcode,
                             result.points || account.current_points,
-                            JSON.stringify(result.vouchers || []),
+                            JSON.stringify(mergeVouchers(result.vouchers || [], account.owned_vouchers)),
                             webStatus,
                             mobileStatus,
                             id
@@ -929,7 +946,7 @@ app.post('/api/extract/:id', async (req, res) => {
                             result.phone || account.phone,
                             result.barcode || account.adikr_barcode,
                             result.points || account.current_points,
-                            JSON.stringify(result.vouchers || []),
+                            JSON.stringify(mergeVouchers(result.vouchers || [], account.owned_vouchers)),
                             successStatus,
                             id
                         ]).catch(e => addLog(`[DB 오류] ${e.message}`));
@@ -1267,18 +1284,15 @@ async function processBatchResult(result, modeLabel, statusColumn) {
         const barcode = member.memberId || account.adikr_barcode;
         const points = wallet.availablePoints !== undefined ? wallet.availablePoints : account.current_points;
 
-        // 쿠폰 정보 변환 (API 결과로 덮어쓰기)
-        let voucherData = '[]';
-        if (Array.isArray(vouchers) && vouchers.length > 0) {
-            const formattedVouchers = vouchers.map(v => ({
-                description: v.couponLabel || v.name || 'N/A',
-                code: v.code || 'N/A',
-                expiry: v.available?.to ? v.available.to.slice(0, 10) : 'N/A',
-                sold: false,
-                sold_to: ''
-            }));
-            voucherData = JSON.stringify(formattedVouchers);
-        }
+        // 쿠폰 정보 변환 + 기존 쿠폰과 병합 (사라진 코드도 보존)
+        const formattedVouchers = Array.isArray(vouchers) ? vouchers.map(v => ({
+            description: v.couponLabel || v.name || 'N/A',
+            code: v.code || 'N/A',
+            expiry: v.available?.to ? v.available.to.slice(0, 10) : 'N/A',
+            sold: false,
+            sold_to: ''
+        })) : [];
+        const voucherData = JSON.stringify(mergeVouchers(formattedVouchers, account.owned_vouchers));
 
         const successStatus = `${modeLabel} 조회 완료 ${getNowTime()}`;
 
@@ -1462,7 +1476,7 @@ function extractAccountInfo(account) {
                             result.phone || account.phone,
                             result.barcode || account.adikr_barcode,
                             result.points || account.current_points,
-                            JSON.stringify(result.vouchers || []),
+                            JSON.stringify(mergeVouchers(result.vouchers || [], account.owned_vouchers)),
                             webStatus,
                             mobileStatus,
                             account.id
@@ -1478,7 +1492,7 @@ function extractAccountInfo(account) {
                             result.phone || account.phone,
                             result.barcode || account.adikr_barcode,
                             result.points || account.current_points,
-                            JSON.stringify(result.vouchers || []),
+                            JSON.stringify(mergeVouchers(result.vouchers || [], account.owned_vouchers)),
                             successStatus,
                             account.id
                         ]).catch(e => addLog(`[DB 오류] ${e.message}`));
@@ -1914,7 +1928,7 @@ app.post('/api/issue-coupon/:id', async (req, res) => {
             if (isSuccess) {
                 // 발급 성공 - 포인트 및 쿠폰 목록 업데이트 (web_issue_status 사용)
                 const newPoints = result.remaining_points || 0;
-                const vouchers = result.vouchers ? JSON.stringify(result.vouchers) : null;
+                const vouchers = result.vouchers ? JSON.stringify(mergeVouchers(result.vouchers, account.owned_vouchers)) : null;
                 const successMsg = `[웹브라우저] ${coupon_type}원 발급 완료 ${getNowTime()}`;
                 runQuery(`
                     UPDATE adidas_accounts
@@ -1959,7 +1973,7 @@ app.post('/api/issue-coupon/:id', async (req, res) => {
                 // 실패해도 result에 포인트/쿠폰 정보가 있으면 업데이트
                 if (result && (result.remaining_points !== undefined || result.vouchers)) {
                     const newPoints = result.remaining_points || 0;
-                    const vouchers = result.vouchers ? JSON.stringify(result.vouchers) : null;
+                    const vouchers = result.vouchers ? JSON.stringify(mergeVouchers(result.vouchers, account.owned_vouchers)) : null;
                     runQuery(`
                         UPDATE adidas_accounts
                         SET current_points = $1,
@@ -2345,7 +2359,7 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false) {
 
             if (isSuccess) {
                 const newPoints = result.remaining_points || 0;
-                const vouchers = result.vouchers ? JSON.stringify(result.vouchers) : null;
+                const vouchers = result.vouchers ? JSON.stringify(mergeVouchers(result.vouchers, account.owned_vouchers)) : null;
                 const successMsg = `[웹브라우저] ${coupon_type}원 발급 완료 ${getNowTime()}`;
                 // web_issue_status 사용, 쿠폰 목록도 업데이트
                 runQuery(`
@@ -2406,7 +2420,7 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false) {
                 // 실패해도 result에 포인트/쿠폰 정보가 있으면 업데이트
                 if (result && (result.remaining_points !== undefined || result.vouchers)) {
                     const newPoints = result.remaining_points || 0;
-                    const vouchers = result.vouchers ? JSON.stringify(result.vouchers) : null;
+                    const vouchers = result.vouchers ? JSON.stringify(mergeVouchers(result.vouchers, account.owned_vouchers)) : null;
                     runQuery(`
                         UPDATE adidas_accounts
                         SET current_points = $1,
@@ -2580,7 +2594,7 @@ function issueCouponMobileSingle(account, coupon_type) {
             if (result) {
                 // DB 업데이트 (성공/실패 모두 vouchers가 있으면 갱신)
                 const newPoints = result.remaining_points;
-                const vouchers = result.vouchers ? JSON.stringify(result.vouchers) : null;
+                const vouchers = result.vouchers ? JSON.stringify(mergeVouchers(result.vouchers, account.owned_vouchers)) : null;
                 const statusMsg = result.success
                     ? `[모바일] ${coupon_type}원 발급 완료 ${getNowTime()}`
                     : `[모바일] ${result.message || '실패'} ${getNowTime()}`;

@@ -23,6 +23,9 @@ import {
   ShopOutlined,
   BulbOutlined,
   ExclamationCircleOutlined,
+  CreditCardOutlined,
+  BankOutlined,
+  SettingOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -79,10 +82,13 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     '/users/new': '사용자 등록',
     '/reports': '보고서',
     '/settings': '설정',
+    '/settings/codef': 'CODEF API 설정',
     '/profile': '프로필',
     '/feature-requests': '요청사항',
     '/adidas-comparison': '아디다스 구매/판매 비교',
     '/poizon-price-comparison': '포이즌 가격비교',
+    '/card-transactions': '카드 내역',
+    '/bank-transactions': '은행 거래내역',
   };
 
   // 브레드크럼 아이템 생성
@@ -350,6 +356,23 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       ],
     },
     {
+      key: 'finance-management',
+      icon: <CreditCardOutlined />,
+      label: '재무 관리',
+      children: [
+        {
+          key: '/card-transactions',
+          icon: <CreditCardOutlined />,
+          label: '카드 내역',
+        },
+        {
+          key: '/bank-transactions',
+          icon: <BankOutlined />,
+          label: '은행 거래내역',
+        },
+      ],
+    },
+    {
       key: 'etc-management',
       icon: <BulbOutlined />,
       label: '기타',
@@ -376,6 +399,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           key: '/adidas',
           icon: <GiftOutlined />,
           label: '아디다스 쿠폰',
+          roles: ['admin'],
+        },
+        {
+          key: '/settings/codef',
+          icon: <SettingOutlined />,
+          label: 'CODEF API 설정',
           roles: ['admin'],
         },
       ],
@@ -541,6 +570,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           selectedKeys={[selectedMenuKey]}
           defaultOpenKeys={defaultOpenKeys}
           onClick={handleMenuClick}
+          className="sidebar-menu"
           style={{
             border: 'none',
             height: 'calc(100vh - 64px - 48px - 32px)',

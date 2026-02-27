@@ -246,6 +246,7 @@ def web_login_and_issue_coupon(email: str, password: str, coupon_type: str):
                     options=options,
                     use_subprocess=True,
                     driver_executable_path=None,
+                    version_main=145,
                 )
                 time.sleep(2)
 

@@ -32,6 +32,16 @@ code {
   background: #a8a8a8;
 }
 
+/* 사이드바 메뉴 스크롤바 숨기기 */
+.sidebar-menu::-webkit-scrollbar {
+  width: 0;
+  display: none;
+}
+.sidebar-menu {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
 /* 로딩 스피너 중앙 정렬 */
 .loading-spinner {
   display: flex;

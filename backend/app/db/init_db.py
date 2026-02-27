@@ -204,6 +204,34 @@ def run_migrations() -> None:
             conn.rollback()
             print(f"Migration skipped or failed: {e}")
 
+        # card_transactions에 client_type 컬럼 추가
+        try:
+            conn.execute(text("ALTER TABLE card_transactions ADD COLUMN IF NOT EXISTS client_type VARCHAR(1) DEFAULT 'P'"))
+            conn.commit()
+            print("Migration: card_transactions.client_type column added")
+        except Exception as e:
+            conn.rollback()
+            print(f"Migration skipped or failed: {e}")
+
+        # 기존 card_transactions의 client_type을 codef_accounts 기준으로 업데이트
+        try:
+            result = conn.execute(text("""
+                UPDATE card_transactions ct
+                SET client_type = ca.client_type
+                FROM codef_accounts ca
+                WHERE ct.user_id = ca.user_id
+                AND ct.organization = ca.organization
+                AND (ct.client_type IS NULL OR ct.client_type = 'P')
+                AND ca.client_type = 'B'
+            """))
+            conn.commit()
+            updated = result.rowcount
+            if updated > 0:
+                print(f"Migration: card_transactions.client_type updated {updated} rows from codef_accounts")
+        except Exception as e:
+            conn.rollback()
+            print(f"Migration skipped or failed: {e}")
+
         # codef_api_logs 테이블 생성 (API 호출 제한 추적)
         try:
             conn.execute(text("""

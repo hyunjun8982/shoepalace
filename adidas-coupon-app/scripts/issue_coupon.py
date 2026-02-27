@@ -191,7 +191,7 @@ def claim_voucher(access_token: str, offer_id: int, reward_id: int) -> dict:
         return {'success': False, 'error': str(e)}
 
 
-def web_login_and_issue_coupon(email: str, password: str, coupon_type: str):
+def web_login_and_issue_coupon(email: str, password: str, coupon_type: str, incognito: bool = False):
     """
     웹 브라우저로 로그인하고 API로 쿠폰 발급
     1. 브라우저로 로그인하여 토큰 획득
@@ -232,7 +232,8 @@ def web_login_and_issue_coupon(email: str, password: str, coupon_type: str):
             try:
                 print(f"  [시도 {attempt+1}/{max_retries}] Chrome 초기화 중...")
                 options = uc.ChromeOptions()
-                options.add_argument('--incognito')
+                if incognito:
+                    options.add_argument('--incognito')
                 options.add_argument('--window-size=1280,900')
                 options.add_argument('--lang=ko-KR')
                 options.add_argument('--disable-blink-features=AutomationControlled')
@@ -566,6 +567,8 @@ def main():
     parser.add_argument('password', nargs='?', help='아디다스 계정 비밀번호')
     parser.add_argument('coupon_type', nargs='?',
                         help='쿠폰 타입: 10000(1만원), 30000(3만원), 50000(5만원), 100000(10만원)')
+    parser.add_argument('--incognito', action='store_true', default=False,
+                        help='시크릿(incognito) 모드로 브라우저 실행')
 
     args = parser.parse_args()
 
@@ -580,7 +583,7 @@ def main():
         print("  100000 - 10만원 상품권 (6000P)")
         return
 
-    result = web_login_and_issue_coupon(args.email, args.password, args.coupon_type)
+    result = web_login_and_issue_coupon(args.email, args.password, args.coupon_type, args.incognito)
 
     # 결과 출력 (JSON 형식)
     import json

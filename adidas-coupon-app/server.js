@@ -687,15 +687,15 @@ app.get('/api/extract-mode', (req, res) => {
 // 추출 모드 변경 API
 app.post('/api/extract-mode', (req, res) => {
     const { mode } = req.body;
-    const validModes = ['web', 'mobile', 'hybrid'];
-    const modeLabels = { web: '웹 브라우저', mobile: '모바일 Appium', hybrid: '웹+모바일' };
+    const validModes = ['web', 'web_incognito', 'mobile', 'hybrid'];
+    const modeLabels = { web: '웹브라우저(기본)', web_incognito: '웹브라우저(시크릿)', mobile: '모바일 Appium', hybrid: '웹+모바일' };
 
     if (validModes.includes(mode)) {
         extractMode = mode;
-        addLog(`[모드] 추출 모드 변경: ${mode}`);
+        addLog(`[모드] 추출 모드 변경: ${modeLabels[mode]}`);
         res.json({ message: `추출 모드가 ${modeLabels[mode]}(으)로 변경되었습니다`, mode });
     } else {
-        res.status(400).json({ error: '유효하지 않은 모드입니다. web, mobile, hybrid 중 하나만 가능합니다.' });
+        res.status(400).json({ error: '유효하지 않은 모드입니다. web, web_incognito, mobile, hybrid 중 하나만 가능합니다.' });
     }
 });
 
@@ -754,8 +754,10 @@ app.post('/api/extract/:id', async (req, res) => {
 
         // 상태 업데이트 (DB + 모니터링) - 모드에 따라 적절한 컬럼 업데이트
         // hybrid 모드는 웹 먼저 시도하므로 web_fetch_status에 기록
-        const effectiveMode = extractMode === 'hybrid' ? 'web' : extractMode;
-        const modeLabel = extractMode === 'hybrid' ? '[웹+모바일]' : (effectiveMode === 'web' ? '[웹브라우저]' : '[모바일]');
+        // web_incognito 모드는 web과 동일하게 처리하되 --incognito 플래그 추가
+        const effectiveMode = (extractMode === 'hybrid' || extractMode === 'web_incognito') ? 'web' : extractMode;
+        const modeLabels = { web: '[웹브라우저]', web_incognito: '[웹브라우저(시크릿)]', mobile: '[모바일]', hybrid: '[웹+모바일]' };
+        const modeLabel = modeLabels[extractMode] || '[웹브라우저]';
         const statusColumn = effectiveMode === 'web' ? 'web_fetch_status' : 'mobile_fetch_status';
         addLog(`[추출] 시작 - extractMode=${extractMode}, effectiveMode=${effectiveMode}, statusColumn=${statusColumn}`);
         runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [`${modeLabel} 조회 중... ${getNowTime()}`, id]).catch(e => addLog(`[DB 오류] ${e.message}`));
@@ -769,9 +771,14 @@ app.post('/api/extract/:id', async (req, res) => {
 
         // 하이브리드 스크립트면 모드 인자 추가 (hybrid 모드도 그대로 전달)
         // --id 인자를 추가하여 진행 상태 출력에 사용
-        const pythonArgs = isHybridScript
-            ? ['-u', scriptPath, account.email, account.password, '--mode', extractMode, '--id', id.toString()]
+        // web_incognito → --mode web --incognito 로 전달
+        const scriptMode = extractMode === 'web_incognito' ? 'web' : extractMode;
+        let pythonArgs = isHybridScript
+            ? ['-u', scriptPath, account.email, account.password, '--mode', scriptMode, '--id', id.toString()]
             : ['-u', scriptPath, account.email, account.password];
+        if (extractMode === 'web_incognito' && isHybridScript) {
+            pythonArgs.push('--incognito');
+        }
 
         const pythonPath = getPythonPath();
 
@@ -1338,8 +1345,10 @@ function extractAccountInfo(account) {
     return new Promise((resolve) => {
         // 상태 업데이트 (DB + 모니터링) - 모드에 따라 적절한 컬럼 업데이트
         // hybrid 모드는 웹 먼저 시도하므로 web_fetch_status에 기록
-        const effectiveMode = extractMode === 'hybrid' ? 'web' : extractMode;
-        const modeLabel = extractMode === 'hybrid' ? '[웹+모바일]' : (effectiveMode === 'web' ? '[웹브라우저]' : '[모바일]');
+        // web_incognito 모드는 web과 동일하게 처리하되 --incognito 플래그 추가
+        const effectiveMode = (extractMode === 'hybrid' || extractMode === 'web_incognito') ? 'web' : extractMode;
+        const modeLabels2 = { web: '[웹브라우저]', web_incognito: '[웹브라우저(시크릿)]', mobile: '[모바일]', hybrid: '[웹+모바일]' };
+        const modeLabel = modeLabels2[extractMode] || '[웹브라우저]';
         const statusColumn = effectiveMode === 'web' ? 'web_fetch_status' : 'mobile_fetch_status';
         runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [`${modeLabel} 조회 중... ${getNowTime()}`, account.id]).catch(e => addLog(`[DB 오류] ${e.message}`));
         updateProgress(account.id, 'extract', 'processing', `조회 중... ${account.email}`);
@@ -1352,9 +1361,14 @@ function extractAccountInfo(account) {
 
         // 하이브리드 스크립트면 모드 인자 추가 (hybrid 모드도 그대로 전달)
         // --id 인자를 추가하여 진행 상태 출력에 사용
-        const pythonArgs = isHybridScript
-            ? ['-u', scriptPath, account.email, account.password, '--mode', extractMode, '--id', account.id.toString()]
+        // web_incognito → --mode web --incognito 로 전달
+        const scriptMode = extractMode === 'web_incognito' ? 'web' : extractMode;
+        let pythonArgs = isHybridScript
+            ? ['-u', scriptPath, account.email, account.password, '--mode', scriptMode, '--id', account.id.toString()]
             : ['-u', scriptPath, account.email, account.password];
+        if (extractMode === 'web_incognito' && isHybridScript) {
+            pythonArgs.push('--incognito');
+        }
 
         const pythonPath = getPythonPath();
 
@@ -1790,18 +1804,19 @@ app.post('/api/issue-coupon/bulk', async (req, res) => {
         };
         const couponTypesStr = targetCouponTypes.map(ct => couponNames[ct] || `${ct}원`).join(', ');
 
-        const modeLabels = { web: '[웹]', mobile: '[모바일]', hybrid: '[웹+모바일]' };
+        const modeLabels = { web: '[웹]', web_incognito: '[웹(시크릿)]', mobile: '[모바일]', hybrid: '[웹+모바일]' };
         const modeLabel = modeLabels[issueMode] || '[웹]';
         addLog(`[쿠폰발급] ${modeLabel} ${accounts.length}개 계정 ${couponTypesStr} 발급 시작`);
         res.json({ message: `${modeLabel} ${accounts.length}개 계정 쿠폰 발급(${couponTypesStr})을 시작합니다. 순차적으로 처리됩니다.` });
 
         // 백그라운드에서 순차 처리 (모드에 따라 분기)
+        const useIncognito = issueMode === 'web_incognito';
         if (issueMode === 'mobile') {
             processIssueCouponMobileSequentially(accounts, targetCouponTypes);
         } else if (issueMode === 'hybrid') {
             processIssueCouponHybridSequentially(accounts, targetCouponTypes[0]); // 하이브리드는 아직 단일만 지원
         } else {
-            processIssueCouponSequentially(accounts, targetCouponTypes[0]); // 웹은 아직 단일만 지원
+            processIssueCouponSequentially(accounts, targetCouponTypes[0], useIncognito); // 웹은 아직 단일만 지원
         }
     } catch (error) {
         addLog(`[쿠폰발급] 오류: ${error.message}`);
@@ -1827,7 +1842,8 @@ app.post('/api/issue-coupon/:id', async (req, res) => {
 
         // 요청에서 모드를 전달받거나, 없으면 서버의 extractMode 사용
         const issueMode = mode || extractMode;
-        const modeLabel = issueMode === 'web' ? '[웹브라우저]' : '[모바일]';
+        const issueModeLabels = { web: '[웹브라우저]', web_incognito: '[웹브라우저(시크릿)]', mobile: '[모바일]', hybrid: '[웹+모바일]' };
+        const modeLabel = issueModeLabels[issueMode] || '[웹브라우저]';
 
         addLog(`[쿠폰발급] ${modeLabel} 시작 - ${account.email} (${coupon_type}원 상품권)`);
 
@@ -1845,9 +1861,9 @@ app.post('/api/issue-coupon/:id', async (req, res) => {
             return;
         }
 
-        // 웹 브라우저 모드
+        // 웹 브라우저 모드 (web 또는 web_incognito)
         // 상태 업데이트 (web_issue_status 사용)
-        runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [`[웹브라우저] ${coupon_type}원 발급 중... ${getNowTime()}`, id]).catch(e => addLog(`[DB오류] ${e.message}`));
+        runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [`${modeLabel} ${coupon_type}원 발급 중... ${getNowTime()}`, id]).catch(e => addLog(`[DB오류] ${e.message}`));
         updateProgress(id, 'issue', 'processing', `${coupon_type}원 발급 중...`);
 
         const scriptPath = getIssueCouponScriptPath();
@@ -1859,7 +1875,11 @@ app.post('/api/issue-coupon/:id', async (req, res) => {
         const { spawn } = require('child_process');
         const pythonPath = getPythonPath();
 
-        const pythonProcess = spawn(pythonPath, ['-u', scriptPath, account.email, account.password, coupon_type], {
+        const issueArgs = ['-u', scriptPath, account.email, account.password, coupon_type];
+        if (issueMode === 'web_incognito') {
+            issueArgs.push('--incognito');
+        }
+        const pythonProcess = spawn(pythonPath, issueArgs, {
             env: {
                 ...process.env,
                 PYTHONIOENCODING: 'utf-8',
@@ -1929,7 +1949,7 @@ app.post('/api/issue-coupon/:id', async (req, res) => {
                 // 발급 성공 - 포인트 및 쿠폰 목록 업데이트 (web_issue_status 사용)
                 const newPoints = result.remaining_points || 0;
                 const vouchers = result.vouchers ? JSON.stringify(mergeVouchers(result.vouchers, account.owned_vouchers)) : null;
-                const successMsg = `[웹브라우저] ${coupon_type}원 발급 완료 ${getNowTime()}`;
+                const successMsg = `${modeLabel} ${coupon_type}원 발급 완료 ${getNowTime()}`;
                 runQuery(`
                     UPDATE adidas_accounts
                     SET current_points = $1,
@@ -1948,26 +1968,26 @@ app.post('/api/issue-coupon/:id', async (req, res) => {
                 if (result && result.error) {
                     const errorCode = result.error;
                     if (errorCode === 'PASSWORD_WRONG') {
-                        errorMsg = `[웹브라우저] 비밀번호 틀림 ${getNowTime()}`;
+                        errorMsg = `${modeLabel} 비밀번호 틀림 ${getNowTime()}`;
                         progressStatus = 'password_wrong';  // 비밀번호 오류는 별도 상태
                     } else if (errorCode.startsWith('BOT_BLOCKED')) {
                         // BOT_BLOCKED:에러메시지 형식에서 에러 메시지 추출
                         const botBlockMsg = errorCode.includes(':') ? errorCode.split(':').slice(1).join(':').trim() : '';
-                        errorMsg = botBlockMsg ? `[웹브라우저] 차단 의심 : ${botBlockMsg} ${getNowTime()}` : `[웹브라우저] 차단 의심 ${getNowTime()}`;
+                        errorMsg = botBlockMsg ? `${modeLabel} 차단 의심 : ${botBlockMsg} ${getNowTime()}` : `${modeLabel} 차단 의심 ${getNowTime()}`;
                     } else if (errorCode === 'INSUFFICIENT_POINTS') {
-                        errorMsg = `[웹브라우저] 포인트 부족 ${getNowTime()}`;
+                        errorMsg = `${modeLabel} 포인트 부족 ${getNowTime()}`;
                         progressStatus = 'warning';
                     } else if (errorCode === 'COUPON_BUTTON_NOT_FOUND') {
-                        errorMsg = `[웹브라우저] ${coupon_type/10000}만원 쿠폰 버튼 없음 ${getNowTime()}`;
+                        errorMsg = `${modeLabel} ${coupon_type/10000}만원 쿠폰 버튼 없음 ${getNowTime()}`;
                         progressStatus = 'warning';
                     } else if (errorCode === 'COOLDOWN_PERIOD') {
-                        errorMsg = `[웹브라우저] 1달 미경과 ${getNowTime()}`;
+                        errorMsg = `${modeLabel} 1달 미경과 ${getNowTime()}`;
                         progressStatus = 'warning';
                     } else {
-                        errorMsg = `[웹브라우저] 알 수 없는 오류 ${getNowTime()}`;
+                        errorMsg = `${modeLabel} 알 수 없는 오류 ${getNowTime()}`;
                     }
                 } else {
-                    errorMsg = `[웹브라우저] 알 수 없는 오류 ${getNowTime()}`;
+                    errorMsg = `${modeLabel} 알 수 없는 오류 ${getNowTime()}`;
                 }
 
                 // 실패해도 result에 포인트/쿠폰 정보가 있으면 업데이트
@@ -1993,19 +2013,19 @@ app.post('/api/issue-coupon/:id', async (req, res) => {
 
         pythonProcess.on('error', (err) => {
             addLog(`[쿠폰발급] Python 실행 오류: ${err.message}`);
-            const errorMsg = `[웹브라우저] 실행 오류 ${getNowTime()}`;
+            const errorMsg = `${modeLabel} 실행 오류 ${getNowTime()}`;
             runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [errorMsg, id]).catch(e => addLog(`[DB오류] ${e.message}`));
             updateProgress(id, 'issue', 'error', errorMsg);
         });
 
-        res.json({ message: `${account.email} 쿠폰 발급(${coupon_type}원)을 시작합니다` });
+        res.json({ message: `${modeLabel} ${account.email} 쿠폰 발급(${coupon_type}원)을 시작합니다` });
     } catch (error) {
         addLog(`[쿠폰발급] 예외 발생: ${error.message}`);
         res.status(500).json({ error: error.message });
     }
 });
 
-async function processIssueCouponSequentially(accounts, coupon_type) {
+async function processIssueCouponSequentially(accounts, coupon_type, useIncognito = false) {
     // 배치 프로세스 시작 등록 (순차 처리는 process 없이 등록)
     const accountIds = accounts.map(a => a.id);
     startBatchProcess('issue-web', `웹 쿠폰 발급 (${coupon_type}원)`, accountIds, null);
@@ -2023,7 +2043,7 @@ async function processIssueCouponSequentially(accounts, coupon_type) {
                 break;
             }
 
-            await issueCouponForAccount(account, coupon_type);
+            await issueCouponForAccount(account, coupon_type, false, useIncognito);
             // 다음 계정 전 잠시 대기
             await new Promise(resolve => setTimeout(resolve, 3000));
         }
@@ -2287,17 +2307,19 @@ async function processIssueCouponMobileSequentially(accounts, coupon_types) {
 }
 
 // isHybridMode: true면 결과만 반환하고 상태 업데이트는 호출자가 처리
-function issueCouponForAccount(account, coupon_type, isHybridMode = false) {
+// useIncognito: true면 시크릿 모드로 브라우저 실행
+function issueCouponForAccount(account, coupon_type, isHybridMode = false, useIncognito = false) {
     return new Promise((resolve) => {
+        const webLabel = useIncognito ? '[웹브라우저(시크릿)]' : '[웹브라우저]';
         // 상태 업데이트 (web_issue_status 사용)
-        runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [`[웹브라우저] ${coupon_type}원 발급 중... ${getNowTime()}`, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
+        runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [`${webLabel} ${coupon_type}원 발급 중... ${getNowTime()}`, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
         if (!isHybridMode) {
-            updateProgress(account.id, 'issue', 'processing', `[웹브라우저] ${coupon_type}원 발급 중...`);
+            updateProgress(account.id, 'issue', 'processing', `${webLabel} ${coupon_type}원 발급 중...`);
         }
 
         const scriptPath = getIssueCouponScriptPath();
         if (!scriptPath) {
-            const errorMsg = `[웹브라우저] 스크립트 없음 ${getNowTime()}`;
+            const errorMsg = `${webLabel} 스크립트 없음 ${getNowTime()}`;
             runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [errorMsg, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
             if (!isHybridMode) {
                 updateProgress(account.id, 'issue', 'error', errorMsg);
@@ -2309,7 +2331,11 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false) {
         const { spawn } = require('child_process');
         const pythonPath = getPythonPath();
 
-        const pythonProcess = spawn(pythonPath, ['-u', scriptPath, account.email, account.password, coupon_type], {
+        const issueArgs = ['-u', scriptPath, account.email, account.password, coupon_type];
+        if (useIncognito) {
+            issueArgs.push('--incognito');
+        }
+        const pythonProcess = spawn(pythonPath, issueArgs, {
             env: {
                 ...process.env,
                 PYTHONIOENCODING: 'utf-8',
@@ -2360,7 +2386,7 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false) {
             if (isSuccess) {
                 const newPoints = result.remaining_points || 0;
                 const vouchers = result.vouchers ? JSON.stringify(mergeVouchers(result.vouchers, account.owned_vouchers)) : null;
-                const successMsg = `[웹브라우저] ${coupon_type}원 발급 완료 ${getNowTime()}`;
+                const successMsg = `${webLabel} ${coupon_type}원 발급 완료 ${getNowTime()}`;
                 // web_issue_status 사용, 쿠폰 목록도 업데이트
                 runQuery(`
                     UPDATE adidas_accounts
@@ -2383,27 +2409,27 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false) {
                 const errorCode = result?.error || '';
 
                 if (errorCode === 'PASSWORD_WRONG') {
-                    errorMsg = `[웹브라우저] 비밀번호 틀림 ${getNowTime()}`;
+                    errorMsg = `${webLabel} 비밀번호 틀림 ${getNowTime()}`;
                     progressStatus = 'password_wrong';  // 비밀번호 오류는 별도 상태
                 } else if (errorCode.startsWith('BOT_BLOCKED')) {
                     // BOT_BLOCKED:에러메시지 형식에서 에러 메시지 추출
                     const botBlockMsg = errorCode.includes(':') ? errorCode.split(':').slice(1).join(':').trim() : '';
-                    errorMsg = botBlockMsg ? `[웹브라우저] 차단 의심 : ${botBlockMsg} ${getNowTime()}` : `[웹브라우저] 차단 의심 ${getNowTime()}`;
+                    errorMsg = botBlockMsg ? `${webLabel} 차단 의심 : ${botBlockMsg} ${getNowTime()}` : `${webLabel} 차단 의심 ${getNowTime()}`;
                     needMobileFallback = true; // 봇 차단 시 모바일로 재시도
                 } else if (errorCode === 'INSUFFICIENT_POINTS') {
-                    errorMsg = `[웹브라우저] 포인트 부족 ${getNowTime()}`;
+                    errorMsg = `${webLabel} 포인트 부족 ${getNowTime()}`;
                     progressStatus = 'warning';
                 } else if (errorCode === 'COUPON_BUTTON_NOT_FOUND') {
-                    errorMsg = `[웹브라우저] ${coupon_type/10000}만원 쿠폰 버튼 없음 ${getNowTime()}`;
+                    errorMsg = `${webLabel} ${coupon_type/10000}만원 쿠폰 버튼 없음 ${getNowTime()}`;
                     progressStatus = 'warning';
                 } else if (errorCode === 'COOLDOWN_PERIOD') {
-                    errorMsg = `[웹브라우저] 1달 미경과 ${getNowTime()}`;
+                    errorMsg = `${webLabel} 1달 미경과 ${getNowTime()}`;
                     progressStatus = 'warning';
                 } else if (errorCode === 'TOKEN_NOT_FOUND' || errorCode === 'LOGIN_FAILED') {
-                    errorMsg = `[웹브라우저] 로그인/토큰 실패 ${getNowTime()}`;
+                    errorMsg = `${webLabel} 로그인/토큰 실패 ${getNowTime()}`;
                     needMobileFallback = true; // 토큰 실패 시 모바일로 재시도
                 } else {
-                    errorMsg = `[웹브라우저] 알 수 없는 오류 ${getNowTime()}`;
+                    errorMsg = `${webLabel} 알 수 없는 오류 ${getNowTime()}`;
                     needMobileFallback = true; // 알 수 없는 오류도 모바일로 재시도
                 }
 
@@ -2450,7 +2476,7 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false) {
         });
 
         pythonProcess.on('error', (err) => {
-            const errorMsg = `[웹브라우저] 실행 오류 ${getNowTime()}`;
+            const errorMsg = `${webLabel} 실행 오류 ${getNowTime()}`;
             runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [errorMsg, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
             if (!isHybridMode) {
                 updateProgress(account.id, 'issue', 'error', errorMsg);

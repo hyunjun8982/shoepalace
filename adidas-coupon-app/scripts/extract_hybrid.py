@@ -192,7 +192,8 @@ def web_login(email: str, password: str, headless: bool = False):
         for attempt in range(max_retries):
             try:
                 retry_options = uc.ChromeOptions()
-                retry_options.add_argument('--incognito')
+                if incognito:
+                    retry_options.add_argument('--incognito')
                 retry_options.add_argument('--window-size=1280,900')
                 retry_options.add_argument('--lang=ko-KR')
                 retry_options.add_argument('--disable-blink-features=AutomationControlled')
@@ -603,7 +604,7 @@ def mobile_login(email: str, password: str, device_udid: str = None):
 
 # ==================== 메인 ====================
 
-def extract_account(email: str, password: str, mode: str = 'web', device: str = None, headless: bool = False, account_id: int = None):
+def extract_account(email: str, password: str, mode: str = 'web', device: str = None, headless: bool = False, account_id: int = None, incognito: bool = False):
     """
     계정 정보 추출 (웹, 모바일, 또는 하이브리드 모드)
     headless: 웹 모드에서 백그라운드 실행 여부
@@ -768,6 +769,8 @@ def main():
     parser.add_argument('--headless', action='store_true', default=False,
                         help='헤드리스 모드 (백그라운드 실행, 봇 차단 가능성 높음)')
     parser.add_argument('--id', type=int, help='계정 ID (진행 상태 출력용)')
+    parser.add_argument('--incognito', action='store_true', default=False,
+                        help='시크릿(incognito) 모드로 브라우저 실행')
 
     args = parser.parse_args()
 
@@ -778,7 +781,7 @@ def main():
         print("  python extract_hybrid.py <email> <password> --mode hybrid   # 웹 실패시 모바일 재시도")
         return
 
-    extract_account(args.email, args.password, args.mode, args.device, args.headless, args.id)
+    extract_account(args.email, args.password, args.mode, args.device, args.headless, args.id, args.incognito)
 
 
 if __name__ == "__main__":

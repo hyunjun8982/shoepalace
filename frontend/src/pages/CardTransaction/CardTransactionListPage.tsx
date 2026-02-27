@@ -450,12 +450,12 @@ const CardTransactionListPage: React.FC = () => {
     }));
 
   // 필터용 카드사 목록 (등록된 카드사만, 중복 제거)
-  const filterOrgOptions = [...new Map(
+  const filterOrgOptions = Array.from(new Map(
     accountInfoList.map(a => [a.organization, {
       value: a.organization,
       label: a.organization_name || ORGANIZATION_MAP[a.organization] || a.organization,
-    }])
-  ).values()];
+    }] as [string, { value: string; label: string }])
+  ).values());
 
   return (
     <div style={{ padding: '24px' }}>

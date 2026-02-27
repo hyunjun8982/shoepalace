@@ -458,12 +458,12 @@ const BankTransactionListPage: React.FC = () => {
               placeholder="은행"
               allowClear
               style={{ width: 130 }}
-              options={[...new Map(
+              options={Array.from(new Map(
                 accountInfoList.map((a: any) => [a.organization, {
                   value: a.organization,
                   label: a.organization_name || BANK_ORGANIZATION_MAP[a.organization] || a.organization,
-                }])
-              ).values()]}
+                }] as [string, { value: string; label: string }])
+              ).values())}
             />
           </Col>
           <Col>

@@ -177,8 +177,26 @@ const AdidasAccountListPage: React.FC = () => {
   }, [pageSize]);
 
   const autoGenerateMissingBarcodes = async (accountList: AdidasAccount[]) => {
-    const missing = accountList.filter(acc => acc.adikr_barcode && !acc.barcode_image_url);
+    // DB에 barcode_image_url이 없는 계정
+    const noUrl = accountList.filter(acc => acc.adikr_barcode && !acc.barcode_image_url);
+
+    // DB에 barcode_image_url이 있지만 파일이 실제로 존재하지 않는 계정 확인
+    const hasUrl = accountList.filter(acc => acc.adikr_barcode && acc.barcode_image_url);
+    const brokenChecks = await Promise.allSettled(
+      hasUrl.map(acc => new Promise<AdidasAccount>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => reject(); // 정상 로드 → 재생성 불필요
+        img.onerror = () => resolve(acc); // 깨진 이미지 → 재생성 필요
+        img.src = getStaticUrl(acc.barcode_image_url!);
+      }))
+    );
+    const broken = brokenChecks
+      .filter(r => r.status === 'fulfilled')
+      .map(r => (r as PromiseFulfilledResult<AdidasAccount>).value);
+
+    const missing = [...noUrl, ...broken];
     if (missing.length === 0) return;
+
     const results = await Promise.allSettled(
       missing.map(acc => api.post(`/adidas-accounts/${acc.id}/generate-barcode`))
     );
@@ -1366,10 +1384,27 @@ const AdidasAccountListPage: React.FC = () => {
                 setSelectedBarcode({ url: src, email: record.email });
                 setBarcodeModalVisible(true);
               }}
+              onError={(e) => {
+                const target = e.currentTarget;
+                target.style.display = 'none';
+                const btn = document.createElement('span');
+                btn.textContent = '↻ 재생성';
+                btn.style.cssText = 'color:#1890ff;font-size:11px;cursor:pointer;';
+                btn.onclick = () => handleGenerateBarcode(record.id);
+                target.parentElement?.appendChild(btn);
+              }}
             />
           );
         }
-        return <span style={{ color: '#ccc', fontSize: '11px' }}>{record.adikr_barcode ? '생성중…' : '-'}</span>;
+        if (record.adikr_barcode) {
+          return (
+            <span
+              style={{ color: '#1890ff', fontSize: '11px', cursor: 'pointer' }}
+              onClick={() => handleGenerateBarcode(record.id)}
+            >↻ 생성</span>
+          );
+        }
+        return <span style={{ color: '#ccc', fontSize: '11px' }}>-</span>;
       },
     },
     {
@@ -2890,34 +2925,48 @@ const AdidasAccountListPage: React.FC = () => {
                 </div>
 
                 {/* 바코드 이미지 */}
-                {acc.barcode_image_url && (
+                {(acc.barcode_image_url || acc.adikr_barcode) && (
                   <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <img
-                      src={getStaticUrl(acc.barcode_image_url)}
-                      alt="barcode"
-                      style={{ maxWidth: '100%', height: 'auto', maxHeight: 64, borderRadius: 4, flex: 1 }}
-                    />
+                    {acc.barcode_image_url ? (
+                      <img
+                        src={getStaticUrl(acc.barcode_image_url)}
+                        alt="barcode"
+                        style={{ maxWidth: '100%', height: 'auto', maxHeight: 64, borderRadius: 4, flex: 1 }}
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                        }}
+                      />
+                    ) : null}
                     <Button
                       size="small"
-                      icon={<DownloadOutlined />}
-                      onClick={async () => {
-                        try {
-                          const res = await fetch(getStaticUrl(acc.barcode_image_url!));
-                          const blob = await res.blob();
-                          const objectUrl = URL.createObjectURL(blob);
-                          const link = document.createElement('a');
-                          link.href = objectUrl;
-                          link.download = `barcode_${acc.email}.png`;
-                          document.body.appendChild(link);
-                          link.click();
-                          document.body.removeChild(link);
-                          URL.revokeObjectURL(objectUrl);
-                        } catch {
-                          message.error('바코드 다운로드에 실패했습니다');
-                        }
-                      }}
+                      icon={<ReloadOutlined />}
+                      onClick={() => handleGenerateBarcode(acc.id)}
                       style={{ flexShrink: 0 }}
+                      title="바코드 재생성"
                     />
+                    {acc.barcode_image_url && (
+                      <Button
+                        size="small"
+                        icon={<DownloadOutlined />}
+                        onClick={async () => {
+                          try {
+                            const res = await fetch(getStaticUrl(acc.barcode_image_url!));
+                            const blob = await res.blob();
+                            const objectUrl = URL.createObjectURL(blob);
+                            const link = document.createElement('a');
+                            link.href = objectUrl;
+                            link.download = `barcode_${acc.email}.png`;
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                            URL.revokeObjectURL(objectUrl);
+                          } catch {
+                            message.error('바코드 다운로드에 실패했습니다');
+                          }
+                        }}
+                        style={{ flexShrink: 0 }}
+                      />
+                    )}
                   </div>
                 )}
 

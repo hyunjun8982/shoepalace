@@ -10,6 +10,51 @@ const DEV_MODE = false;
 // 앱 버전
 const APP_VERSION = '1.1.0';
 
+// 바코드 로컬 생성 유틸리티
+function generateBarcodeDataURL(code, opts = {}) {
+    try {
+        const canvas = document.createElement('canvas');
+        JsBarcode(canvas, code, {
+            format: 'CODE128',
+            width: opts.width || 2,
+            height: opts.height || 60,
+            displayValue: false,
+            margin: opts.margin || 4,
+        });
+        return canvas.toDataURL('image/png');
+    } catch (e) {
+        console.error('바코드 생성 실패:', code, e);
+        return null;
+    }
+}
+
+function generateBarcodeBlob(code, opts = {}) {
+    return new Promise((resolve, reject) => {
+        try {
+            const canvas = document.createElement('canvas');
+            JsBarcode(canvas, code, {
+                format: 'CODE128',
+                width: opts.width || 2,
+                height: opts.height || 80,
+                displayValue: true,
+                margin: opts.margin || 10,
+                fontSize: 14,
+            });
+            canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('blob 생성 실패')), 'image/png');
+        } catch (e) {
+            reject(e);
+        }
+    });
+}
+
+function refreshBarcode(el, code) {
+    const dataURL = generateBarcodeDataURL(code);
+    if (dataURL) {
+        el.src = dataURL;
+        el.style.display = '';
+    }
+}
+
 // 상태 관리
 const state = {
     accounts: [],
@@ -556,8 +601,8 @@ function parseStatus(status) {
         } else {
             statusType = 'error';
         }
-        // [모바일]/[웹브라우저] 태그 제거하고 상세 내용만 추출
-        shortText = status.replace(/\[(모바일|웹브라우저|웹)\]\s*/g, '').replace(/\[\d{2}-\d{2}-\d{2}\s+\d{2}:\d{2}\]/, '').trim();
+        // [모바일]/[웹브라우저]/[웹브라우저(시크릿)] 태그 제거하고 상세 내용만 추출
+        shortText = status.replace(/\[(모바일|웹브라우저\(시크릿\)|웹브라우저|웹\(시크릿\)|웹)\]\s*/g, '').replace(/\[\d{2}-\d{2}-\d{2}\s+\d{2}:\d{2}\]/, '').trim();
     } else if (status.includes('완료')) {
         statusType = 'success';
         shortText = '완료';
@@ -623,8 +668,8 @@ function renderStatusTable(webFetchStatus, mobileFetchStatus, webIssueStatus, mo
         const isMultiCoupon = originalStatus && (originalStatus.includes('만원권') || originalStatus.includes('원권')) && originalStatus.includes(',');
 
         if (isMultiCoupon) {
-            // [모바일]/[웹브라우저] 태그와 타임스탬프 제거 후 쉼표로 분리
-            let cleanStatus = originalStatus.replace(/\[(모바일|웹브라우저|웹)\]\s*/g, '').replace(/\[\d{2}-\d{2}-\d{2}\s+\d{2}:\d{2}\]/, '').trim();
+            // [모바일]/[웹브라우저]/[웹브라우저(시크릿)] 태그와 타임스탬프 제거 후 쉼표로 분리
+            let cleanStatus = originalStatus.replace(/\[(모바일|웹브라우저\(시크릿\)|웹브라우저|웹\(시크릿\)|웹)\]\s*/g, '').replace(/\[\d{2}-\d{2}-\d{2}\s+\d{2}:\d{2}\]/, '').trim();
             const parts = cleanStatus.split(',').map(s => s.trim());
 
             // 각 쿠폰 상태별 클래스 지정
@@ -949,7 +994,7 @@ async function extractAccountInfo(id) {
         return;
     }
 
-    const modeLabel = state.extractMode === 'web' ? '웹' : (state.extractMode === 'mobile' ? '모바일' : '웹+모바일');
+    const modeLabel = ({ web: '웹', web_incognito: '웹(시크릿)', mobile: '모바일', hybrid: '웹+모바일' }[state.extractMode] || '웹');
     const confirmed = await showConfirm({
         title: '정보 조회',
         message: `[${modeLabel}] ${account.email} 계정의 정보를 조회하시겠습니까?`,
@@ -1001,7 +1046,7 @@ async function bulkExtract() {
     const ids = Array.from(state.selectedIds);
     const accounts = ids.map(id => state.accounts.find(acc => acc.id === id)).filter(Boolean);
 
-    const modeLabel = state.extractMode === 'web' ? '웹' : (state.extractMode === 'mobile' ? '모바일' : '웹+모바일');
+    const modeLabel = ({ web: '웹', web_incognito: '웹(시크릿)', mobile: '모바일', hybrid: '웹+모바일' }[state.extractMode] || '웹');
     const confirmed = await showConfirm({
         title: '정보 일괄 조회',
         message: `[${modeLabel}] 선택한 ${accounts.length}개 계정의 정보를 조회하시겠습니까?`,
@@ -1104,7 +1149,7 @@ async function issueCoupon(couponTypes) {
         return;
     }
 
-    const modeLabel = state.extractMode === 'web' ? '웹' : (state.extractMode === 'mobile' ? '모바일' : '웹+모바일');
+    const modeLabel = ({ web: '웹', web_incognito: '웹(시크릿)', mobile: '모바일', hybrid: '웹+모바일' }[state.extractMode] || '웹');
     const confirmed = await showConfirm({
         title: '쿠폰 일괄 발급',
         message: `[${modeLabel}] 선택한 ${accounts.length}개 계정에 ${couponTypesStr} 쿠폰을 발급하시겠습니까?`,
@@ -1160,7 +1205,7 @@ async function issueCouponForAccount(accountId, couponTypes) {
         }
     }
 
-    const modeLabel = state.extractMode === 'web' ? '웹' : (state.extractMode === 'mobile' ? '모바일' : '웹+모바일');
+    const modeLabel = ({ web: '웹', web_incognito: '웹(시크릿)', mobile: '모바일', hybrid: '웹+모바일' }[state.extractMode] || '웹');
     const confirmed = await showConfirm({
         title: '쿠폰 발급',
         message: `[${modeLabel}] ${account.email} 계정에 ${couponTypesStr} 쿠폰을 발급하시겠습니까?`,
@@ -1223,7 +1268,8 @@ async function setExtractMode(mode) {
     try {
         const result = await api('/extract-mode', { method: 'POST', body: { mode } });
         state.extractMode = result.mode;
-        notifyInfo(`추출 모드: ${mode === 'web' ? '웹 브라우저' : mode === 'mobile' ? '모바일' : '웹+모바일'}`);
+        const modeNames = { web: '웹브라우저(기본)', web_incognito: '웹브라우저(시크릿)', mobile: '모바일', hybrid: '웹+모바일' };
+        notifyInfo(`추출 모드: ${modeNames[mode] || mode}`);
         render();
     } catch (error) {
         notifyError('모드 변경 실패: ' + error.message);
@@ -1619,7 +1665,12 @@ function render() {
                     <button class="btn btn-mode ${state.extractMode === 'web' ? 'active' : ''} ${!installStatus.web ? 'needs-install' : ''}"
                             onclick="${installStatus.web ? "setExtractMode('web')" : 'showInstallRequired("web")'}"
                             ${!installStatus.web ? 'data-tooltip="웹크롤러 설치 필요"' : ''}>
-                        웹 브라우저 ${!installStatus.web ? '🔒' : ''}
+                        웹브라우저(기본) ${!installStatus.web ? '🔒' : ''}
+                    </button>
+                    <button class="btn btn-mode ${state.extractMode === 'web_incognito' ? 'active' : ''} ${!installStatus.web ? 'needs-install' : ''}"
+                            onclick="${installStatus.web ? "setExtractMode('web_incognito')" : 'showInstallRequired("web")'}"
+                            ${!installStatus.web ? 'data-tooltip="웹크롤러 설치 필요"' : ''}>
+                        웹브라우저(시크릿) ${!installStatus.web ? '🔒' : ''}
                     </button>
                     <button class="btn btn-mode ${state.extractMode === 'mobile' ? 'active' : ''}"
                             onclick="setExtractMode('mobile')">
@@ -1876,6 +1927,17 @@ function render() {
         ${state.monitor.active ? renderMonitorPopup() : ''}
     `;
 
+    // 바코드 이미지 로컬 생성 (렌더링 후)
+    requestAnimationFrame(() => {
+        document.querySelectorAll('img[id^="bc_"]').forEach(img => {
+            const acc = state.accounts.find(a => 'bc_' + a.id === img.id);
+            if (acc && acc.adikr_barcode) {
+                const dataURL = generateBarcodeDataURL(acc.adikr_barcode, { height: 30, margin: 1 });
+                if (dataURL) img.src = dataURL;
+            }
+        });
+    });
+
 }
 
 function renderAccountRow(acc, rowNum) {
@@ -1910,10 +1972,13 @@ function renderAccountRow(acc, rowNum) {
             </td>
             <td>
                 ${barcode ? `
-                    <img src="https://barcodeapi.org/api/code128/${barcode}" alt="barcode"
-                        style="height:30px;max-width:100%;cursor:pointer;"
-                        onclick="showBarcodeModal('${barcode}', '${(acc.name || '').replace(/'/g, "\\'")}', '${acc.email}', '${(acc.phone || '').replace(/'/g, "\\'")}')"
-                        onerror="this.style.display='none'" title="클릭하여 확대/다운로드">
+                    <div style="display:flex;align-items:center;gap:4px;">
+                        <img id="bc_${acc.id}" src="" alt="barcode"
+                            style="height:30px;max-width:100%;cursor:pointer;"
+                            onclick="showBarcodeModal('${barcode}', '${(acc.name || '').replace(/'/g, "\\'")}', '${acc.email}', '${(acc.phone || '').replace(/'/g, "\\'")}')"
+                            title="클릭하여 확대/다운로드">
+                        <span style="cursor:pointer;font-size:11px;color:#999;" onclick="event.stopPropagation();var el=document.getElementById('bc_${acc.id}');refreshBarcode(el,'${barcode}')" title="바코드 새로고침">↻</span>
+                    </div>
                 ` : '-'}
             </td>
             <td>
@@ -2470,8 +2535,8 @@ function renderModal() {
             ? `전체 활성 계정 ${targetCount}개`
             : `선택된 ${targetCount}개 계정`;
         const issueFunc = isAllActive ? 'startIssueCouponForAllActive' : 'startIssueCoupon';
-        const modeLabel = state.extractMode === 'web' ? '웹' : (state.extractMode === 'mobile' ? '모바일' : '웹+모바일');
-        const timeEstimate = state.extractMode === 'web' ? '20~30초' : (state.extractMode === 'mobile' ? '30~40초' : '20초~1분');
+        const modeLabel = ({ web: '웹', web_incognito: '웹(시크릿)', mobile: '모바일', hybrid: '웹+모바일' }[state.extractMode] || '웹');
+        const timeEstimate = ({ web: '20~30초', web_incognito: '20~30초', mobile: '30~40초', hybrid: '20초~1분' }[state.extractMode] || '20~30초');
 
         // 선택된 쿠폰 타입들
         const selected = state.selectedIssueCouponTypes || [];
@@ -2550,8 +2615,8 @@ function renderModal() {
     }
 
     if (state.modal === 'single-issue-coupon') {
-        const modeLabel = state.extractMode === 'web' ? '웹' : (state.extractMode === 'mobile' ? '모바일' : '웹+모바일');
-        const timeEstimate = state.extractMode === 'web' ? '20~30초' : (state.extractMode === 'mobile' ? '30~40초' : '20초~1분');
+        const modeLabel = ({ web: '웹', web_incognito: '웹(시크릿)', mobile: '모바일', hybrid: '웹+모바일' }[state.extractMode] || '웹');
+        const timeEstimate = ({ web: '20~30초', web_incognito: '20~30초', mobile: '30~40초', hybrid: '20초~1분' }[state.extractMode] || '20~30초');
 
         // 선택된 쿠폰 타입들
         const selected = state.selectedIssueCouponTypes || [];
@@ -2734,8 +2799,7 @@ teayoouun1@naver.com
                     </div>
                     <div class="modal-body" style="text-align:center;">
                         <div style="background:#fff;padding:20px;border-radius:8px;border:1px solid #e8e8e8;">
-                            <img src="https://barcodeapi.org/api/code128/${barcode}"
-                                alt="barcode" style="max-width:100%;height:80px;" id="barcodeImage">
+                            <canvas id="barcodeModalCanvas"></canvas>
                             <div style="margin-top:12px;font-family:monospace;font-size:16px;letter-spacing:2px;color:#333;">
                                 ${barcode}
                             </div>
@@ -3231,7 +3295,7 @@ async function bulkExtractAll() {
         return;
     }
 
-    const modeLabel = state.extractMode === 'web' ? '웹' : (state.extractMode === 'mobile' ? '모바일' : '웹+모바일');
+    const modeLabel = ({ web: '웹', web_incognito: '웹(시크릿)', mobile: '모바일', hybrid: '웹+모바일' }[state.extractMode] || '웹');
     if (!confirm(`[${modeLabel}] 전체 활성 계정 ${activeAccounts.length}개의 정보를 조회하시겠습니까?`)) {
         return;
     }
@@ -3292,7 +3356,7 @@ async function issueCouponForAllActive(couponTypes) {
     const activeAccounts = state.accounts.filter(a => a.is_active);
     const ids = activeAccounts.map(a => a.id);
 
-    const modeLabel = state.extractMode === 'web' ? '웹' : '모바일';
+    const modeLabel = ({ web: '웹', web_incognito: '웹(시크릿)', mobile: '모바일', hybrid: '웹+모바일' }[state.extractMode] || '웹');
     state.bulkIssueAllActive = false;
     openMonitor('issue', `[${modeLabel}] 쿠폰 일괄 발급 (${couponTypesStr})`, activeAccounts);
 
@@ -3661,6 +3725,23 @@ function copyCouponCode(code) {
 function showBarcodeModal(barcode, name, email, phone) {
     state.modal = { type: 'barcode', barcode, name, email, phone };
     render();
+    // 모달 렌더링 후 canvas에 바코드 그리기
+    requestAnimationFrame(() => {
+        const canvas = document.getElementById('barcodeModalCanvas');
+        if (canvas && barcode) {
+            try {
+                JsBarcode(canvas, barcode, {
+                    format: 'CODE128',
+                    width: 2,
+                    height: 80,
+                    displayValue: false,
+                    margin: 10,
+                });
+            } catch (e) {
+                console.error('모달 바코드 생성 실패:', e);
+            }
+        }
+    });
 }
 
 // 토글 스위치 라벨 업데이트
@@ -3861,9 +3942,7 @@ async function downloadBarcode(barcode, name, phone) {
     if (!confirmed) return;
 
     try {
-        const url = `https://barcodeapi.org/api/code128/${barcode}`;
-        const response = await fetch(url);
-        const blob = await response.blob();
+        const blob = await generateBarcodeBlob(barcode);
 
         // 파일명: 이름_전화번호_아디다스_바코드.png
         const phonePart = phone ? `_${phone.replace(/-/g, '')}` : '';
@@ -3918,9 +3997,7 @@ async function bulkDownloadBarcodes() {
 
         for (const acc of accounts) {
             try {
-                const url = `https://barcodeapi.org/api/code128/${acc.adikr_barcode}`;
-                const response = await fetch(url);
-                const blob = await response.blob();
+                const blob = await generateBarcodeBlob(acc.adikr_barcode);
                 // 파일명: 이름_전화번호_아디다스_바코드.png
                 const name = acc.name || acc.email.split('@')[0];
                 const phonePart = acc.phone ? `_${acc.phone.replace(/-/g, '')}` : '';

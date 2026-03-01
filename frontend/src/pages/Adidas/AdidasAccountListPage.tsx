@@ -108,6 +108,8 @@ const AdidasAccountListPage: React.FC = () => {
   // 바코드 모달 상태
   const [barcodeModalVisible, setBarcodeModalVisible] = useState(false);
   const [selectedBarcode, setSelectedBarcode] = useState<{url: string, email: string} | null>(null);
+  const [brokenBarcodeIds, setBrokenBarcodeIds] = useState<Set<string>>(new Set());
+  const [barcodeTimestamp, setBarcodeTimestamp] = useState(Date.now());
 
   // 상대 경로를 nginx 절대 URL로 변환
   // 개발(포트 3000): http://localhost/uploads/... (nginx 포트 80)
@@ -177,26 +179,8 @@ const AdidasAccountListPage: React.FC = () => {
   }, [pageSize]);
 
   const autoGenerateMissingBarcodes = async (accountList: AdidasAccount[]) => {
-    // DB에 barcode_image_url이 없는 계정
-    const noUrl = accountList.filter(acc => acc.adikr_barcode && !acc.barcode_image_url);
-
-    // DB에 barcode_image_url이 있지만 파일이 실제로 존재하지 않는 계정 확인
-    const hasUrl = accountList.filter(acc => acc.adikr_barcode && acc.barcode_image_url);
-    const brokenChecks = await Promise.allSettled(
-      hasUrl.map(acc => new Promise<AdidasAccount>((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => reject(); // 정상 로드 → 재생성 불필요
-        img.onerror = () => resolve(acc); // 깨진 이미지 → 재생성 필요
-        img.src = getStaticUrl(acc.barcode_image_url!);
-      }))
-    );
-    const broken = brokenChecks
-      .filter(r => r.status === 'fulfilled')
-      .map(r => (r as PromiseFulfilledResult<AdidasAccount>).value);
-
-    const missing = [...noUrl, ...broken];
+    const missing = accountList.filter(acc => acc.adikr_barcode && !acc.barcode_image_url);
     if (missing.length === 0) return;
-
     const results = await Promise.allSettled(
       missing.map(acc => api.post(`/adidas-accounts/${acc.id}/generate-barcode`))
     );
@@ -327,7 +311,8 @@ const AdidasAccountListPage: React.FC = () => {
       message.loading({ content: '바코드 이미지 생성 중...', key: 'barcode' });
       const result = await api.post(`/adidas-accounts/${accountId}/generate-barcode`);
       message.success({ content: '바코드 이미지가 생성되었습니다', key: 'barcode' });
-      // 전체 재로드 대신 해당 계정만 로컬 업데이트 (정렬 유지)
+      setBrokenBarcodeIds(prev => { const n = new Set(prev); n.delete(accountId); return n; });
+      setBarcodeTimestamp(Date.now());
       setAccounts(prev => prev.map(acc =>
         acc.id === accountId ? { ...acc, barcode_image_url: result.data.barcode_url } : acc
       ));
@@ -335,6 +320,24 @@ const AdidasAccountListPage: React.FC = () => {
       const errorMsg = error.response?.data?.detail || '바코드 생성에 실패했습니다';
       message.error({ content: errorMsg, key: 'barcode' });
     }
+  };
+
+  // 전체 바코드 재생성
+  const handleRegenerateAllBarcodes = async () => {
+    const targets = accounts.filter(acc => acc.adikr_barcode);
+    if (targets.length === 0) { message.warning('바코드가 있는 계정이 없습니다'); return; }
+    message.loading({ content: `${targets.length}개 바코드 재생성 중...`, key: 'regenAll', duration: 0 });
+    let success = 0;
+    for (const acc of targets) {
+      try {
+        await api.post(`/adidas-accounts/${acc.id}/generate-barcode`);
+        success++;
+      } catch { /* skip */ }
+    }
+    message.success({ content: `${success}/${targets.length}개 바코드 재생성 완료`, key: 'regenAll' });
+    setBrokenBarcodeIds(new Set());
+    setBarcodeTimestamp(Date.now());
+    loadAccounts();
   };
 
   // 선택 계정 일괄 바코드 생성
@@ -1373,8 +1376,9 @@ const AdidasAccountListPage: React.FC = () => {
       width: 100,
       align: 'center' as 'center',
       render: (image: string, record: AdidasAccount) => {
-        if (image) {
-          const src = getStaticUrl(image);
+        const isBroken = brokenBarcodeIds.has(record.id);
+        if (image && !isBroken) {
+          const src = getStaticUrl(image) + `?t=${barcodeTimestamp}`;
           return (
             <img
               src={src}
@@ -1384,14 +1388,8 @@ const AdidasAccountListPage: React.FC = () => {
                 setSelectedBarcode({ url: src, email: record.email });
                 setBarcodeModalVisible(true);
               }}
-              onError={(e) => {
-                const target = e.currentTarget;
-                target.style.display = 'none';
-                const btn = document.createElement('span');
-                btn.textContent = '↻ 재생성';
-                btn.style.cssText = 'color:#1890ff;font-size:11px;cursor:pointer;';
-                btn.onclick = () => handleGenerateBarcode(record.id);
-                target.parentElement?.appendChild(btn);
+              onError={() => {
+                setBrokenBarcodeIds(prev => new Set(prev).add(record.id));
               }}
             />
           );
@@ -1401,7 +1399,7 @@ const AdidasAccountListPage: React.FC = () => {
             <span
               style={{ color: '#1890ff', fontSize: '11px', cursor: 'pointer' }}
               onClick={() => handleGenerateBarcode(record.id)}
-            >↻ 생성</span>
+            >{isBroken ? '↻ 재생성' : '↻ 생성'}</span>
           );
         }
         return <span style={{ color: '#ccc', fontSize: '11px' }}>-</span>;
@@ -1880,6 +1878,13 @@ const AdidasAccountListPage: React.FC = () => {
                     style={{ backgroundColor: '#237804', color: '#fff', border: 'none' }}
                   >
                     바코드 다운로드
+                  </Button>
+                  <Button
+                    icon={<ReloadOutlined />}
+                    onClick={handleRegenerateAllBarcodes}
+                    size="small"
+                  >
+                    바코드 재생성
                   </Button>
                   {/* 활성/비활성 토글 */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '0 4px', border: '1px solid #d9d9d9', borderRadius: 6, background: '#fafafa', height: 24 }}>
@@ -2927,14 +2932,12 @@ const AdidasAccountListPage: React.FC = () => {
                 {/* 바코드 이미지 */}
                 {(acc.barcode_image_url || acc.adikr_barcode) && (
                   <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
-                    {acc.barcode_image_url ? (
+                    {acc.barcode_image_url && !brokenBarcodeIds.has(acc.id) ? (
                       <img
-                        src={getStaticUrl(acc.barcode_image_url)}
+                        src={getStaticUrl(acc.barcode_image_url) + `?t=${barcodeTimestamp}`}
                         alt="barcode"
                         style={{ maxWidth: '100%', height: 'auto', maxHeight: 64, borderRadius: 4, flex: 1 }}
-                        onError={(e) => {
-                          e.currentTarget.style.display = 'none';
-                        }}
+                        onError={() => setBrokenBarcodeIds(prev => new Set(prev).add(acc.id))}
                       />
                     ) : null}
                     <Button

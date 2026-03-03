@@ -195,6 +195,30 @@ def get_user_connected_id(db: Session, user_id: UUID, client_type: str = "P") ->
     return acc.connected_id if acc else None
 
 
+def clear_user_connected_ids(db: Session, user_id: UUID, client_type: Optional[str] = None) -> int:
+    """사용자의 모든 connected_id 초기화 (API 키 변경 시 사용)
+
+    Returns: 초기화된 계정 수
+    """
+    query = db.query(CodefAccount).filter(
+        CodefAccount.user_id == user_id,
+        CodefAccount.connected_id.isnot(None),
+        CodefAccount.connected_id != "",
+    )
+    if client_type:
+        query = query.filter(CodefAccount.client_type == client_type)
+
+    accounts = query.all()
+    count = 0
+    for acc in accounts:
+        acc.connected_id = None
+        acc.is_connected = False
+        count += 1
+    if count > 0:
+        db.commit()
+    return count
+
+
 def delete_codef_account(db: Session, user_id: UUID, organization: str, client_type: str = "P") -> bool:
     """카드사 계정 삭제"""
     acc = db.query(CodefAccount).filter(

@@ -21,7 +21,7 @@ from app.models.card_transaction import CardTransaction
 from app.models.bank_transaction import BankTransaction
 from app.crud.crud_card_transaction import (
     upsert_codef_setting, upsert_codef_account, get_user_connected_id,
-    get_daily_api_call_count, record_api_call,
+    get_daily_api_call_count, record_api_call, clear_user_connected_ids,
 )
 
 
@@ -462,6 +462,20 @@ def register_account(
 
     # 응답 확인
     res_code = result.get("result", {}).get("code", "")
+
+    # CF-04019: 존재하지 않는 connectedId (API 키 변경 시 발생)
+    # → 이전 connectedId 초기화 후 /v1/account/create로 재시도
+    if res_code == "CF-04019" and connected_id:
+        if user_id:
+            clear_user_connected_ids(db, user_id)
+        connected_id = None  # 재시도 시 create로 분기
+
+        endpoint = "/v1/account/create"
+        params = {
+            "accountList": [account_info],
+        }
+        result = _call_api(db, endpoint, params, caller_user_id=user_id)
+        res_code = result.get("result", {}).get("code", "")
 
     # CF-04004: 이미 등록된 기관 → /v1/account/update로 재시도
     if res_code == "CF-04000" and connected_id:

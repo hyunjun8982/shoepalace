@@ -37,6 +37,7 @@ import {
   SyncOutlined,
   DesktopOutlined,
   CloudServerOutlined,
+  CopyOutlined,
 } from '@ant-design/icons';
 import { adidasAccountService } from '../../services/adidasAccount';
 import { AdidasAccount, AdidasAccountCreate } from '../../types/adidasAccount';
@@ -47,6 +48,23 @@ import dayjs from 'dayjs';
 
 const { RangePicker } = DatePicker;
 const { Option } = Select;
+
+// HTTPS가 아닌 환경에서도 동작하는 클립보드 복사 함수
+function copyToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    return navigator.clipboard.writeText(text);
+  }
+  // fallback: execCommand
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  document.body.removeChild(textarea);
+  return Promise.resolve();
+}
 
 // 쿠폰 종류 카테고리 (getCouponDisplayInfo 정규화 이름 기준)
 const COUPON_CATEGORIES = [
@@ -94,6 +112,10 @@ const AdidasAccountListPage: React.FC = () => {
 
   // 뷰 모드: 'card' | 'table'
   const [viewMode, setViewMode] = useState<'card' | 'table'>('card');
+
+  // 카드뷰 정렬
+  const [cardSortKey, setCardSortKey] = useState<string>('default');
+  const [cardSortOrder, setCardSortOrder] = useState<'asc' | 'desc'>('asc');
 
   // 카드 상세 팝업
   const [detailModalVisible, setDetailModalVisible] = useState(false);
@@ -1110,6 +1132,46 @@ const AdidasAccountListPage: React.FC = () => {
     return filtered;
   }, [accounts, searchText, activeFilter, emailTypeFilter, fetchDateFrom, fetchDateTo, birthdayMonthFilter, couponFilter, statusFilter, minPoints, maxPoints]);
 
+  // 카드뷰 정렬 적용
+  const sortedFilteredAccounts = useMemo(() => {
+    if (cardSortKey === 'default') return filteredAccounts;
+    const sorted = [...filteredAccounts];
+    const dir = cardSortOrder === 'asc' ? 1 : -1;
+    sorted.sort((a, b) => {
+      switch (cardSortKey) {
+        case 'email':
+          return dir * a.email.localeCompare(b.email);
+        case 'birthday': {
+          if (!a.birthday && !b.birthday) return 0;
+          if (!a.birthday) return dir;
+          if (!b.birthday) return -dir;
+          const ap = a.birthday.split('-');
+          const bp = b.birthday.split('-');
+          const aMMDD = ap.length >= 3 ? `${ap[1]}${ap[2]}` : '9999';
+          const bMMDD = bp.length >= 3 ? `${bp[1]}${bp[2]}` : '9999';
+          return dir * aMMDD.localeCompare(bMMDD);
+        }
+        case 'points':
+          return dir * ((a.current_points || 0) - (b.current_points || 0));
+        case 'vouchers': {
+          const aLen = a.owned_vouchers ? (JSON.parse(a.owned_vouchers) as any[]).length : 0;
+          const bLen = b.owned_vouchers ? (JSON.parse(b.owned_vouchers) as any[]).length : 0;
+          return dir * (aLen - bLen);
+        }
+        case 'date': {
+          const aDate = getLatestStatusDate(a);
+          const bDate = getLatestStatusDate(b);
+          return dir * ((aDate?.getTime() || 0) - (bDate?.getTime() || 0));
+        }
+        case 'active':
+          return dir * ((a.is_active ? 1 : 0) - (b.is_active ? 1 : 0));
+        default:
+          return 0;
+      }
+    });
+    return sorted;
+  }, [filteredAccounts, cardSortKey, cardSortOrder]);
+
   // ===== 쿠폰 유틸리티 =====
   const getCouponDisplayInfo = (description: string) => {
     if (!description) return { name: '기타', sortValue: 0, icon: '🎫' };
@@ -1284,6 +1346,7 @@ const AdidasAccountListPage: React.FC = () => {
       key: 'is_active',
       width: 55,
       align: 'center' as 'center',
+      sorter: (a: AdidasAccount, b: AdidasAccount) => (a.is_active ? 1 : 0) - (b.is_active ? 1 : 0),
       render: (isActive: boolean) =>
         isActive ? (
           <CheckCircleOutlined style={{ color: '#52c41a', fontSize: '18px' }} />
@@ -1295,24 +1358,27 @@ const AdidasAccountListPage: React.FC = () => {
       title: '이메일/비밀번호',
       key: 'email_password',
       width: 200,
+      sorter: (a: AdidasAccount, b: AdidasAccount) => a.email.localeCompare(b.email),
       render: (_: any, record: AdidasAccount) => (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
           <span
             onClick={() => {
-              navigator.clipboard.writeText(record.email);
+              copyToClipboard(record.email);
               message.success('이메일이 복사되었습니다');
             }}
             style={{ cursor: 'pointer', fontSize: '12px' }}
           >
+            <CopyOutlined style={{ fontSize: 10, color: '#aaa', marginRight: 4 }} />
             {record.email}
           </span>
           <span
             onClick={() => {
-              navigator.clipboard.writeText(record.password);
+              copyToClipboard(record.password);
               message.success('비밀번호가 복사되었습니다');
             }}
             style={{ cursor: 'pointer', fontSize: '12px', color: '#888', fontFamily: 'monospace' }}
           >
+            <CopyOutlined style={{ fontSize: 10, color: '#ccc', marginRight: 4 }} />
             {record.password}
           </span>
         </div>
@@ -1323,6 +1389,17 @@ const AdidasAccountListPage: React.FC = () => {
       dataIndex: 'birthday',
       key: 'birthday',
       width: 60,
+      sorter: (a: AdidasAccount, b: AdidasAccount) => {
+        // 월/일 기준 정렬 (년도 무시)
+        if (!a.birthday && !b.birthday) return 0;
+        if (!a.birthday) return 1;
+        if (!b.birthday) return -1;
+        const ap = a.birthday.split('-');
+        const bp = b.birthday.split('-');
+        const aMMDD = (ap.length >= 3) ? `${ap[1]}${ap[2]}` : '9999';
+        const bMMDD = (bp.length >= 3) ? `${bp[1]}${bp[2]}` : '9999';
+        return aMMDD.localeCompare(bMMDD);
+      },
       render: (birthday: string) => {
         if (!birthday) return '-';
         const parts = birthday.split('-');
@@ -1337,6 +1414,7 @@ const AdidasAccountListPage: React.FC = () => {
       dataIndex: 'name',
       key: 'name',
       width: 120,
+      sorter: (a: AdidasAccount, b: AdidasAccount) => (a.name || '').localeCompare(b.name || ''),
       render: (name: string, record: AdidasAccount) => {
         const phone = record.phone;
         const convertedPhone = phone ? phone.replace(/^\+82\s*/, '0') : null;
@@ -1410,6 +1488,7 @@ const AdidasAccountListPage: React.FC = () => {
       dataIndex: 'current_points',
       key: 'current_points',
       width: 85,
+      sorter: (a: AdidasAccount, b: AdidasAccount) => (a.current_points || 0) - (b.current_points || 0),
       render: (points: number) => points ? (
         <strong style={{ color: '#1890ff', fontSize: '13px' }}>
           {points.toLocaleString()}P
@@ -1420,6 +1499,11 @@ const AdidasAccountListPage: React.FC = () => {
       title: '보유 쿠폰',
       dataIndex: 'owned_vouchers',
       key: 'owned_vouchers',
+      sorter: (a: AdidasAccount, b: AdidasAccount) => {
+        const aLen = a.owned_vouchers ? (JSON.parse(a.owned_vouchers) as any[]).length : 0;
+        const bLen = b.owned_vouchers ? (JSON.parse(b.owned_vouchers) as any[]).length : 0;
+        return aLen - bLen;
+      },
       width: 190,
       render: (vouchers: string, record: AdidasAccount) => {
         if (!vouchers) return <span style={{ color: '#999', fontSize: '12px' }}>없음</span>;
@@ -1486,7 +1570,7 @@ const AdidasAccountListPage: React.FC = () => {
                     <div
                       onClick={(e) => {
                         e.stopPropagation();
-                        navigator.clipboard.writeText(v.code);
+                        copyToClipboard(v.code);
                         message.success('쿠폰 코드 복사됨');
                       }}
                       style={{
@@ -1575,6 +1659,11 @@ const AdidasAccountListPage: React.FC = () => {
       key: 'latest_status_date',
       width: 80,
       align: 'center' as 'center',
+      sorter: (a: AdidasAccount, b: AdidasAccount) => {
+        const aDate = getLatestStatusDate(a);
+        const bDate = getLatestStatusDate(b);
+        return (aDate?.getTime() || 0) - (bDate?.getTime() || 0);
+      },
       render: (_: any, record: AdidasAccount) => {
         const latest = getLatestStatusDate(record);
         if (!latest) return <span style={{ color: '#999' }}>-</span>;
@@ -1865,7 +1954,36 @@ const AdidasAccountListPage: React.FC = () => {
                 )}
               </Space>
 
-              {/* 2줄 오른쪽: 선택 시 활성화 버튼 */}
+              {/* 2줄 오른쪽: 정렬 + 선택 시 활성화 버튼 */}
+              <Space size={12} align="center">
+                {viewMode === 'card' && (
+                  <Space size={4} align="center">
+                    <span style={{ fontSize: 12, color: '#888' }}>정렬:</span>
+                    <Select
+                      value={cardSortKey}
+                      onChange={(v) => { setCardSortKey(v); setCurrentPage(1); }}
+                      size="small"
+                      style={{ width: 120 }}
+                    >
+                      <Option value="default">기본 (등록순)</Option>
+                      <Option value="birthday">생일 (월/일)</Option>
+                      <Option value="email">이메일</Option>
+                      <Option value="points">포인트</Option>
+                      <Option value="vouchers">쿠폰 수</Option>
+                      <Option value="date">조회일자</Option>
+                      <Option value="active">사용여부</Option>
+                    </Select>
+                    {cardSortKey !== 'default' && (
+                      <Button
+                        size="small"
+                        onClick={() => setCardSortOrder(o => o === 'asc' ? 'desc' : 'asc')}
+                        style={{ fontSize: 11, padding: '0 6px' }}
+                      >
+                        {cardSortOrder === 'asc' ? '▲ 오름' : '▼ 내림'}
+                      </Button>
+                    )}
+                  </Space>
+                )}
               {selectedRowKeys.length > 0 && (
                 <Space size={8} align="center">
                   <span style={{ color: '#666', fontWeight: 500, fontSize: '13px' }}>
@@ -1912,6 +2030,7 @@ const AdidasAccountListPage: React.FC = () => {
                   </Popconfirm>
                 </Space>
               )}
+              </Space>
             </div>
           </div>
         }
@@ -1962,7 +2081,7 @@ const AdidasAccountListPage: React.FC = () => {
                               <span style={{ fontSize: 9, fontWeight: 700, color: '#dc2626', whiteSpace: 'nowrap' }}>{expiryShort}</span>
                               {a.code && (
                                 <span
-                                  onClick={() => { navigator.clipboard.writeText(a.code!); message.success('코드 복사'); }}
+                                  onClick={() => { copyToClipboard(a.code!); message.success('코드 복사'); }}
                                   style={{ fontSize: 8, color: '#713f12', fontFamily: 'monospace', whiteSpace: 'nowrap', cursor: 'pointer', textDecoration: 'underline dotted' }}
                                 >{a.code}</span>
                               )}
@@ -1986,7 +2105,7 @@ const AdidasAccountListPage: React.FC = () => {
               padding: '4px 0',
               alignItems: 'start',
             }}>
-              {filteredAccounts
+              {sortedFilteredAccounts
                 .slice((currentPage - 1) * pageSize, currentPage * pageSize)
                 .map((record) => {
                   const isSelected = selectedRowKeys.includes(record.id);
@@ -2095,15 +2214,15 @@ const AdidasAccountListPage: React.FC = () => {
                         <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                           <div style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.4 }}>
                             <span
-                              style={{ color: hdrEmail, cursor: 'copy' }}
-                              onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(record.email); message.success('이메일 복사'); }}
-                            >{record.email}</span>
+                              style={{ color: hdrEmail, cursor: 'pointer' }}
+                              onClick={(e) => { e.stopPropagation(); copyToClipboard(record.email); message.success('이메일 복사'); }}
+                            ><CopyOutlined style={{ fontSize: 9, color: '#aaa', marginRight: 3 }} />{record.email}</span>
                           </div>
                           <div style={{ fontSize: 10, fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.3, marginTop: 1 }}>
                             <span
-                              style={{ color: hdrPw, cursor: 'copy' }}
-                              onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(record.password); message.success('비밀번호 복사'); }}
-                            >{record.password}</span>
+                              style={{ color: hdrPw, cursor: 'pointer' }}
+                              onClick={(e) => { e.stopPropagation(); copyToClipboard(record.password); message.success('비밀번호 복사'); }}
+                            ><CopyOutlined style={{ fontSize: 9, color: '#ccc', marginRight: 3 }} />{record.password}</span>
                           </div>
                         </div>
 
@@ -2177,7 +2296,7 @@ const AdidasAccountListPage: React.FC = () => {
                                     <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.3 }}>{info.name}</span>
                                     {v.code && (
                                       <span
-                                        onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(v.code); message.success('코드 복사'); }}
+                                        onClick={(e) => { e.stopPropagation(); copyToClipboard(v.code); message.success('코드 복사'); }}
                                         style={{ fontSize: 8, color: '#fef9c3', fontFamily: 'monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.2, cursor: 'pointer' }}
                                       >{v.code}</span>
                                     )}
@@ -2808,7 +2927,7 @@ const AdidasAccountListPage: React.FC = () => {
                   <Button
                     size="small"
                     onClick={() => {
-                      navigator.clipboard.writeText('backend\\start_local_server.bat');
+                      copyToClipboard('backend\\start_local_server.bat');
                       message.success('경로가 복사되었습니다');
                     }}
                   >
@@ -2897,7 +3016,7 @@ const AdidasAccountListPage: React.FC = () => {
                     <span style={{ fontSize: 12, color: '#999', minWidth: 90 }}>비밀번호</span>
                     <span
                       style={{ fontSize: 12, color: '#333', fontFamily: 'monospace', cursor: 'pointer' }}
-                      onClick={() => { navigator.clipboard.writeText(acc.password); message.success('비밀번호 복사'); }}
+                      onClick={() => { copyToClipboard(acc.password); message.success('비밀번호 복사'); }}
                     >{acc.password} 📋</span>
                   </div>
                   {acc.birthday && (
@@ -2917,7 +3036,7 @@ const AdidasAccountListPage: React.FC = () => {
                       <span style={{ fontSize: 12, color: '#999', minWidth: 90 }}>ADIKR 바코드</span>
                       <span
                         style={{ fontSize: 11, color: '#333', fontFamily: 'monospace', cursor: 'pointer' }}
-                        onClick={() => { navigator.clipboard.writeText(acc.adikr_barcode!); message.success('바코드 복사'); }}
+                        onClick={() => { copyToClipboard(acc.adikr_barcode!); message.success('바코드 복사'); }}
                       >{acc.adikr_barcode} 📋</span>
                     </div>
                   )}
@@ -3013,7 +3132,7 @@ const AdidasAccountListPage: React.FC = () => {
                                 <span style={{ fontSize: 12, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{info.name}</span>
                                 {v.code && (
                                   <span
-                                    onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(v.code); message.success('코드 복사'); }}
+                                    onClick={(e) => { e.stopPropagation(); copyToClipboard(v.code); message.success('코드 복사'); }}
                                     style={{ fontSize: 9, background: '#fef9c3', color: '#713f12', borderRadius: 2, padding: '0 3px', marginTop: 1, fontFamily: 'monospace', cursor: 'pointer', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}
                                   >{v.code} 📋</span>
                                 )}

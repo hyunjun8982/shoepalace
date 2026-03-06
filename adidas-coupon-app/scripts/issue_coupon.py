@@ -520,10 +520,18 @@ def web_login_and_issue_coupon(email: str, password: str, coupon_type: str, inco
         print(f"  쿠폰 발급 성공!")
         print(f"  쿠폰 코드: {coupon_code}")
 
-        # 5-7. 발급 후 정보 조회
+        # 5-7. 발급 후 정보 조회 (API 반영 대기 후 재시도)
+        time.sleep(2)
         new_points = get_account_points(access_token)
         vouchers = get_account_vouchers(access_token)
         coupon_list = parse_vouchers(vouchers)
+
+        # 새 쿠폰이 목록에 없으면 한번 더 시도
+        if coupon_code and not any(c.get('code') == coupon_code for c in coupon_list):
+            print(f"  새 쿠폰({coupon_code})이 목록에 없음, 2초 후 재조회...")
+            time.sleep(2)
+            vouchers = get_account_vouchers(access_token)
+            coupon_list = parse_vouchers(vouchers)
 
         points_used = current_points - new_points
 

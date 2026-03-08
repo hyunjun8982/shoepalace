@@ -50,6 +50,23 @@ services:
       - backend
     restart: unless-stopped
 
+  # Card App (Next.js)
+  card-app:
+    image: shoepalace-card-app:latest
+    container_name: shoepalace_card_app
+    ports:
+      - "4000:4000"
+    environment:
+      - DATABASE_URL=postgresql://shoepalace_user:shoepalace_pass@db:5432/shoepalace
+      - JWT_SECRET=card-app-secret-key-change-in-production-2024
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=admin1234
+      - BASE_PATH=/card
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
   # Nginx Reverse Proxy
   nginx:
     image: nginx:alpine
@@ -63,6 +80,7 @@ services:
     depends_on:
       - frontend
       - backend
+      - card-app
     restart: unless-stopped
 
 volumes:

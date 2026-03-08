@@ -77,6 +77,22 @@ services:
       - backend
     restart: unless-stopped
 
+  # Card App (Next.js)
+  card-app:
+    build:
+      context: ./card-app
+    container_name: shoepalace_dev_card_app
+    ports:
+      - "4000:4000"
+    environment:
+      - DATABASE_URL=postgresql://shoepalace_user:shoepalace_pass@129.212.227.252:5433/shoepalace
+      - JWT_SECRET=card-app-jwt-secret-key-2024
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=admin1234
+      - CODEF_CLIENT_ID=${CODEF_CLIENT_ID:-}
+      - CODEF_SECRET=${CODEF_SECRET:-}
+    restart: unless-stopped
+
   # Nginx Reverse Proxy (다운로드 파일 서빙용)
   nginx:
     image: nginx:alpine

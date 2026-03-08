@@ -7,6 +7,7 @@ on:
     paths:
       - 'backend/**'
       - 'frontend/**'
+      - 'card-app/**'
       - 'nginx/**'
       - 'docker-compose*.yml'
       - '.github/workflows/**'
@@ -15,6 +16,7 @@ on:
 env:
   DOCKER_BACKEND_IMAGE: shoepalace-backend
   DOCKER_FRONTEND_IMAGE: shoepalace-frontend
+  DOCKER_CARD_APP_IMAGE: shoepalace-card-app
 
 jobs:
   build-and-deploy:
@@ -38,6 +40,11 @@ jobs:
           docker build -t ${{ env.DOCKER_FRONTEND_IMAGE }}:latest -f frontend/Dockerfile frontend/
           docker save ${{ env.DOCKER_FRONTEND_IMAGE }}:latest | gzip > frontend-image.tar.gz
 
+      - name: Build Card App Image
+        run: |
+          docker build -t ${{ env.DOCKER_CARD_APP_IMAGE }}:latest -f card-app/Dockerfile card-app/
+          docker save ${{ env.DOCKER_CARD_APP_IMAGE }}:latest | gzip > card-app-image.tar.gz
+
       # 빌드된 이미지를 서버로 전송
       - name: Copy images to server
         uses: appleboy/scp-action@v0.1.7
@@ -46,7 +53,7 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT }}
-          source: "backend-image.tar.gz,frontend-image.tar.gz"
+          source: "backend-image.tar.gz,frontend-image.tar.gz,card-app-image.tar.gz"
           target: "/tmp/shoepalace-deploy"
           timeout: 120s
 
@@ -71,26 +78,29 @@ jobs:
             cd ${{ secrets.DEPLOY_PATH }}
 
             # 최신 코드 가져오기 (docker-compose.yml 등 설정 파일용)
-            echo "[1/5] 최신 코드 가져오는 중..."
+            echo "[1/6] 최신 코드 가져오는 중..."
             git fetch origin main
             git reset --hard origin/main
 
             # Docker 이미지 로드
-            echo "[2/5] Backend 이미지 로드 중..."
+            echo "[2/6] Backend 이미지 로드 중..."
             gunzip -c /tmp/shoepalace-deploy/backend-image.tar.gz | docker load
 
-            echo "[3/5] Frontend 이미지 로드 중..."
+            echo "[3/6] Frontend 이미지 로드 중..."
             gunzip -c /tmp/shoepalace-deploy/frontend-image.tar.gz | docker load
+
+            echo "[4/6] Card App 이미지 로드 중..."
+            gunzip -c /tmp/shoepalace-deploy/card-app-image.tar.gz | docker load
 
             # 전송된 파일 정리
             rm -rf /tmp/shoepalace-deploy
 
             # 기존 컨테이너 중지 및 제거
-            echo "[4/5] 기존 컨테이너 정리 중..."
+            echo "[5/6] 기존 컨테이너 정리 중..."
             docker compose -f docker-compose.prod.yml down --remove-orphans || true
 
             # 새 컨테이너 시작
-            echo "[5/5] 새 컨테이너 시작 중..."
+            echo "[6/6] 새 컨테이너 시작 중..."
             docker compose -f docker-compose.prod.yml up -d
 
             # 오래된 이미지 정리

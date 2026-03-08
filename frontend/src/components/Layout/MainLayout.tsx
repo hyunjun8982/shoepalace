@@ -355,23 +355,23 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         },
       ],
     },
-    {
-      key: 'finance-management',
-      icon: <CreditCardOutlined />,
-      label: '재무 관리',
-      children: [
-        {
-          key: '/card-transactions',
-          icon: <CreditCardOutlined />,
-          label: '카드 내역',
-        },
-        {
-          key: '/bank-transactions',
-          icon: <BankOutlined />,
-          label: '은행 거래내역',
-        },
-      ],
-    },
+    // {
+    //   key: 'finance-management',
+    //   icon: <CreditCardOutlined />,
+    //   label: '재무 관리',
+    //   children: [
+    //     {
+    //       key: '/card-transactions',
+    //       icon: <CreditCardOutlined />,
+    //       label: '카드 내역',
+    //     },
+    //     {
+    //       key: '/bank-transactions',
+    //       icon: <BankOutlined />,
+    //       label: '은행 거래내역',
+    //     },
+    //   ],
+    // },
     {
       key: 'etc-management',
       icon: <BulbOutlined />,
@@ -401,12 +401,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           label: '아디다스 쿠폰',
           roles: ['admin'],
         },
-        {
-          key: '/settings/codef',
-          icon: <SettingOutlined />,
-          label: 'CODEF API 설정',
-          roles: ['admin'],
-        },
+        // {
+        //   key: '/settings/codef',
+        //   icon: <SettingOutlined />,
+        //   label: 'CODEF API 설정',
+        //   roles: ['admin'],
+        // },
       ],
     },
   ];

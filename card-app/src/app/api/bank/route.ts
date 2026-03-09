@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
   const owners = searchParams.get('owners');
   const search = searchParams.get('search');
   const accountNo = searchParams.get('account_no');
+  const clientType = searchParams.get('client_type');
 
   const conditions: string[] = [];
   const params: any[] = [];
@@ -52,6 +53,10 @@ export async function GET(req: NextRequest) {
   if (accountNo) {
     conditions.push(`account_no = $${paramIdx++}`);
     params.push(accountNo);
+  }
+  if (clientType) {
+    conditions.push(`client_type = $${paramIdx++}`);
+    params.push(clientType);
   }
   if (search) {
     conditions.push(`(description1 ILIKE $${paramIdx} OR description2 ILIKE $${paramIdx} OR account_no ILIKE $${paramIdx})`);

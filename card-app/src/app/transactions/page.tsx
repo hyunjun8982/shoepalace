@@ -38,6 +38,7 @@ export default function TransactionsPage() {
   const [search, setSearch] = useState('');
   const [selectedOrgs, setSelectedOrgs] = useState<Set<string>>(new Set());
   const [selectedOwners, setSelectedOwners] = useState<Set<string>>(new Set());
+  const [clientType, setClientType] = useState<'' | 'P' | 'B'>('');
 
   // available filter options (from DB)
   const [availableOrgs, setAvailableOrgs] = useState<string[]>([]);
@@ -75,6 +76,7 @@ export default function TransactionsPage() {
     if (selectedOwners.size > 0 && selectedOwners.size < availableOwners.length) {
       params.set('owners', Array.from(selectedOwners).join(','));
     }
+    if (clientType) params.set('client_type', clientType);
 
     try {
       const res = await apiFetch(`/api/transactions?${params}`);
@@ -93,7 +95,7 @@ export default function TransactionsPage() {
     } finally {
       setLoading(false);
     }
-  }, [apiFetch, page, startDate, endDate, search, selectedOrgs, selectedOwners, availableOrgs.length, availableOwners.length]);
+  }, [apiFetch, page, startDate, endDate, search, selectedOrgs, selectedOwners, clientType, availableOrgs.length, availableOwners.length]);
 
   const fetchStats = useCallback(async () => {
     const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
@@ -103,6 +105,7 @@ export default function TransactionsPage() {
     if (selectedOwners.size > 0 && selectedOwners.size < availableOwners.length) {
       params.set('owners', Array.from(selectedOwners).join(','));
     }
+    if (clientType) params.set('client_type', clientType);
     try {
       const res = await apiFetch(`/api/transactions/stats?${params}`);
       const data = await res.json();
@@ -110,12 +113,12 @@ export default function TransactionsPage() {
     } catch {
       // ignore
     }
-  }, [apiFetch, startDate, endDate, selectedOrgs, selectedOwners, availableOrgs.length, availableOwners.length]);
+  }, [apiFetch, startDate, endDate, selectedOrgs, selectedOwners, clientType, availableOrgs.length, availableOwners.length]);
 
   useEffect(() => {
     fetchData(true);
     fetchStats();
-  }, [startDate, endDate, selectedOrgs, selectedOwners]);
+  }, [startDate, endDate, selectedOrgs, selectedOwners, clientType]);
 
   const handleSearch = () => {
     fetchData(true);
@@ -212,6 +215,29 @@ export default function TransactionsPage() {
               {btn.label}
             </button>
           ))}
+        </div>
+
+        {/* Client Type Filter */}
+        <div>
+          <label className="text-xs text-gray-500 mb-1.5 block">구분</label>
+          <div className="flex gap-2">
+            {[
+              { label: '전체', value: '' as const },
+              { label: '개인', value: 'P' as const },
+              { label: '법인', value: 'B' as const },
+            ].map(btn => (
+              <button
+                key={btn.value}
+                onClick={() => setClientType(btn.value)}
+                className={`flex-1 py-1.5 text-xs rounded-lg border transition
+                  ${clientType === btn.value
+                    ? 'border-primary-500 bg-primary-50 text-primary-700 font-semibold'
+                    : 'border-gray-200 text-gray-400'}`}
+              >
+                {btn.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Card Company Multi-Select */}

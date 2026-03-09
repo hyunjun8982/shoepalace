@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
   const organization = searchParams.get('organization');
   const organizations = searchParams.get('organizations');
   const owners = searchParams.get('owners');
+  const clientType = searchParams.get('client_type');
 
   const conditions: string[] = [];
   const params: any[] = [];
@@ -44,6 +45,11 @@ export async function GET(req: NextRequest) {
     const placeholders = ownerList.map(() => `$${paramIdx++}`).join(',');
     conditions.push(`owner_name IN (${placeholders})`);
     params.push(...ownerList);
+  }
+
+  if (clientType) {
+    conditions.push(`client_type = $${paramIdx++}`);
+    params.push(clientType);
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

@@ -29,7 +29,6 @@ export default function SyncPage() {
   const [endDate, setEndDate] = useState(() => dayjs().format('YYYY-MM-DD'));
   const [syncing, setSyncing] = useState(false);
   const [result, setResult] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-  const [logs, setLogs] = useState<string[]>([]);
 
   const filteredAccounts = allAccounts.filter(a => a.type === tab);
 
@@ -87,7 +86,7 @@ export default function SyncPage() {
 
     for (const acc of targets) {
       const name = getOrgName(acc.organization);
-      setLogs(prev => [...prev, `[${dayjs().format('HH:mm:ss')}] ${name} ${label} 가져오기 시작...`]);
+
 
       try {
         const endpoint = tab === 'bank' ? '/api/sync/bank' : '/api/sync';
@@ -107,10 +106,8 @@ export default function SyncPage() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
-        setLogs(prev => [...prev, `[${dayjs().format('HH:mm:ss')}] ${name}: ${data.message}`]);
         successCount++;
       } catch (err: any) {
-        setLogs(prev => [...prev, `[${dayjs().format('HH:mm:ss')}] ${name} 오류: ${err.message}`]);
         errorCount++;
       }
     }
@@ -250,22 +247,6 @@ export default function SyncPage() {
         </div>
       )}
 
-      {/* Logs */}
-      {logs.length > 0 && (
-        <div className="bg-gray-900 rounded-xl p-3 mb-4">
-          <div className="flex justify-between items-center mb-2">
-            <span className="text-xs text-gray-400">로그</span>
-            <button onClick={() => setLogs([])} className="text-xs text-gray-500 hover:text-gray-300">
-              지우기
-            </button>
-          </div>
-          <div className="space-y-1 max-h-48 overflow-y-auto">
-            {logs.map((log, i) => (
-              <p key={i} className="text-xs text-gray-300 font-mono">{log}</p>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

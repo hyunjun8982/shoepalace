@@ -82,8 +82,11 @@ services:
     build:
       context: ./card-app
     container_name: shoepalace_dev_card_app
+    user: "0:0"
     ports:
       - "4000:4000"
+    volumes:
+      - "C:/Users:/host/users:ro"
     environment:
       - DATABASE_URL=postgresql://shoepalace_user:shoepalace_pass@129.212.227.252:5433/shoepalace
       - JWT_SECRET=card-app-jwt-secret-key-2024
@@ -91,6 +94,7 @@ services:
       - ADMIN_PASSWORD=admin1234
       - CODEF_CLIENT_ID=${CODEF_CLIENT_ID:-}
       - CODEF_SECRET=${CODEF_SECRET:-}
+      - NPKI_HOST_PATH=/host/users
     restart: unless-stopped
 
   # Nginx Reverse Proxy (다운로드 파일 서빙용)

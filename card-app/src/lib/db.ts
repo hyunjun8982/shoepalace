@@ -88,4 +88,30 @@ export async function ensureHomepageTable() {
   await pool.query(`ALTER TABLE institution_homepages ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true`);
 }
 
+// 사용자 인증서 저장 테이블
+export async function ensureCertificatesTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_certificates (
+      id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      card_app_user_id INTEGER REFERENCES card_app_users(id) ON DELETE CASCADE,
+      cert_name VARCHAR(200),
+      cert_type VARCHAR(50),
+      subject_dn VARCHAR(500),
+      issuer_cn VARCHAR(200),
+      not_after DATE,
+      der_file TEXT NOT NULL,
+      key_file TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+  await pool.query(`ALTER TABLE user_certificates ADD COLUMN IF NOT EXISTS cert_type VARCHAR(50)`);
+  await pool.query(`ALTER TABLE user_certificates ADD COLUMN IF NOT EXISTS issuer_cn VARCHAR(200)`);
+}
+
+// codef_accounts에 인증서 관련 컬럼 추가
+export async function ensureCodefCertColumns() {
+  await pool.query(`ALTER TABLE codef_accounts ADD COLUMN IF NOT EXISTS login_type VARCHAR(1) DEFAULT '1'`);
+  await pool.query(`ALTER TABLE codef_accounts ADD COLUMN IF NOT EXISTS cert_id UUID REFERENCES user_certificates(id) ON DELETE SET NULL`);
+}
+
 export default pool;

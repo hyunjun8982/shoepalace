@@ -9,10 +9,18 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { organization, login_id, password, card_no, card_password, client_type, business_type, account_no, owner_name } = body;
+    const { organization, login_id, password, card_no, card_password, client_type, business_type, account_no, owner_name, cert_id, cert_password } = body;
 
-    if (!organization || !login_id || !password) {
-      return Response.json({ error: '기관코드, 아이디, 비밀번호는 필수입니다' }, { status: 400 });
+    const isCertLogin = !!cert_id;
+
+    if (!organization) {
+      return Response.json({ error: '기관코드는 필수입니다' }, { status: 400 });
+    }
+    if (isCertLogin && !cert_password) {
+      return Response.json({ error: '인증서 비밀번호는 필수입니다' }, { status: 400 });
+    }
+    if (!isCertLogin && (!login_id || !password)) {
+      return Response.json({ error: '아이디와 비밀번호는 필수입니다' }, { status: 400 });
     }
 
     // owner_name이 없으면 사용자의 display_name 사용
@@ -22,7 +30,7 @@ export async function POST(req: NextRequest) {
       resolvedOwnerName = userInfo?.display_name || user.username;
     }
 
-    const result = await registerAccount(organization, login_id, password, {
+    const result = await registerAccount(organization, login_id || '', password || '', {
       cardNo: card_no,
       cardPassword: card_password,
       clientType: client_type || 'P',
@@ -30,6 +38,9 @@ export async function POST(req: NextRequest) {
       accountNo: account_no,
       ownerName: resolvedOwnerName,
       cardAppUserId: user.userId,
+      loginType: isCertLogin ? '0' : '1',
+      certId: cert_id,
+      certPassword: cert_password,
     });
 
     return Response.json({

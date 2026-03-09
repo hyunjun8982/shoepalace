@@ -335,9 +335,20 @@ export default function TransactionsPage() {
                 </p>
               </div>
               <div className="text-right flex-shrink-0 ml-3">
-                <p className={`text-sm font-bold ${tx.cancel_status !== 'normal' ? 'text-red-500 line-through' : 'text-gray-900'}`}>
-                  {formatAmount(tx.used_amount)}원
-                </p>
+                {tx.cancel_status === 'partial' ? (
+                  <>
+                    <p className="text-sm font-bold text-gray-900">
+                      {formatAmount(tx.used_amount - (tx.cancel_amount || 0))}원
+                    </p>
+                    <p className="text-[11px] text-red-400 line-through">
+                      {formatAmount(tx.used_amount)}원
+                    </p>
+                  </>
+                ) : (
+                  <p className={`text-sm font-bold ${tx.cancel_status !== 'normal' ? 'text-red-500 line-through' : 'text-gray-900'}`}>
+                    {formatAmount(tx.used_amount)}원
+                  </p>
+                )}
                 {tx.payment_type && (
                   <p className="text-[11px] text-gray-400">
                     {PAYMENT_TYPE_MAP[tx.payment_type] || tx.payment_type}
@@ -388,10 +399,24 @@ export default function TransactionsPage() {
               </button>
             </div>
 
-            <div className="text-2xl font-bold text-gray-900 mb-4">
-              {formatAmount(detail.used_amount)}원
-              {detail.cancel_status !== 'normal' && (
-                <span className="text-sm text-red-500 ml-2">({CANCEL_STATUS_MAP[detail.cancel_status]})</span>
+            <div className="mb-4">
+              {detail.cancel_status === 'partial' ? (
+                <>
+                  <div className="text-2xl font-bold text-gray-900">
+                    {formatAmount(detail.used_amount - (detail.cancel_amount || 0))}원
+                    <span className="text-sm text-red-500 ml-2">(부분취소)</span>
+                  </div>
+                  <div className="text-sm text-gray-400 line-through mt-0.5">
+                    원래 {formatAmount(detail.used_amount)}원 → 취소 {formatAmount(detail.cancel_amount || 0)}원
+                  </div>
+                </>
+              ) : (
+                <div className="text-2xl font-bold text-gray-900">
+                  {formatAmount(detail.used_amount)}원
+                  {detail.cancel_status !== 'normal' && (
+                    <span className="text-sm text-red-500 ml-2">({CANCEL_STATUS_MAP[detail.cancel_status]})</span>
+                  )}
+                </div>
               )}
             </div>
 

@@ -315,34 +315,54 @@ export async function registerAccount(
     clientType?: string; businessType?: string;
     accountNo?: string; ownerName?: string;
     cardAppUserId?: number;
+    loginType?: string;       // '0'=공인인증서, '1'=아이디/비밀번호
+    certId?: string;          // 인증서 ID (user_certificates.id)
+    certPassword?: string;    // 인증서 비밀번호 (평문)
   } = {}
 ): Promise<{ connectedId: string; action: string }> {
-  const { cardNo, cardPassword, clientType = 'P', businessType = 'CD', accountNo, ownerName, cardAppUserId } = opts;
+  const { cardNo, cardPassword, clientType = 'P', businessType = 'CD', accountNo, ownerName, cardAppUserId, loginType = '1', certId, certPassword } = opts;
   const settings = await getAllSettings();
   const publicKey = settings.public_key;
   if (!publicKey) throw new Error('CODEF 공개키가 설정되지 않았습니다');
-
-  const encPassword = encryptRSA(password, publicKey);
 
   const accountInfo: Record<string, any> = {
     countryCode: 'KR',
     businessType,
     clientType,
     organization,
-    loginType: '1',
-    id: loginId,
-    password: encPassword,
+    loginType,
   };
 
-  if (cardNo) accountInfo.cardNo = cardNo;
-  if (cardPassword) accountInfo.cardPassword = encryptRSA(cardPassword, publicKey);
+  if (loginType === '0') {
+    // 공인인증서 로그인
+    if (!certId || !certPassword) throw new Error('인증서 ID와 인증서 비밀번호가 필요합니다');
+    const cert = await queryOne('SELECT der_file, key_file, cert_name FROM user_certificates WHERE id = $1', [certId]);
+    if (!cert) throw new Error('등록된 인증서를 찾을 수 없습니다');
+    accountInfo.certType = '1';
+    accountInfo.derFile = cert.der_file;
+    accountInfo.keyFile = cert.key_file;
+    accountInfo.password = encryptRSA(certPassword, publicKey);
+    // loginId가 없으면 cert_name 사용 (UI 표시용)
+    loginId = loginId || cert.cert_name || certId;
+  } else {
+    // 아이디/비밀번호 로그인
+    const encPassword = encryptRSA(password, publicKey);
+    accountInfo.id = loginId;
+    accountInfo.password = encPassword;
+    if (cardNo) accountInfo.cardNo = cardNo;
+    if (cardPassword) accountInfo.cardPassword = encryptRSA(cardPassword, publicKey);
+  }
 
   if (!cardAppUserId) throw new Error('사용자 정보를 찾을 수 없습니다');
 
-  // 기존 connected_id 조회 (card_app_user_id 기준)
+  // codef_accounts 컬럼 확보 (SELECT 전에 실행)
+  await query(`ALTER TABLE codef_accounts ADD COLUMN IF NOT EXISTS login_type VARCHAR(1) DEFAULT '1'`);
+  await query(`ALTER TABLE codef_accounts ADD COLUMN IF NOT EXISTS cert_id UUID`);
+
+  // 기존 connected_id 조회 - loginType별로 분리 (인증서/아이디 혼용 방지)
   const existing = await queryOne(
-    'SELECT connected_id FROM codef_accounts WHERE card_app_user_id = $1 AND client_type = $2 AND connected_id IS NOT NULL LIMIT 1',
-    [cardAppUserId, clientType]
+    'SELECT connected_id FROM codef_accounts WHERE card_app_user_id = $1 AND client_type = $2 AND login_type = $3 AND connected_id IS NOT NULL LIMIT 1',
+    [cardAppUserId, clientType, loginType]
   );
   let connectedId = existing?.connected_id || '';
 
@@ -366,13 +386,18 @@ export async function registerAccount(
     result = await callCodefApiRaw('/v1/account/create', { accountList: [accountInfo] });
   }
 
-  // CF-04000: 등록 실패 → errorList에서 CF-04004(중복) 확인 후 update 재시도
-  if (result.resCode === 'CF-04000' && connectedId) {
+  // CF-04000: 등록 실패 → errorList 분석
+  if (result.resCode === 'CF-04000') {
     const errorList = result.data?.errorList || (Array.isArray(result.data) ? result.data : []);
     const hasDuplicate = errorList.some((e: any) => e.code === 'CF-04004');
+    const hasUnsupportedLoginType = errorList.some((e: any) => e.code === 'CF-11021');
     console.log(`[CODEF] CF-04000 errorList:`, JSON.stringify(errorList), `hasDuplicate:`, hasDuplicate);
-    // CF-04004 중복이거나, errorList가 비어있어도 update 시도
-    if (hasDuplicate || errorList.length === 0) {
+
+    if (hasUnsupportedLoginType) {
+      throw new Error(`공인인증서 로그인 파라미터 오류입니다. 인증서 정보와 기관 코드를 확인해주세요. (CF-11021)`);
+    }
+    // CF-04004 중복이거나, errorList가 비어있으면 update 재시도
+    if (connectedId && (hasDuplicate || errorList.length === 0)) {
       result = await callCodefApiRaw('/v1/account/update', { connectedId, accountList: [accountInfo] });
     }
   }
@@ -411,14 +436,14 @@ export async function registerAccount(
 
   if (existingAcc) {
     await query(
-      `UPDATE codef_accounts SET login_id = $1, connected_id = $2, is_connected = true, owner_name = $3, account_no = $4, card_no = $5, connected_at = NOW(), updated_at = NOW() WHERE id = $6`,
-      [loginId, newConnectedId, ownerName || '', accountNo || '', cardNo || '', existingAcc.id]
+      `UPDATE codef_accounts SET login_id = $1, connected_id = $2, is_connected = true, owner_name = $3, account_no = $4, card_no = $5, login_type = $6, cert_id = $7, connected_at = NOW(), updated_at = NOW() WHERE id = $8`,
+      [loginId, newConnectedId, ownerName || '', accountNo || '', cardNo || '', loginType, certId || null, existingAcc.id]
     );
   } else {
     await query(
-      `INSERT INTO codef_accounts (card_app_user_id, organization, client_type, login_id, connected_id, is_connected, owner_name, account_no, card_no, connected_at)
-       VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, NOW())`,
-      [cardAppUserId, organization, clientType, loginId, newConnectedId, ownerName || '', accountNo || '', cardNo || '']
+      `INSERT INTO codef_accounts (card_app_user_id, organization, client_type, login_id, connected_id, is_connected, owner_name, account_no, card_no, login_type, cert_id, connected_at)
+       VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, $9, $10, NOW())`,
+      [cardAppUserId, organization, clientType, loginId, newConnectedId, ownerName || '', accountNo || '', cardNo || '', loginType, certId || null]
     );
   }
 

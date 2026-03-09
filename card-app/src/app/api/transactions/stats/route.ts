@@ -46,10 +46,16 @@ export async function GET(req: NextRequest) {
 
   const stats = await queryOne(`
     SELECT
-      COALESCE(SUM(CASE WHEN cancel_status = 'normal' THEN used_amount ELSE 0 END), 0) as total_amount,
-      COUNT(CASE WHEN cancel_status = 'normal' THEN 1 END) as total_count,
-      COUNT(CASE WHEN cancel_status != 'normal' THEN 1 END) as cancel_count,
-      COALESCE(SUM(CASE WHEN cancel_status != 'normal' THEN cancel_amount ELSE 0 END), 0) as cancel_amount
+      COALESCE(SUM(
+        CASE
+          WHEN cancel_status = 'normal' THEN used_amount
+          WHEN cancel_status = 'partial' THEN used_amount - COALESCE(cancel_amount, 0)
+          ELSE 0
+        END
+      ), 0) as total_amount,
+      COUNT(CASE WHEN cancel_status IN ('normal', 'partial') THEN 1 END) as total_count,
+      COUNT(CASE WHEN cancel_status = 'cancelled' THEN 1 END) as cancel_count,
+      COALESCE(SUM(CASE WHEN cancel_status = 'cancelled' THEN used_amount ELSE 0 END), 0) as cancel_amount
     FROM card_transactions ${where}
   `, params);
 

@@ -53,15 +53,19 @@ export default function AccountsPage() {
     );
   }
 
+  const getGroupKey = (item: any) => `${item.organization}_${item.client_type}_${item.owner_name || item.login_id || ''}`;
+
   const cardGrouped = cardAccounts.reduce((acc, item) => {
-    if (!acc[item.organization]) acc[item.organization] = [];
-    acc[item.organization].push(item);
+    const key = getGroupKey(item);
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(item);
     return acc;
   }, {} as Record<string, CodefAccountInfo[]>);
 
   const bankGrouped = bankAccounts.reduce((acc: Record<string, any[]>, item: any) => {
-    if (!acc[item.organization]) acc[item.organization] = [];
-    acc[item.organization].push(item);
+    const key = getGroupKey(item);
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(item);
     return acc;
   }, {} as Record<string, any[]>);
 
@@ -98,7 +102,8 @@ export default function AccountsPage() {
       {/* Card Accounts */}
       {tab === 'card' && (
         <div className="space-y-2">
-          {Object.entries(cardGrouped).map(([org, accs]) => {
+          {Object.entries(cardGrouped).map(([groupKey, accs]) => {
+            const org = accs[0].organization;
             const orgN = ORGANIZATION_MAP[org] || org;
             const color = ORG_COLORS[org] || '#6b7280';
             const connectedAcc = accs.find(a => a.connected_id && a.is_connected);
@@ -106,7 +111,7 @@ export default function AccountsPage() {
             const needsReconnect = mainAcc && !connectedAcc;
 
             return (
-              <div key={org} className={`bg-white rounded-xl shadow-sm overflow-hidden ${needsReconnect ? 'ring-1 ring-amber-300' : ''}`}>
+              <div key={groupKey} className={`bg-white rounded-xl shadow-sm overflow-hidden ${needsReconnect ? 'ring-1 ring-amber-300' : ''}`}>
                 <div className="p-4 flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div
@@ -171,7 +176,8 @@ export default function AccountsPage() {
       {/* Bank Accounts */}
       {tab === 'bank' && (
         <div className="space-y-2">
-          {Object.entries(bankGrouped).map(([org, accs]) => {
+          {Object.entries(bankGrouped).map(([groupKey, accs]) => {
+            const org = accs[0].organization;
             const orgN = BANK_ORGANIZATION_MAP[org] || org;
             const color = BANK_COLORS[org] || '#6b7280';
             const connectedAcc = accs.find((a: any) => a.connected_id && a.is_connected);
@@ -179,7 +185,7 @@ export default function AccountsPage() {
             const needsReconnect = mainAcc && !connectedAcc;
 
             return (
-              <div key={org} className={`bg-white rounded-xl shadow-sm overflow-hidden ${needsReconnect ? 'ring-1 ring-amber-300' : ''}`}>
+              <div key={groupKey} className={`bg-white rounded-xl shadow-sm overflow-hidden ${needsReconnect ? 'ring-1 ring-amber-300' : ''}`}>
                 <div className="p-4 flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div

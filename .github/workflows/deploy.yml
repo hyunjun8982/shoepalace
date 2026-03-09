@@ -25,39 +25,95 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
-      # GitHub Actions에서 Docker 이미지 빌드
+      # 변경된 컴포넌트 감지
+      - name: Detect changes
+        id: changes
+        run: |
+          changed=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+          echo "Changed files:"
+          echo "$changed"
+
+          if echo "$changed" | grep -q "^backend/"; then
+            echo "backend=true" >> $GITHUB_OUTPUT
+          else
+            echo "backend=false" >> $GITHUB_OUTPUT
+          fi
+
+          if echo "$changed" | grep -q "^frontend/"; then
+            echo "frontend=true" >> $GITHUB_OUTPUT
+          else
+            echo "frontend=false" >> $GITHUB_OUTPUT
+          fi
+
+          if echo "$changed" | grep -q "^card-app/"; then
+            echo "card_app=true" >> $GITHUB_OUTPUT
+          else
+            echo "card_app=false" >> $GITHUB_OUTPUT
+          fi
+
+          # docker-compose, nginx, workflow 변경 시 전체 빌드
+          if echo "$changed" | grep -qE "^(docker-compose|nginx/|\.github/)"; then
+            echo "backend=true" >> $GITHUB_OUTPUT
+            echo "frontend=true" >> $GITHUB_OUTPUT
+            echo "card_app=true" >> $GITHUB_OUTPUT
+            echo "infra=true" >> $GITHUB_OUTPUT
+          else
+            echo "infra=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # 변경된 컴포넌트만 빌드
       - name: Build Backend Image
+        if: steps.changes.outputs.backend == 'true'
         run: |
           docker build -t ${{ env.DOCKER_BACKEND_IMAGE }}:latest -f backend/Dockerfile backend/
           docker save ${{ env.DOCKER_BACKEND_IMAGE }}:latest | gzip > backend-image.tar.gz
 
       - name: Build Frontend Image
+        if: steps.changes.outputs.frontend == 'true'
         run: |
           docker build -t ${{ env.DOCKER_FRONTEND_IMAGE }}:latest -f frontend/Dockerfile frontend/
           docker save ${{ env.DOCKER_FRONTEND_IMAGE }}:latest | gzip > frontend-image.tar.gz
 
       - name: Build Card App Image
+        if: steps.changes.outputs.card_app == 'true'
         run: |
           docker build -t ${{ env.DOCKER_CARD_APP_IMAGE }}:latest -f card-app/Dockerfile card-app/
           docker save ${{ env.DOCKER_CARD_APP_IMAGE }}:latest | gzip > card-app-image.tar.gz
 
-      # 빌드된 이미지를 서버로 전송
+      # 빌드된 이미지만 서버로 전송
+      - name: Prepare transfer list
+        id: transfer
+        run: |
+          files=""
+          if [ -f backend-image.tar.gz ]; then files="backend-image.tar.gz"; fi
+          if [ -f frontend-image.tar.gz ]; then
+            [ -n "$files" ] && files="$files,frontend-image.tar.gz" || files="frontend-image.tar.gz"
+          fi
+          if [ -f card-app-image.tar.gz ]; then
+            [ -n "$files" ] && files="$files,card-app-image.tar.gz" || files="card-app-image.tar.gz"
+          fi
+          echo "files=$files" >> $GITHUB_OUTPUT
+          echo "Transfer files: $files"
+
       - name: Copy images to server
+        if: steps.transfer.outputs.files != ''
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT }}
-          source: "backend-image.tar.gz,frontend-image.tar.gz,card-app-image.tar.gz"
+          source: ${{ steps.transfer.outputs.files }}
           target: "/tmp/shoepalace-deploy"
           timeout: 120s
 
-      # 서버에서 이미지 로드 및 배포
+      # 서버에서 변경된 이미지만 로드 및 배포
       - name: Deploy to NHN Cloud Server
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -72,39 +128,50 @@ jobs:
             echo "=========================================="
             echo "  Shoepalace 운영 배포 시작"
             echo "  시간: $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "  변경: backend=${{ steps.changes.outputs.backend }} frontend=${{ steps.changes.outputs.frontend }} card-app=${{ steps.changes.outputs.card_app }}"
             echo "=========================================="
 
-            # 프로젝트 디렉토리로 이동
             cd ${{ secrets.DEPLOY_PATH }}
 
-            # 최신 코드 가져오기 (docker-compose.yml 등 설정 파일용)
-            echo "[1/6] 최신 코드 가져오는 중..."
+            echo "[1] 최신 코드 가져오는 중..."
             git fetch origin main
             git reset --hard origin/main
 
-            # Docker 이미지 로드
-            echo "[2/6] Backend 이미지 로드 중..."
-            gunzip -c /tmp/shoepalace-deploy/backend-image.tar.gz | docker load
+            # 변경된 이미지만 로드
+            if [ -f /tmp/shoepalace-deploy/backend-image.tar.gz ]; then
+              echo "[2] Backend 이미지 로드 중..."
+              gunzip -c /tmp/shoepalace-deploy/backend-image.tar.gz | docker load
+            fi
 
-            echo "[3/6] Frontend 이미지 로드 중..."
-            gunzip -c /tmp/shoepalace-deploy/frontend-image.tar.gz | docker load
+            if [ -f /tmp/shoepalace-deploy/frontend-image.tar.gz ]; then
+              echo "[3] Frontend 이미지 로드 중..."
+              gunzip -c /tmp/shoepalace-deploy/frontend-image.tar.gz | docker load
+            fi
 
-            echo "[4/6] Card App 이미지 로드 중..."
-            gunzip -c /tmp/shoepalace-deploy/card-app-image.tar.gz | docker load
+            if [ -f /tmp/shoepalace-deploy/card-app-image.tar.gz ]; then
+              echo "[4] Card App 이미지 로드 중..."
+              gunzip -c /tmp/shoepalace-deploy/card-app-image.tar.gz | docker load
+            fi
 
-            # 전송된 파일 정리
             rm -rf /tmp/shoepalace-deploy
 
-            # 기존 컨테이너 중지 및 제거
-            echo "[5/6] 기존 컨테이너 정리 중..."
-            docker compose -f docker-compose.prod.yml down --remove-orphans || true
+            # 변경된 서비스만 재시작 (인프라 변경 시 전체 재시작)
+            if [ "${{ steps.changes.outputs.infra }}" == "true" ]; then
+              echo "[5] 전체 컨테이너 재시작..."
+              docker compose -f docker-compose.prod.yml down --remove-orphans || true
+              docker compose -f docker-compose.prod.yml up -d
+            else
+              SERVICES=""
+              if [ "${{ steps.changes.outputs.backend }}" == "true" ]; then SERVICES="$SERVICES backend"; fi
+              if [ "${{ steps.changes.outputs.frontend }}" == "true" ]; then SERVICES="$SERVICES frontend"; fi
+              if [ "${{ steps.changes.outputs.card_app }}" == "true" ]; then SERVICES="$SERVICES card-app"; fi
 
-            # 새 컨테이너 시작
-            echo "[6/6] 새 컨테이너 시작 중..."
-            docker compose -f docker-compose.prod.yml up -d
+              if [ -n "$SERVICES" ]; then
+                echo "[5] 변경된 서비스 재시작:$SERVICES"
+                docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate $SERVICES
+              fi
+            fi
 
-            # 오래된 이미지 정리
-            echo "사용하지 않는 이미지 정리 중..."
             docker image prune -f
 
             echo ""
@@ -113,7 +180,6 @@ jobs:
             echo "  시간: $(date '+%Y-%m-%d %H:%M:%S')"
             echo "=========================================="
 
-            # 컨테이너 상태 확인
             docker compose -f docker-compose.prod.yml ps
 
       - name: Deployment Status

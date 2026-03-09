@@ -9,6 +9,10 @@ function getOrgName(code: string) {
   return ORGANIZATION_MAP[code] || BANK_ORGANIZATION_MAP[code] || code;
 }
 
+function getAccountKey(a: AccountItem) {
+  return `${a.organization}_${a.client_type}_${a.owner_name || ''}`;
+}
+
 interface AccountItem {
   organization: string;
   client_type: string;
@@ -45,7 +49,7 @@ export default function SyncPage() {
         const all = [...cards, ...banks];
         setAllAccounts(all);
         // 기본: 모든 카드사 선택
-        setSelectedOrgs(new Set(cards.map((a: AccountItem) => a.organization)));
+        setSelectedOrgs(new Set(cards.map((a: AccountItem) => getAccountKey(a))));
       })
       .catch(() => {});
   }, []);
@@ -53,7 +57,7 @@ export default function SyncPage() {
   // 탭 전환 시 해당 탭의 모든 계정 선택
   useEffect(() => {
     const accounts = allAccounts.filter(a => a.type === tab);
-    setSelectedOrgs(new Set(accounts.map(a => a.organization)));
+    setSelectedOrgs(new Set(accounts.map(a => getAccountKey(a))));
     setResult(null);
   }, [tab, allAccounts]);
 
@@ -70,12 +74,12 @@ export default function SyncPage() {
     if (selectedOrgs.size === filteredAccounts.length) {
       setSelectedOrgs(new Set());
     } else {
-      setSelectedOrgs(new Set(filteredAccounts.map(a => a.organization)));
+      setSelectedOrgs(new Set(filteredAccounts.map(a => getAccountKey(a))));
     }
   };
 
   const handleSync = async () => {
-    const targets = filteredAccounts.filter(a => selectedOrgs.has(a.organization));
+    const targets = filteredAccounts.filter(a => selectedOrgs.has(getAccountKey(a)));
     if (targets.length === 0) return;
 
     setSyncing(true);
@@ -159,18 +163,20 @@ export default function SyncPage() {
               </p>
             ) : (
               <div className="space-y-1.5">
-                {filteredAccounts.map(acc => (
+                {filteredAccounts.map(acc => {
+                  const accKey = getAccountKey(acc);
+                  return (
                   <label
-                    key={`${acc.organization}-${acc.client_type}`}
+                    key={accKey}
                     className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition
-                      ${selectedOrgs.has(acc.organization)
+                      ${selectedOrgs.has(accKey)
                         ? 'border-primary-300 bg-primary-50'
                         : 'border-gray-200 bg-white'}`}
                   >
                     <input
                       type="checkbox"
-                      checked={selectedOrgs.has(acc.organization)}
-                      onChange={() => toggleOrg(acc.organization)}
+                      checked={selectedOrgs.has(accKey)}
+                      onChange={() => toggleOrg(accKey)}
                       className="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                     />
                     <span className="text-sm text-gray-700 flex-1">
@@ -183,7 +189,8 @@ export default function SyncPage() {
                       )}
                     </span>
                   </label>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

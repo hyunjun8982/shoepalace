@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { getUser, unauthorized } from '@/lib/auth';
 import { registerAccount } from '@/lib/codef';
+import { queryOne } from '@/lib/db';
 
 export async function POST(req: NextRequest) {
   const user = await getUser(req);
@@ -14,13 +15,20 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: '기관코드, 아이디, 비밀번호는 필수입니다' }, { status: 400 });
     }
 
+    // owner_name이 없으면 사용자의 display_name 사용
+    let resolvedOwnerName = owner_name || '';
+    if (!resolvedOwnerName) {
+      const userInfo = await queryOne('SELECT display_name FROM card_app_users WHERE id = $1', [user.userId]);
+      resolvedOwnerName = userInfo?.display_name || user.username;
+    }
+
     const result = await registerAccount(organization, login_id, password, {
       cardNo: card_no,
       cardPassword: card_password,
       clientType: client_type || 'P',
       businessType: business_type || 'CD',
       accountNo: account_no,
-      ownerName: owner_name || '',
+      ownerName: resolvedOwnerName,
       cardAppUserId: user.userId,
     });
 

@@ -15,6 +15,18 @@ const DB_NAME = 'card-app-certs';
 const STORE_NAME = 'certificates';
 const DB_VERSION = 1;
 
+// crypto.randomUUID는 secure context(HTTPS)에서만 동작하므로 폴백 사용
+function generateId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // 폴백: Math.random 기반 UUID v4
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -45,7 +57,7 @@ export async function addCert(cert: Omit<StoredCert, 'id' | 'created_at'>): Prom
   const db = await openDB();
   const newCert: StoredCert = {
     ...cert,
-    id: crypto.randomUUID(),
+    id: generateId(),
     created_at: new Date().toISOString(),
   };
   return new Promise((resolve, reject) => {

@@ -14,14 +14,25 @@ interface FoundCert {
   local_path: string;
 }
 
+// node-forge는 UTF8String 값을 binary string(Latin-1)으로 반환하므로 UTF-8로 재디코딩
+function forgeValueToUtf8(val: string): string {
+  if (!val) return '';
+  try {
+    const bytes = Buffer.from(val, 'binary');
+    return bytes.toString('utf-8');
+  } catch {
+    return val;
+  }
+}
+
 function parseDer(derBase64: string): { certName: string; certType: string; issuerCn: string; notAfter: string | null } {
   try {
     const derBytes = forge.util.decode64(derBase64);
     const asn1 = forge.asn1.fromDer(derBytes);
     const cert = forge.pki.certificateFromAsn1(asn1);
 
-    const cn = cert.subject.getField('CN')?.value || '';
-    const ou = cert.subject.getField('OU')?.value || '';
+    const cn = forgeValueToUtf8(cert.subject.getField('CN')?.value || '');
+    const ou = forgeValueToUtf8(cert.subject.getField('OU')?.value || '');
     const certName = cn || ou || '알 수 없는 인증서';
 
     let certType = '공동인증서';
@@ -29,7 +40,7 @@ function parseDer(derBase64: string): { certName: string; certType: string; issu
     if (combined.includes('개인')) certType = '금융(개인)';
     else if (combined.includes('법인')) certType = '금융(법인)';
 
-    const issuerCn = cert.issuer.getField('CN')?.value || cert.issuer.getField('O')?.value || '';
+    const issuerCn = forgeValueToUtf8(cert.issuer.getField('CN')?.value || '') || forgeValueToUtf8(cert.issuer.getField('O')?.value || '');
     const notAfter = cert.validity.notAfter?.toISOString().split('T')[0] ?? null;
 
     return { certName, certType, issuerCn, notAfter };

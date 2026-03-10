@@ -3,6 +3,7 @@ const basePath = process.env.BASE_PATH || '';
 const nextConfig = {
   output: 'standalone',
   basePath,
+  serverExternalPackages: ['node-forge'],
   env: {
     NEXT_PUBLIC_BASE_PATH: basePath,
   },

@@ -3,6 +3,17 @@ import { getUser, unauthorized } from '@/lib/auth';
 import { query, queryAll, ensureCertificatesTable } from '@/lib/db';
 import forge from 'node-forge';
 
+// node-forge는 UTF8String 값을 binary string(Latin-1)으로 반환하므로 UTF-8로 재디코딩
+function forgeValueToUtf8(val: string): string {
+  if (!val) return '';
+  try {
+    const bytes = Buffer.from(val, 'binary');
+    return bytes.toString('utf-8');
+  } catch {
+    return val;
+  }
+}
+
 function parseDerCert(derBase64: string): {
   certName: string; certType: string; subjectDn: string; issuerCn: string; notAfter: string | null;
 } {
@@ -11,8 +22,8 @@ function parseDerCert(derBase64: string): {
     const asn1 = forge.asn1.fromDer(derBytes);
     const cert = forge.pki.certificateFromAsn1(asn1);
 
-    const cn = cert.subject.getField('CN')?.value || '';
-    const ou = cert.subject.getField('OU')?.value || '';
+    const cn = forgeValueToUtf8(cert.subject.getField('CN')?.value || '');
+    const ou = forgeValueToUtf8(cert.subject.getField('OU')?.value || '');
     const certName = cn || ou || '알 수 없는 인증서';
 
     // 구분 (금융(개인)/금융(법인)/공동인증서)
@@ -21,11 +32,10 @@ function parseDerCert(derBase64: string): {
     if (ouLower.includes('개인')) certType = '금융(개인)';
     else if (ouLower.includes('법인')) certType = '금융(법인)';
 
-    const subjectAttrs = cert.subject.attributes.map((a: any) => `${a.shortName}=${a.value}`).join(', ');
+    const subjectAttrs = cert.subject.attributes.map((a: any) => `${a.shortName}=${forgeValueToUtf8(a.value)}`).join(', ');
 
-    const issuerCN = cert.issuer.getField('CN')?.value
-      || cert.issuer.getField('O')?.value
-      || '';
+    const issuerCN = forgeValueToUtf8(cert.issuer.getField('CN')?.value || '')
+      || forgeValueToUtf8(cert.issuer.getField('O')?.value || '');
 
     const notAfterDate = cert.validity.notAfter;
     const notAfter = notAfterDate ? notAfterDate.toISOString().split('T')[0] : null;

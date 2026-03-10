@@ -9,9 +9,9 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { organization, login_id, password, card_no, card_password, client_type, business_type, account_no, owner_name, cert_id, cert_password } = body;
+    const { organization, login_id, password, card_no, card_password, client_type, business_type, account_no, owner_name, cert_id, cert_password, der_file, key_file, cert_name } = body;
 
-    const isCertLogin = !!cert_id;
+    const isCertLogin = !!(cert_id || (der_file && key_file));
 
     if (!organization) {
       return Response.json({ error: '기관코드는 필수입니다' }, { status: 400 });
@@ -41,6 +41,9 @@ export async function POST(req: NextRequest) {
       loginType: isCertLogin ? '0' : '1',
       certId: cert_id,
       certPassword: cert_password,
+      derFile: der_file,
+      keyFile: key_file,
+      certName: cert_name,
     });
 
     return Response.json({

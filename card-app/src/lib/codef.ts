@@ -316,11 +316,14 @@ export async function registerAccount(
     accountNo?: string; ownerName?: string;
     cardAppUserId?: number;
     loginType?: string;       // '0'=공인인증서, '1'=아이디/비밀번호
-    certId?: string;          // 인증서 ID (user_certificates.id)
+    certId?: string;          // 인증서 ID (user_certificates.id) - deprecated
     certPassword?: string;    // 인증서 비밀번호 (평문)
+    derFile?: string;         // 인증서 DER base64 (클라이언트에서 직접 전달)
+    keyFile?: string;         // 인증서 KEY base64 (클라이언트에서 직접 전달)
+    certName?: string;        // 인증서 이름 (표시용)
   } = {}
 ): Promise<{ connectedId: string; action: string }> {
-  const { cardNo, cardPassword, clientType = 'P', businessType = 'CD', accountNo, ownerName, cardAppUserId, loginType = '1', certId, certPassword } = opts;
+  const { cardNo, cardPassword, clientType = 'P', businessType = 'CD', accountNo, ownerName, cardAppUserId, loginType = '1', certId, certPassword, derFile: directDerFile, keyFile: directKeyFile, certName } = opts;
   const settings = await getAllSettings();
   const publicKey = settings.public_key;
   if (!publicKey) throw new Error('CODEF 공개키가 설정되지 않았습니다');
@@ -335,15 +338,31 @@ export async function registerAccount(
 
   if (loginType === '0') {
     // 공인인증서 로그인
-    if (!certId || !certPassword) throw new Error('인증서 ID와 인증서 비밀번호가 필요합니다');
-    const cert = await queryOne('SELECT der_file, key_file, cert_name FROM user_certificates WHERE id = $1', [certId]);
-    if (!cert) throw new Error('등록된 인증서를 찾을 수 없습니다');
+    if (!certPassword) throw new Error('인증서 비밀번호가 필요합니다');
+
+    let derData: string, keyData: string, displayName: string;
+
+    if (directDerFile && directKeyFile) {
+      // 클라이언트에서 직접 전달받은 인증서 파일
+      derData = directDerFile;
+      keyData = directKeyFile;
+      displayName = certName || 'cert';
+    } else if (certId) {
+      // DB에서 조회 (하위 호환)
+      const cert = await queryOne('SELECT der_file, key_file, cert_name FROM user_certificates WHERE id = $1', [certId]);
+      if (!cert) throw new Error('등록된 인증서를 찾을 수 없습니다');
+      derData = cert.der_file;
+      keyData = cert.key_file;
+      displayName = cert.cert_name || certId;
+    } else {
+      throw new Error('인증서 파일 또는 인증서 ID가 필요합니다');
+    }
+
     accountInfo.certType = '1';
-    accountInfo.derFile = cert.der_file;
-    accountInfo.keyFile = cert.key_file;
+    accountInfo.derFile = derData;
+    accountInfo.keyFile = keyData;
     accountInfo.password = encryptRSA(certPassword, publicKey);
-    // loginId가 없으면 cert_name 사용 (UI 표시용)
-    loginId = loginId || cert.cert_name || certId;
+    loginId = loginId || displayName;
   } else {
     // 아이디/비밀번호 로그인
     const encPassword = encryptRSA(password, publicKey);

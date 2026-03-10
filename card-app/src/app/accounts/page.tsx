@@ -3,34 +3,101 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { CodefAccountInfo, ORGANIZATION_MAP, ORG_COLORS, BANK_ORGANIZATION_MAP, BANK_COLORS } from '@/types';
-
-interface CertInfo {
-  id: string;
-  cert_name: string;
-  cert_type: string;
-  subject_dn: string;
-  issuer_cn: string;
-  not_after: string | null;
-  created_at: string;
-}
-
-interface LocalCertInfo {
-  cert_name: string;
-  cert_type: string;
-  issuer_cn: string;
-  not_after: string | null;
-  der_base64: string;
-  key_base64: string;
-  local_path: string;
-}
-
-// 통합 표시용 타입 (등록된 cert 또는 로컬 cert)
-type DisplayCert =
-  | { source: 'registered'; id: string; cert_name: string; cert_type: string; issuer_cn: string; not_after: string | null }
-  | { source: 'local'; localKey: string; cert_name: string; cert_type: string; issuer_cn: string; not_after: string | null; der_base64: string; key_base64: string };
+import { getAllCerts, addCert, deleteCert, getCert, StoredCert } from '@/lib/certStore';
 
 // ──────────────────────────────────────────────────────────────────
-// 전자서명 작성 스타일 인증서 선택 모달
+// NPKI 디렉토리 핸들 저장/복원 (File System Access API)
+// ──────────────────────────────────────────────────────────────────
+const NPKI_HANDLE_DB = 'npki-dir-handle';
+const NPKI_HANDLE_STORE = 'handles';
+
+async function openHandleDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(NPKI_HANDLE_DB, 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore(NPKI_HANDLE_STORE); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveNpkiHandle(handle: FileSystemDirectoryHandle): Promise<void> {
+  const db = await openHandleDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(NPKI_HANDLE_STORE, 'readwrite');
+    tx.objectStore(NPKI_HANDLE_STORE).put(handle, 'npki');
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+
+async function getSavedNpkiHandle(): Promise<FileSystemDirectoryHandle | null> {
+  try {
+    const db = await openHandleDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(NPKI_HANDLE_STORE, 'readonly');
+      const req = tx.objectStore(NPKI_HANDLE_STORE).get('npki');
+      req.onsuccess = () => { db.close(); resolve(req.result || null); };
+      req.onerror = () => { db.close(); resolve(null); };
+    });
+  } catch { return null; }
+}
+
+// File System Access API로 디렉토리 내 .der/.key 쌍 재귀 탐색
+async function scanDirForCerts(
+  dirHandle: FileSystemDirectoryHandle,
+  maxDepth = 6,
+  depth = 0,
+): Promise<{ derBase64: string; keyBase64: string; dirName: string }[]> {
+  if (depth > maxDepth) return [];
+  const results: { derBase64: string; keyBase64: string; dirName: string }[] = [];
+
+  const files: Record<string, FileSystemFileHandle> = {};
+  const subdirs: FileSystemDirectoryHandle[] = [];
+
+  for await (const [name, handle] of (dirHandle as any).entries()) {
+    if (handle.kind === 'file') {
+      files[name.toLowerCase()] = handle as FileSystemFileHandle;
+    } else if (handle.kind === 'directory') {
+      subdirs.push(handle as FileSystemDirectoryHandle);
+    }
+  }
+
+  // .der 파일 찾고 매칭되는 .key 파일 찾기
+  const derNames = Object.keys(files).filter(n => n.endsWith('.der'));
+  for (const derName of derNames) {
+    const base = derName.replace(/\.der$/, '');
+    const keyHandle =
+      files[base + '.key'] ||
+      files['signpri.key'] ||
+      Object.values(files).find((_, i) => Object.keys(files)[i].endsWith('.key'));
+    if (!keyHandle) continue;
+
+    const readAsBase64 = async (fh: FileSystemFileHandle) => {
+      const file = await fh.getFile();
+      const buf = await file.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      return btoa(binary);
+    };
+
+    results.push({
+      derBase64: await readAsBase64(files[derName]),
+      keyBase64: await readAsBase64(keyHandle),
+      dirName: dirHandle.name,
+    });
+  }
+
+  // 하위 디렉토리 재귀 탐색
+  for (const sub of subdirs) {
+    results.push(...await scanDirForCerts(sub, maxDepth, depth + 1));
+  }
+
+  return results;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// 전자서명 작성 스타일 인증서 선택 모달 (IndexedDB 기반, 기기별 분리)
 // ──────────────────────────────────────────────────────────────────
 function CertSelectorModal({
   orgName,
@@ -39,75 +106,184 @@ function CertSelectorModal({
   onConfirm,
 }: {
   orgName?: string;
-  apiFetch: (url: string, init?: RequestInit) => Promise<Response>;
+  apiFetch?: (url: string, init?: RequestInit) => Promise<Response>;
   onClose: () => void;
-  onConfirm: (certId: string, certPassword: string) => void;
+  onConfirm: (certData: { der_file: string; key_file: string; cert_name: string }, certPassword: string) => void;
 }) {
-  const [displayCerts, setDisplayCerts] = useState<DisplayCert[]>([]);
-  const [selectedKey, setSelectedKey] = useState(''); // 'registered:{id}' or 'local:{localKey}'
+  const [certs, setCerts] = useState<StoredCert[]>([]);
+  const [selectedId, setSelectedId] = useState('');
   const [certPassword, setCertPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [scanning, setScanning] = useState(true);  // 초기 스캔 중
-  const [searching, setSearching] = useState(false); // 수동 찾기 중
-  const [viewingCert, setViewingCert] = useState<DisplayCert | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
+  const [viewingCert, setViewingCert] = useState<StoredCert | null>(null);
+  const [autoScanned, setAutoScanned] = useState(false);
   const folderRef = useRef<HTMLInputElement>(null);
 
-  // 등록된 인증서 + 로컬 NPKI 인증서를 합쳐서 표시
-  const loadAllCerts = useCallback(async () => {
-    setScanning(true);
+  // File System Access API 지원 여부
+  const supportsFileSystemAccess = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+
+  // DER base64에서 인증서 정보 파싱 (공통 유틸)
+  const parseCertInfoFromBase64 = useCallback((derBase64: string): { certName: string; certType: string; issuerCn: string; notAfter: string | null } => {
     try {
-      const [regRes, scanRes] = await Promise.allSettled([
-        apiFetch('/api/certificates').then(r => r.json()),
-        apiFetch('/api/certificates/scan').then(r => r.json()),
-      ]);
+      const binaryStr = atob(derBase64);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
 
-      const registered: CertInfo[] = regRes.status === 'fulfilled' ? (regRes.value.certificates || []) : [];
-      const localCerts: LocalCertInfo[] = scanRes.status === 'fulfilled' ? (scanRes.value.certs || []) : [];
+      const readLen = (data: Uint8Array, pos: number): { len: number; size: number } => {
+        const b = data[pos];
+        if (b < 0x80) return { len: b, size: 1 };
+        const numBytes = b & 0x7f;
+        let len = 0;
+        for (let i = 0; i < numBytes; i++) len = (len << 8) | data[pos + 1 + i];
+        return { len, size: 1 + numBytes };
+      };
 
-      // 날짜 정규화 (DB는 ISO timestamp, 스캔은 YYYY-MM-DD로 올 수 있음)
-      const normDate = (d: string | null) => d ? d.split('T')[0] : null;
+      const extractCnAt = (pos: number): string => {
+        const typeTag = bytes[pos];
+        const { len, size } = readLen(bytes, pos + 1);
+        const valueStart = pos + 1 + size;
+        const valueBytes = bytes.slice(valueStart, valueStart + len);
+        if (typeTag === 0x1e) return new TextDecoder('utf-16be').decode(valueBytes);
+        return new TextDecoder('utf-8').decode(valueBytes);
+      };
 
-      // 등록된 인증서 key set (cert_name + not_after 기준 중복 제거)
-      const registeredKeys = new Set(registered.map(c => `${c.cert_name}_${normDate(c.not_after)}`));
-
-      const merged: DisplayCert[] = [
-        ...registered.map(c => ({
-          source: 'registered' as const,
-          id: c.id,
-          cert_name: c.cert_name,
-          cert_type: c.cert_type,
-          issuer_cn: c.issuer_cn,
-          not_after: normDate(c.not_after),
-        })),
-        // 로컬에서 발견됐지만 아직 등록 안 된 것만 추가
-        ...localCerts
-          .filter(lc => !registeredKeys.has(`${lc.cert_name}_${normDate(lc.not_after)}`))
-          .map((lc, idx) => ({
-            source: 'local' as const,
-            localKey: `local_${idx}_${lc.cert_name}`,
-            cert_name: lc.cert_name,
-            cert_type: lc.cert_type,
-            issuer_cn: lc.issuer_cn,
-            not_after: lc.not_after,
-            der_base64: lc.der_base64,
-            key_base64: lc.key_base64,
-          })),
-      ];
-
-      setDisplayCerts(merged);
-
-      // 유효한 첫 번째 cert 자동 선택
-      if (merged.length > 0 && !selectedKey) {
-        const valid = merged.find(c => !c.not_after || new Date(c.not_after) >= new Date());
-        const first = valid || merged[0];
-        setSelectedKey(first.source === 'registered' ? `registered:${first.id}` : `local:${first.localKey}`);
+      const cnPositions: number[] = [];
+      for (let i = 0; i < bytes.length - 3; i++) {
+        if (bytes[i] === 0x55 && bytes[i + 1] === 0x04 && bytes[i + 2] === 0x03) {
+          cnPositions.push(i + 3);
+        }
       }
-    } finally {
-      setScanning(false);
+
+      let issuerCn = '';
+      let certName = '인증서';
+      if (cnPositions.length >= 2) {
+        issuerCn = extractCnAt(cnPositions[0]);
+        certName = extractCnAt(cnPositions[1]);
+      } else if (cnPositions.length === 1) {
+        certName = extractCnAt(cnPositions[0]);
+      }
+
+      let notAfter: string | null = null;
+      let utcCount = 0;
+      for (let i = 0; i < bytes.length - 2; i++) {
+        if (bytes[i] === 0x17 || bytes[i] === 0x18) {
+          const { len, size } = readLen(bytes, i + 1);
+          const valueStart = i + 1 + size;
+          if (len >= 12 && valueStart + len <= bytes.length) {
+            const timeStr = new TextDecoder('ascii').decode(bytes.slice(valueStart, valueStart + len));
+            if (/^\d{2,4}/.test(timeStr)) {
+              utcCount++;
+              if (utcCount === 2) {
+                if (bytes[i] === 0x17) {
+                  const yy = parseInt(timeStr.substring(0, 2));
+                  const year = yy >= 50 ? 1900 + yy : 2000 + yy;
+                  notAfter = `${year}-${timeStr.substring(2, 4)}-${timeStr.substring(4, 6)}`;
+                } else {
+                  notAfter = `${timeStr.substring(0, 4)}-${timeStr.substring(4, 6)}-${timeStr.substring(6, 8)}`;
+                }
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      const combined = (certName + issuerCn).toLowerCase();
+      const certType = combined.includes('개인') ? '금융(개인)' : combined.includes('법인') ? '금융(법인)' : '공동인증서';
+      return { certName: certName || '인증서', certType, issuerCn, notAfter };
+    } catch {
+      return { certName: '인증서', certType: '공동인증서', issuerCn: '', notAfter: null };
     }
+  }, []);
+
+  // File System Access API로 NPKI 폴더 스캔 → IndexedDB에 저장
+  const scanWithFSA = useCallback(async (dirHandle: FileSystemDirectoryHandle): Promise<number> => {
+    const found = await scanDirForCerts(dirHandle);
+    if (found.length === 0) return 0;
+
+    const existing = await getAllCerts();
+    let addedCount = 0;
+    for (const { derBase64, keyBase64 } of found) {
+      const { certName, certType, issuerCn, notAfter } = parseCertInfoFromBase64(derBase64);
+      const dup = existing.find(c => c.cert_name === certName && c.not_after === notAfter);
+      if (!dup) {
+        await addCert({
+          cert_name: certName, cert_type: certType, issuer_cn: issuerCn,
+          not_after: notAfter, der_base64: derBase64, key_base64: keyBase64,
+        });
+        addedCount++;
+      }
+    }
+    return addedCount;
+  }, [parseCertInfoFromBase64]);
+
+  // 저장된 핸들로 자동 스캔 시도
+  const autoScanWithSavedHandle = useCallback(async (): Promise<number> => {
+    if (!supportsFileSystemAccess) return 0;
+    try {
+      const handle = await getSavedNpkiHandle();
+      if (!handle) return 0;
+      // 권한 확인 (이전에 부여된 권한이 유효한지)
+      const perm = await (handle as any).queryPermission({ mode: 'read' });
+      if (perm !== 'granted') {
+        // 사용자 제스처 없이 requestPermission은 실패할 수 있으므로 0 반환
+        return 0;
+      }
+      return await scanWithFSA(handle);
+    } catch { return 0; }
+  }, [supportsFileSystemAccess, scanWithFSA]);
+
+  // 서버 사이드 NPKI 자동 스캔 (로컬 개발 환경용)
+  const autoScanFromServer = useCallback(async () => {
+    if (!apiFetch) return 0;
+    try {
+      const res = await apiFetch('/api/certificates/scan');
+      const data = await res.json();
+      if (!data.available || !data.certs?.length) return 0;
+
+      const existing = await getAllCerts();
+      let addedCount = 0;
+      for (const sc of data.certs) {
+        const dup = existing.find(c => c.cert_name === sc.cert_name && c.not_after === sc.not_after);
+        if (!dup) {
+          await addCert({
+            cert_name: sc.cert_name, cert_type: sc.cert_type, issuer_cn: sc.issuer_cn || '',
+            not_after: sc.not_after, der_base64: sc.der_base64, key_base64: sc.key_base64,
+          });
+          addedCount++;
+        }
+      }
+      return addedCount;
+    } catch { return 0; }
   }, [apiFetch]);
 
-  useEffect(() => { loadAllCerts(); }, []);
+  const loadCerts = useCallback(async () => {
+    setLoading(true);
+    try {
+      let all = await getAllCerts();
+
+      // IndexedDB가 비어있으면 자동 스캔 시도 (최초 1회)
+      if (all.length === 0 && !autoScanned) {
+        setAutoScanned(true);
+        // 1) 저장된 NPKI 핸들로 클라이언트 직접 스캔
+        let added = await autoScanWithSavedHandle();
+        // 2) 실패 시 서버 사이드 스캔 (로컬 개발용)
+        if (added === 0) added = await autoScanFromServer();
+        if (added > 0) all = await getAllCerts();
+      }
+
+      setCerts(all);
+      if (all.length > 0 && !selectedId) {
+        const valid = all.find(c => !c.not_after || new Date(c.not_after) >= new Date());
+        setSelectedId((valid || all[0]).id);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [autoScanned, autoScanWithSavedHandle, autoScanFromServer]);
+
+  useEffect(() => { loadCerts(); }, []);
 
   const readFileAsBase64 = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
@@ -120,37 +296,72 @@ function CertSelectorModal({
       reader.readAsDataURL(file);
     });
 
+  // File System Access API로 NPKI 폴더 선택 + 스캔 + 핸들 저장
+  const handlePickNpkiFolder = async () => {
+    setSearching(true);
+    try {
+      const dirHandle = await (window as any).showDirectoryPicker({ mode: 'read' });
+      // 핸들 저장 → 다음 방문 시 자동 스캔 가능
+      await saveNpkiHandle(dirHandle);
+      const added = await scanWithFSA(dirHandle);
+      await loadCerts();
+      if (added === 0) alert('새로운 인증서를 찾을 수 없습니다. 이미 등록된 인증서이거나 인증서 폴더(NPKI)가 아닙니다.');
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        alert('인증서 등록 실패: ' + err.message);
+      }
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  // webkitdirectory 폴백 (File System Access API 미지원 브라우저용)
   const handleFolderSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    const derFileObj = files.find(f => f.name.toLowerCase().endsWith('.der'));
-    const keyFileObj = files.find(f => f.name.toLowerCase().endsWith('.key'));
 
-    if (!derFileObj || !keyFileObj) {
-      alert('선택한 폴더에서 인증서 파일(.der)과 개인키 파일(.key)을 찾을 수 없습니다.\n인증서 폴더(NPKI)를 선택해주세요.');
+    const derFiles = files.filter(f => f.name.toLowerCase().endsWith('.der'));
+    if (derFiles.length === 0) {
+      alert('선택한 폴더에서 인증서 파일(.der)을 찾을 수 없습니다.\n인증서 폴더(NPKI)를 선택해주세요.');
       if (folderRef.current) folderRef.current.value = '';
       return;
     }
 
     setSearching(true);
+    let addedCount = 0;
     try {
-      const [derBase64, keyBase64] = await Promise.all([
-        readFileAsBase64(derFileObj),
-        readFileAsBase64(keyFileObj),
-      ]);
+      for (const derFile of derFiles) {
+        const dirPath = derFile.webkitRelativePath.split('/').slice(0, -1).join('/');
+        const keyFile = files.find(f =>
+          f.name.toLowerCase().endsWith('.key') &&
+          f.webkitRelativePath.startsWith(dirPath + '/') &&
+          (f.name.toLowerCase().includes('signpri') || f.name.replace(/\.key$/i, '').toLowerCase() === derFile.name.replace(/\.der$/i, '').toLowerCase())
+        ) || files.find(f =>
+          f.name.toLowerCase().endsWith('.key') &&
+          f.webkitRelativePath.startsWith(dirPath + '/')
+        );
 
-      const res = await apiFetch('/api/certificates', {
-        method: 'POST',
-        body: JSON.stringify({ derFile: derBase64, keyFile: keyBase64 }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+        if (!keyFile) continue;
 
-      await loadAllCerts();
-      // 새로 등록된 cert는 목록 맨 위에 오므로 자동 선택
-      const listRes = await apiFetch('/api/certificates');
-      const listData = await listRes.json();
-      const newList: CertInfo[] = listData.certificates || [];
-      if (newList.length > 0) setSelectedKey(`registered:${newList[0].id}`);
+        const [derBase64, keyBase64] = await Promise.all([
+          readFileAsBase64(derFile),
+          readFileAsBase64(keyFile),
+        ]);
+
+        const { certName, certType, issuerCn, notAfter } = parseCertInfoFromBase64(derBase64);
+
+        const existing = certs.find(c => c.cert_name === certName && c.not_after === notAfter);
+        if (!existing) {
+          const newCert = await addCert({
+            cert_name: certName, cert_type: certType, issuer_cn: issuerCn,
+            not_after: notAfter, der_base64: derBase64, key_base64: keyBase64,
+          });
+          addedCount++;
+          if (addedCount === 1) setSelectedId(newCert.id);
+        }
+      }
+
+      await loadCerts();
+      if (addedCount === 0) alert('새로운 인증서를 찾을 수 없습니다. 이미 등록된 인증서입니다.');
     } catch (err: any) {
       alert('인증서 등록 실패: ' + err.message);
     } finally {
@@ -160,61 +371,26 @@ function CertSelectorModal({
   };
 
   const handleDeleteCert = async () => {
-    const sel = displayCerts.find(c =>
-      c.source === 'registered' && `registered:${c.id}` === selectedKey
-    );
-    if (!sel || sel.source !== 'registered') {
-      alert('등록된 인증서만 삭제할 수 있습니다');
-      return;
-    }
-    if (!confirm(`"${sel.cert_name}" 인증서를 삭제하시겠습니까?`)) return;
-
-    const res = await apiFetch(`/api/certificates/${sel.id}`, { method: 'DELETE' });
-    if (res.ok) {
-      setSelectedKey('');
-      setCertPassword('');
-      loadAllCerts();
-    }
-  };
-
-  const handleConfirm = async () => {
-    if (!selectedKey || !certPassword) return;
-
-    const sel = displayCerts.find(c =>
-      (c.source === 'registered' && `registered:${c.id}` === selectedKey) ||
-      (c.source === 'local' && `local:${c.localKey}` === selectedKey)
-    );
+    const sel = certs.find(c => c.id === selectedId);
     if (!sel) return;
-
-    if (sel.source === 'registered') {
-      onConfirm(sel.id, certPassword);
-    } else {
-      // 로컬 cert → 먼저 DB에 등록 후 사용
-      try {
-        const res = await apiFetch('/api/certificates', {
-          method: 'POST',
-          body: JSON.stringify({ derFile: sel.der_base64, keyFile: sel.key_base64 }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
-
-        // 등록된 cert ID 조회
-        const listRes = await apiFetch('/api/certificates');
-        const listData = await listRes.json();
-        const newList: CertInfo[] = listData.certificates || [];
-        if (newList.length > 0) {
-          onConfirm(newList[0].id, certPassword);
-        }
-      } catch (err: any) {
-        alert('인증서 등록 실패: ' + err.message);
-      }
-    }
+    if (!confirm(`"${sel.cert_name}" 인증서를 삭제하시겠습니까?`)) return;
+    await deleteCert(sel.id);
+    setSelectedId('');
+    setCertPassword('');
+    loadCerts();
   };
 
-  const selectedCert = displayCerts.find(c =>
-    (c.source === 'registered' && `registered:${c.id}` === selectedKey) ||
-    (c.source === 'local' && `local:${c.localKey}` === selectedKey)
-  );
+  const handleConfirm = () => {
+    if (!selectedId || !certPassword) return;
+    const sel = certs.find(c => c.id === selectedId);
+    if (!sel) return;
+    onConfirm(
+      { der_file: sel.der_base64, key_file: sel.key_base64, cert_name: sel.cert_name },
+      certPassword
+    );
+  };
+
+  const selectedCert = certs.find(c => c.id === selectedId);
 
   return (
     <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4" onClick={e => e.stopPropagation()}>
@@ -281,7 +457,7 @@ function CertSelectorModal({
                 </tr>
               </thead>
               <tbody>
-                {scanning ? (
+                {loading ? (
                   <tr>
                     <td colSpan={4} className="px-2 py-5 text-center text-gray-400 text-xs">
                       <div className="flex items-center justify-center gap-1.5">
@@ -290,22 +466,34 @@ function CertSelectorModal({
                       </div>
                     </td>
                   </tr>
-                ) : displayCerts.length === 0 ? (
+                ) : certs.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="px-2 py-5 text-center text-gray-400 text-xs">
-                      인증서를 찾을 수 없습니다
+                    <td colSpan={4} className="px-2 py-6 text-center text-xs">
+                      <div className="space-y-2">
+                        <div className="text-gray-500 font-medium">이 기기에 등록된 인증서가 없습니다</div>
+                        <button
+                          onClick={() => supportsFileSystemAccess ? handlePickNpkiFolder() : folderRef.current?.click()}
+                          className="mt-1 px-4 py-2 bg-[#3a5fa0] text-white rounded text-xs font-medium hover:bg-[#2e4f8a] transition"
+                        >
+                          내 PC에서 인증서 찾기
+                        </button>
+                        <div className="text-[10px] text-gray-400 leading-relaxed">
+                          클릭 후 인증서 폴더(NPKI)를 선택해주세요
+                        </div>
+                        <div className="text-[10px] text-gray-300 bg-gray-50 rounded px-2 py-1.5 inline-block">
+                          기본 경로: C:\Users\사용자\AppData\LocalLow\<b>NPKI</b>
+                        </div>
+                      </div>
                     </td>
                   </tr>
                 ) : (
-                  displayCerts.map((cert, idx) => {
+                  certs.map((cert, idx) => {
                     const isExpired = cert.not_after ? new Date(cert.not_after) < new Date() : false;
-                    const certKey = cert.source === 'registered' ? `registered:${cert.id}` : `local:${cert.localKey}`;
-                    const isSelected = selectedKey === certKey;
-                    const isLocal = cert.source === 'local';
+                    const isSelected = selectedId === cert.id;
                     return (
                       <tr
-                        key={certKey}
-                        onClick={() => !isExpired && setSelectedKey(certKey)}
+                        key={cert.id}
+                        onClick={() => !isExpired && setSelectedId(cert.id)}
                         className={`cursor-pointer border-b border-gray-100 last:border-0 transition
                           ${isSelected ? 'bg-[#c5d9f1]' : idx % 2 === 0 ? 'bg-white hover:bg-blue-50' : 'bg-gray-50 hover:bg-blue-50'}
                           ${isExpired ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -315,7 +503,6 @@ function CertSelectorModal({
                         </td>
                         <td className="px-2 py-1.5 border-r border-gray-200 max-w-[130px] truncate text-gray-800">
                           {cert.cert_name}
-                          {isLocal && <span className="ml-1 text-[9px] text-blue-500 font-medium">로컬</span>}
                         </td>
                         <td className={`px-2 py-1.5 border-r border-gray-200 whitespace-nowrap ${isExpired ? 'text-red-500' : 'text-gray-700'}`}>
                           {cert.not_after || '-'}
@@ -335,24 +522,35 @@ function CertSelectorModal({
           <div className="flex gap-1.5 mt-2">
             <button
               onClick={() => selectedCert && setViewingCert(selectedCert)}
-              disabled={!selectedKey}
+              disabled={!selectedId}
               className="flex-1 py-1.5 text-xs border border-gray-400 rounded bg-gray-50 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700"
             >
               인증서 보기
             </button>
-            {/* 폴더 선택 input */}
-            <input
-              ref={folderRef}
-              type="file"
-              // @ts-ignore
-              webkitdirectory=""
-              directory=""
-              multiple
-              className="hidden"
-              onChange={handleFolderSelect}
-            />
+            {/* 폴더 선택 input (FSA 미지원 브라우저 폴백용) */}
+            {!supportsFileSystemAccess && (
+              <input
+                ref={folderRef}
+                type="file"
+                // @ts-ignore
+                webkitdirectory=""
+                directory=""
+                multiple
+                className="hidden"
+                onChange={handleFolderSelect}
+              />
+            )}
             <button
-              onClick={() => folderRef.current?.click()}
+              onClick={() => {
+                if (supportsFileSystemAccess) {
+                  handlePickNpkiFolder();
+                } else {
+                  if (certs.length === 0) {
+                    alert('인증서 폴더(NPKI)를 선택해주세요.\n\n기본 경로:\nC:\\Users\\사용자\\AppData\\LocalLow\\NPKI\n\n※ AppData는 숨김 폴더입니다.\n  주소창에 직접 입력하거나\n  %USERPROFILE%\\AppData\\LocalLow\\NPKI\n  를 입력하세요.');
+                  }
+                  folderRef.current?.click();
+                }
+              }}
               disabled={searching}
               className="flex-1 py-1.5 text-xs border border-gray-400 rounded bg-gray-50 hover:bg-gray-100 disabled:opacity-60 text-gray-700"
             >
@@ -360,7 +558,7 @@ function CertSelectorModal({
             </button>
             <button
               onClick={handleDeleteCert}
-              disabled={!selectedKey || selectedCert?.source !== 'registered'}
+              disabled={!selectedId}
               className="flex-1 py-1.5 text-xs border border-gray-400 rounded bg-gray-50 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed text-red-600"
             >
               인증서 삭제
@@ -408,7 +606,7 @@ function CertSelectorModal({
         <div className="px-4 py-3 flex gap-3 bg-gray-50 rounded-b">
           <button
             onClick={handleConfirm}
-            disabled={!selectedKey || !certPassword}
+            disabled={!selectedId || !certPassword}
             className="flex-1 py-2 bg-[#3a5fa0] text-white text-sm font-semibold rounded hover:bg-[#2d4f8a] disabled:opacity-40 disabled:cursor-not-allowed transition"
           >
             확인
@@ -449,12 +647,10 @@ function CertSelectorModal({
                   {viewingCert.not_after || '-'}
                 </span>
               </div>
-              {viewingCert.source === 'local' && (
-                <div className="flex gap-2">
-                  <span className="text-gray-500 w-16 shrink-0">상태</span>
-                  <span className="text-blue-600">로컬 인증서 (미등록)</span>
-                </div>
-              )}
+              <div className="flex gap-2">
+                <span className="text-gray-500 w-16 shrink-0">저장</span>
+                <span className="text-blue-600">이 기기에 저장됨</span>
+              </div>
             </div>
             <div className="px-4 pb-4">
               <button
@@ -905,14 +1101,15 @@ function AddAccountModal({
     } finally { setSubmitting(false); }
   };
 
-  const submitWithCert = async (certId: string, certPassword: string) => {
+  const submitWithCert = async (certData: { der_file: string; key_file: string; cert_name: string }, certPassword: string) => {
     setShowCertSelector(false);
     setError(''); setResult(''); setSubmitting(true);
     try {
       const res = await apiFetch('/api/accounts/register', {
         method: 'POST',
         body: JSON.stringify({
-          organization, cert_id: certId, cert_password: certPassword,
+          organization, der_file: certData.der_file, key_file: certData.key_file,
+          cert_name: certData.cert_name, cert_password: certPassword,
           client_type: clientType, business_type: type === 'bank' ? 'BK' : 'CD',
         }),
       });
@@ -1118,14 +1315,15 @@ function ReconnectModal({
     finally { setSubmitting(false); }
   };
 
-  const submitWithCert = async (certId: string, certPassword: string) => {
+  const submitWithCert = async (certData: { der_file: string; key_file: string; cert_name: string }, certPassword: string) => {
     setShowCertSelector(false);
     setError(''); setResult(''); setSubmitting(true);
     try {
       const res = await apiFetch('/api/accounts/register', {
         method: 'POST',
         body: JSON.stringify({
-          organization: account.organization, cert_id: certId, cert_password: certPassword,
+          organization: account.organization, der_file: certData.der_file, key_file: certData.key_file,
+          cert_name: certData.cert_name, cert_password: certPassword,
           client_type: account.client_type || 'P', business_type: isBank ? 'BK' : 'CD',
         }),
       });

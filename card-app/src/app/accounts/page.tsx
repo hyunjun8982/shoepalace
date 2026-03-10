@@ -480,8 +480,8 @@ function CertSelectorModal({
                         <div className="text-[10px] text-gray-400 leading-relaxed">
                           클릭 후 인증서 폴더(NPKI)를 선택해주세요
                         </div>
-                        <div className="text-[10px] text-gray-300 bg-gray-50 rounded px-2 py-1.5 inline-block">
-                          기본 경로: C:\Users\사용자\AppData\LocalLow\<b>NPKI</b>
+                        <div className="text-[11px] text-gray-600 bg-blue-50 border border-blue-200 rounded px-3 py-2 inline-block font-mono">
+                          📁 C:\Users\사용자\AppData\LocalLow\<b className="text-blue-700">NPKI</b>
                         </div>
                       </div>
                     </td>

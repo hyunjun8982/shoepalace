@@ -1,9 +1,12 @@
 import { NextRequest } from 'next/server';
 import { queryAll, query, queryOne } from '@/lib/db';
 import { getUser, unauthorized } from '@/lib/auth';
-import { getCardLimit } from '@/lib/codef';
+import { getCardLimit, getCardList } from '@/lib/codef';
 
 const CORP_TOTAL_LIMIT_ORGS = ['0301', '0304', '0306', '0309', '0311', '0313', '0321'];
+
+// 개인 로그인으로 법인 한도도 조회 가능한 카드사
+const CROSS_TYPE_ORGS = ['0303']; // 삼성카드
 
 // GET: DB에서 저장된 한도 조회
 export async function GET(req: NextRequest) {
@@ -112,6 +115,75 @@ export async function POST(req: NextRequest) {
 
         await upsertLimit(user.userId, item);
         results.push(item);
+
+        // 삼성카드 등: 개인 로그인으로 법인카드 한도도 조회 시도
+        // 개인 경로(/p/)에서 카드 목록 조회 → 법인카드 찾으면 개인 경로로 한도 조회
+        if (acc.client_type === 'P' && CROSS_TYPE_ORGS.includes(acc.organization)) {
+          try {
+            // 개인 경로로 카드 목록 조회 (법인카드도 포함될 수 있음)
+            const allCards = await getCardList(acc.organization, acc.connected_id, 'P');
+            // 법인카드 필터: resCardType에 '법인' 포함 + 분실/정지 카드 제외
+            const corpCards = allCards.filter((c: any) =>
+              (c.resCardType && c.resCardType.includes('법인')) &&
+              c.resSleepYN !== 'Y' && c.resState !== '분실'
+            );
+
+            if (corpCards.length > 0) {
+              // 법인카드 중 첫 번째로 한도 조회 (법인 경로 사용)
+              const firstCorpCard = corpCards[0];
+              const corpCardNo = firstCorpCard.resCardNo || firstCorpCard.card_no || '';
+              // 법인 경로(/b/)로 한도 조회 - 개인 connected_id로 법인카드 한도 조회 시도
+              const corpLimit = await getCardLimit(acc.organization, acc.connected_id, corpCardNo, 'B');
+
+              let corpLimitData: any;
+              if (Array.isArray(corpLimit)) {
+                corpLimitData = corpLimit[0];
+              } else {
+                corpLimitData = corpLimit;
+              }
+
+              const cTotalList = corpLimitData?.resLimitOfTotalList?.[0];
+              const cFullTotalList = corpLimitData?.resLimitOfFullTotalList?.[0];
+              const cInstallmentList = corpLimitData?.resLimitOfInstallmentList?.[0];
+              const cShortLoanList = corpLimitData?.resLimitOfShortLoanList?.[0];
+
+              const cTotalLimitAmt = parseAmt(cTotalList?.resLimitAmount) ?? parseAmt(corpLimitData?.resLimitAmount);
+              const cUsedAmt = parseAmt(cTotalList?.resUsedAmount) ?? parseAmt(corpLimitData?.resUsedAmount);
+              const cRemainAmt = parseAmt(cTotalList?.resRemainLimit) ?? parseAmt(corpLimitData?.resRemainLimit);
+
+              const corpItem: any = {
+                organization: acc.organization,
+                client_type: 'B',
+                owner_name: firstCorpCard.resUserNm || acc.owner_name || '',
+                total_limit: cTotalLimitAmt,
+                used_limit: cUsedAmt ?? (cTotalLimitAmt != null && cRemainAmt != null ? cTotalLimitAmt - cRemainAmt : null),
+                remaining_limit: cRemainAmt,
+                one_time_limit: parseAmt(cFullTotalList?.resLimitAmount),
+                installment_limit: parseAmt(cInstallmentList?.resLimitAmount),
+                cash_advance_limit: parseAmt(cShortLoanList?.resLimitAmount),
+              };
+
+              if (targetOrg) {
+                corpItem.raw = corpLimitData;
+                corpItem.corpCards = corpCards; // 디버그: 법인카드 목록
+              }
+
+              await upsertLimit(user.userId, corpItem);
+              results.push(corpItem);
+            } else if (targetOrg) {
+              // 디버그: 법인카드를 못 찾았을 때 전체 카드 목록 반환
+              results.push({
+                organization: acc.organization,
+                client_type: 'B',
+                owner_name: acc.owner_name || '',
+                error: '법인카드 미발견',
+                _debug_allCards: allCards,
+              });
+            }
+          } catch {
+            // 법인 한도 조회 실패 시 무시 (개인 한도만 표시)
+          }
+        }
       } catch (err: any) {
         const item: any = { organization: acc.organization, client_type: acc.client_type, owner_name: acc.owner_name || '', error: err.message };
         if (targetOrg) {

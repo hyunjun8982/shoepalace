@@ -127,6 +127,8 @@ const state = {
         startTime: null,
         accountCount: 0,
     },
+    // 구글시트 연동 설정
+    gsheetsConfig: null,
 };
 
 // ========== API 호출 ==========
@@ -965,6 +967,117 @@ async function exportSelectedToExcel() {
     } catch (error) {
         console.error('Excel export error:', error);
         notifyError('엑셀 저장 실패: ' + error.message);
+    }
+}
+
+// ========== 구글시트 동기화 ==========
+
+async function loadGSheetsConfig() {
+    try {
+        const resp = await api('/google-sheets/config');
+        state.gsheetsConfig = resp;
+    } catch (e) {
+        state.gsheetsConfig = { configured: false };
+    }
+}
+
+function showGSheetsConfigModal() {
+    state.modal = 'google-sheets-config';
+    render();
+}
+
+async function selectGSheetsKeyFile() {
+    try {
+        const { ipcRenderer } = require('electron');
+        const result = await ipcRenderer.invoke('show-open-dialog', {
+            title: '서비스 계정 JSON 키 파일 선택',
+            filters: [{ name: 'JSON Files', extensions: ['json'] }],
+            properties: ['openFile'],
+        });
+        if (result && result.filePaths && result.filePaths.length > 0) {
+            const fs = require('fs');
+            const content = fs.readFileSync(result.filePaths[0], 'utf-8');
+            const parsed = JSON.parse(content);
+            document.getElementById('gsheetsKeyContent').value = content;
+            document.getElementById('gsheetsKeyFileName').textContent = `✅ ${parsed.client_email || result.filePaths[0]}`;
+        }
+    } catch (e) {
+        notifyError('파일 읽기 실패: ' + e.message);
+    }
+}
+
+function extractSpreadsheetId(input) {
+    if (!input) return '';
+    // URL 형태: https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit
+    const match = input.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+    if (match) return match[1];
+    return input.trim();
+}
+
+async function saveGSheetsConfig() {
+    try {
+        const keyContent = document.getElementById('gsheetsKeyContent').value;
+        const rawId = document.getElementById('gsheetsSpreadsheetId').value;
+        const sheetName = document.getElementById('gsheetsSheetName').value || 'Sheet1';
+        const spreadsheetId = extractSpreadsheetId(rawId);
+
+        if (!spreadsheetId) {
+            notifyWarning('스프레드시트 URL 또는 ID를 입력하세요');
+            return;
+        }
+
+        // keyContent가 없으면 기존 설정 유지 (시트ID/이름만 변경)
+        const body = { spreadsheetId, sheetName };
+        if (keyContent) {
+            body.serviceAccountKey = keyContent;
+        } else if (!state.gsheetsConfig?.configured) {
+            notifyWarning('서비스 계정 JSON 키 파일을 선택하세요');
+            return;
+        }
+
+        const resp = await api('/google-sheets/config', {
+            method: 'POST',
+            body: body,
+        });
+        notifySuccess(resp.message || '설정 저장 완료');
+        await loadGSheetsConfig();
+        closeModal();
+    } catch (e) {
+        notifyError('설정 저장 실패: ' + e.message);
+    }
+}
+
+async function syncToGoogleSheets() {
+    if (state.selectedIds.size === 0) {
+        notifyWarning('동기화할 계정을 선택하세요');
+        return;
+    }
+
+    // 설정 확인
+    if (!state.gsheetsConfig?.configured) {
+        await loadGSheetsConfig();
+        if (!state.gsheetsConfig?.configured) {
+            showGSheetsConfigModal();
+            return;
+        }
+    }
+
+    const confirmed = await showConfirm({
+        title: '구글시트 동기화',
+        message: `선택한 ${state.selectedIds.size}개 계정의 쿠폰을 구글시트에 동기화합니다.\n(판매 완료 쿠폰은 제외)`,
+        confirmText: '동기화',
+        cancelText: '취소',
+    });
+    if (!confirmed) return;
+
+    try {
+        const resp = await api('/google-sheets/sync', {
+            method: 'POST',
+            body: { accountIds: Array.from(state.selectedIds) },
+        });
+        notifySuccess(resp.message || '동기화 완료');
+    } catch (e) {
+        notifyError('동기화 실패: ' + e.message);
     }
 }
 
@@ -1834,10 +1947,12 @@ function render() {
                         <button class="segment-btn segment-off" onclick="bulkToggleActive(false)">OFF</button>
                     </div>
                     <button class="btn btn-default" onclick="exportSelectedToExcel()">엑셀 추출</button>
+                    <button class="btn btn-default" onclick="syncToGoogleSheets()" style="background:#34a853;color:#fff;border-color:#34a853">구글시트 동기화</button>
                     <button class="btn btn-delete" onclick="bulkDelete()">삭제</button>
                 ` : ''}
                 <button class="btn btn-default" onclick="showAccountRegisterMenu()">계정 등록</button>
                 <button class="btn btn-default" onclick="showBulkSoldModal()">쿠폰 판매 처리</button>
+                <button class="btn btn-default" onclick="showGSheetsConfigModal()" title="구글시트 연동 설정">⚙ 구글시트</button>
             </div>
         </div>
 
@@ -2811,6 +2926,54 @@ teayoouun1@naver.com
                     </div>
                     <div class="modal-footer">
                         <button class="btn btn-default" onclick="closeModal()">닫기</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    if (state.modal === 'google-sheets-config') {
+        const cfg = state.gsheetsConfig || {};
+        return `
+            <div class="modal-overlay" onclick="closeModal()">
+                <div class="modal" style="width:560px;" onclick="event.stopPropagation()">
+                    <div class="modal-header">
+                        <h3>구글시트 연동 설정</h3>
+                        <button class="modal-close" onclick="closeModal()">×</button>
+                    </div>
+                    <div class="modal-body">
+                        <div style="margin-bottom:16px;">
+                            <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px;">서비스 계정 JSON 키 파일</label>
+                            <div style="display:flex;gap:8px;align-items:center;">
+                                <button class="btn btn-default" onclick="selectGSheetsKeyFile()" style="white-space:nowrap;">파일 선택</button>
+                                <span id="gsheetsKeyFileName" style="font-size:12px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                                    ${cfg.serviceAccountEmail ? `✅ ${cfg.serviceAccountEmail}` : '선택된 파일 없음'}
+                                </span>
+                            </div>
+                            <input type="hidden" id="gsheetsKeyContent" value="">
+                        </div>
+                        <div style="margin-bottom:16px;">
+                            <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px;">스프레드시트 URL 또는 ID</label>
+                            <input type="text" id="gsheetsSpreadsheetId" value="${cfg.spreadsheetId || ''}"
+                                placeholder="https://docs.google.com/spreadsheets/d/xxxxx/edit 또는 시트 ID"
+                                style="width:100%;padding:8px 12px;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;">
+                        </div>
+                        <div style="margin-bottom:16px;">
+                            <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px;">시트 이름</label>
+                            <input type="text" id="gsheetsSheetName" value="${cfg.sheetName || 'Sheet1'}"
+                                placeholder="Sheet1"
+                                style="width:100%;padding:8px 12px;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;">
+                        </div>
+                        <div style="padding:12px;background:#f6f8fa;border-radius:6px;font-size:12px;color:#666;">
+                            <strong>설정 방법:</strong><br>
+                            1. Google Cloud Console에서 서비스 계정 생성 후 JSON 키 다운로드<br>
+                            2. 구글 시트에서 서비스 계정 이메일을 편집자로 공유<br>
+                            3. 위에 시트 URL과 시트 이름 입력 후 저장
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-default" onclick="closeModal()">취소</button>
+                        <button class="btn btn-primary-dark" onclick="saveGSheetsConfig()">저장</button>
                     </div>
                 </div>
             </div>
@@ -3794,6 +3957,31 @@ function parseBulkText() {
         if (!line.trim()) continue;
 
         const cleanLine = line.replace(/\(기존\)/g, '').trim();
+
+        // 콤마 구분 형식 감지: 이메일,비밀번호,이름,전화번호,생년월일
+        if (cleanLine.includes(',')) {
+            const parts = cleanLine.split(',').map(p => p.trim()).filter(p => p);
+            if (parts.length >= 5) {
+                const email = parts[0];
+                const password = parts[1];
+                const name = parts[2];
+                const phoneRaw = parts[3].replace(/\s+/g, '');
+                const phone = phoneRaw.replace(/(\d{3})(\d{4})(\d{4})/, '$1-$2-$3');
+                const birthdayParts = parts.slice(4).join(' ').trim().split(/\s+/);
+                let birthday = '';
+                if (birthdayParts.length >= 3) {
+                    birthday = `${birthdayParts[0].padStart(4, '0')}-${birthdayParts[1].padStart(2, '0')}-${birthdayParts[2].padStart(2, '0')}`;
+                } else if (birthdayParts.length === 1 && birthdayParts[0].includes('-')) {
+                    birthday = birthdayParts[0];
+                }
+                parsedBulkAccounts.push({ name, email, password, phone, birthday });
+            } else if (parts.length >= 2) {
+                parsedBulkAccounts.push({ name: '', email: parts[0], password: parts[1], phone: '', birthday: '' });
+            }
+            continue;
+        }
+
+        // 기존 탭/공백 구분 형식: 이름  이메일  비밀번호  전화번호  생년월일
         const parts = cleanLine.split(/\t+|\s{2,}/).map(p => p.trim()).filter(p => p);
 
         if (parts.length >= 5) {
@@ -4177,6 +4365,7 @@ async function runInstaller(type) {
 document.addEventListener('DOMContentLoaded', async () => {
     loadAccounts();
     loadExtractMode();
+    loadGSheetsConfig();
     checkInstallStatus(); // 프로그램 설치 상태 확인
     await checkAppiumStatus(); // Appium 실행 상태 확인
 });

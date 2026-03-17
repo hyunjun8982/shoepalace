@@ -3032,6 +3032,176 @@ app.get('/api/logs/file', (req, res) => {
     }
 });
 
+// ========== Google Sheets 연동 ==========
+
+const { google } = require('googleapis');
+const GSHEETS_CONFIG_PATH = path.join(__dirname, 'google_sheets_config.json');
+
+function loadGSheetsConfig() {
+    try {
+        if (fs.existsSync(GSHEETS_CONFIG_PATH)) {
+            return JSON.parse(fs.readFileSync(GSHEETS_CONFIG_PATH, 'utf-8'));
+        }
+    } catch (e) { addLog(`[구글시트] 설정 로드 실패: ${e.message}`); }
+    return null;
+}
+
+function saveGSheetsConfig(config) {
+    fs.writeFileSync(GSHEETS_CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
+}
+
+function getGSheetsClient(config) {
+    const auth = new google.auth.GoogleAuth({
+        credentials: config.serviceAccountKey,
+        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+    return google.sheets({ version: 'v4', auth });
+}
+
+function extractCouponType(description) {
+    if (!description) return '';
+    const match = description.match(/(\d[\d,]+)\s*원/);
+    if (match) {
+        const amount = parseInt(match[1].replace(/,/g, ''));
+        if (amount >= 100000) return '10만원권';
+        if (amount >= 50000) return '5만원권';
+        if (amount >= 30000) return '3만원권';
+        if (amount >= 10000) return '1만원권';
+        return `${amount}원권`;
+    }
+    return description;
+}
+
+// 구글시트 설정 조회
+app.get('/api/google-sheets/config', (req, res) => {
+    const config = loadGSheetsConfig();
+    if (!config) return res.json({ configured: false });
+    res.json({
+        configured: true,
+        spreadsheetId: config.spreadsheetId,
+        sheetName: config.sheetName,
+        serviceAccountEmail: config.serviceAccountKey?.client_email || '',
+    });
+});
+
+// 구글시트 설정 저장
+app.post('/api/google-sheets/config', async (req, res) => {
+    try {
+        const { serviceAccountKey, spreadsheetId, sheetName } = req.body;
+
+        if (!serviceAccountKey || !spreadsheetId) {
+            return res.status(400).json({ error: '서비스 계정 키와 스프레드시트 ID는 필수입니다' });
+        }
+
+        let parsedKey = serviceAccountKey;
+        if (typeof serviceAccountKey === 'string') {
+            parsedKey = JSON.parse(serviceAccountKey);
+        }
+
+        const config = {
+            serviceAccountKey: parsedKey,
+            spreadsheetId,
+            sheetName: sheetName || 'Sheet1',
+        };
+
+        // 연결 테스트
+        const sheets = getGSheetsClient(config);
+        await sheets.spreadsheets.get({ spreadsheetId });
+
+        saveGSheetsConfig(config);
+        addLog(`[구글시트] 설정 저장 완료 (시트ID: ${spreadsheetId}, 계정: ${parsedKey.client_email})`);
+        res.json({ message: '설정 저장 및 연결 테스트 성공', serviceAccountEmail: parsedKey.client_email });
+    } catch (error) {
+        addLog(`[구글시트] 설정 저장 실패: ${error.message}`);
+        res.status(500).json({ error: `설정 저장 실패: ${error.message}` });
+    }
+});
+
+// 구글시트 동기화
+app.post('/api/google-sheets/sync', async (req, res) => {
+    try {
+        const { accountIds } = req.body;
+        if (!accountIds || !accountIds.length) {
+            return res.status(400).json({ error: '동기화할 계정을 선택해주세요' });
+        }
+
+        const config = loadGSheetsConfig();
+        if (!config) {
+            return res.status(400).json({ error: '구글시트 설정이 필요합니다' });
+        }
+
+        const sheets = getGSheetsClient(config);
+        const { spreadsheetId, sheetName } = config;
+
+        // 1. 선택 계정 조회
+        const placeholders = accountIds.map((_, i) => `$${i + 1}`).join(',');
+        const accounts = await query(
+            `SELECT id, email, owned_vouchers FROM adidas_accounts WHERE id IN (${placeholders})`,
+            accountIds
+        );
+
+        // 2. 쿠폰 flat list 생성 (sold 제외)
+        const allCoupons = [];
+        for (const acc of accounts) {
+            let vouchers = [];
+            try { vouchers = JSON.parse(acc.owned_vouchers || '[]'); } catch {}
+            for (const v of vouchers) {
+                if (v.sold) continue;
+                if (!v.code || v.code === 'N/A') continue;
+                allCoupons.push({
+                    type: extractCouponType(v.description),
+                    code: v.code,
+                    expiry: v.expiry || '',
+                    email: acc.email,
+                });
+            }
+        }
+
+        if (allCoupons.length === 0) {
+            return res.json({ added: 0, skipped: 0, message: '동기화할 쿠폰이 없습니다' });
+        }
+
+        // 3. 시트에서 기존 쿠폰 코드 읽기 (B열)
+        let existingCodes = new Set();
+        try {
+            const existing = await sheets.spreadsheets.values.get({
+                spreadsheetId,
+                range: `${sheetName}!B:B`,
+            });
+            if (existing.data.values) {
+                for (const row of existing.data.values) {
+                    if (row[0]) existingCodes.add(row[0].trim());
+                }
+            }
+        } catch (e) {
+            addLog(`[구글시트] 기존 데이터 조회 실패 (새 시트일 수 있음): ${e.message}`);
+        }
+
+        // 4. 중복 제외
+        const newCoupons = allCoupons.filter(c => !existingCodes.has(c.code));
+        const skipped = allCoupons.length - newCoupons.length;
+
+        if (newCoupons.length === 0) {
+            return res.json({ added: 0, skipped, message: `${skipped}건 모두 이미 시트에 존재합니다` });
+        }
+
+        // 5. 시트에 추가
+        const rows = newCoupons.map(c => [c.type, c.code, c.expiry, c.email]);
+        await sheets.spreadsheets.values.append({
+            spreadsheetId,
+            range: `${sheetName}!A:D`,
+            valueInputOption: 'RAW',
+            requestBody: { values: rows },
+        });
+
+        addLog(`[구글시트] 동기화 완료: ${newCoupons.length}건 추가, ${skipped}건 중복 스킵`);
+        res.json({ added: newCoupons.length, skipped, message: `${newCoupons.length}건 추가, ${skipped}건 중복 스킵` });
+    } catch (error) {
+        addLog(`[구글시트] 동기화 실패: ${error.message}`);
+        res.status(500).json({ error: `동기화 실패: ${error.message}` });
+    }
+});
+
 // 서버 시작 함수
 async function start(port = 8003) {
     await initDB();

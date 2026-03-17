@@ -67,6 +67,21 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Coupon App (Next.js + Selenium)
+  coupon-app:
+    image: shoepalace-coupon-app:latest
+    container_name: shoepalace_coupon_app
+    ports:
+      - "5000:5000"
+    environment:
+      - DATABASE_URL=postgresql://shoepalace_user:shoepalace_pass@129.212.227.252:5433/shoepalace
+      - JWT_SECRET=card-app-secret-key-change-in-production-2024
+      - BASE_PATH=/coupon
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
   # Nginx Reverse Proxy
   nginx:
     image: nginx:alpine
@@ -81,6 +96,7 @@ services:
       - frontend
       - backend
       - card-app
+      - coupon-app
     restart: unless-stopped
 
 volumes:

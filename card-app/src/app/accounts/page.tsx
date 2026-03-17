@@ -683,11 +683,15 @@ export default function AccountsPage() {
 
   const isAdmin = user?.role === 'super_admin';
 
-  const handleDisconnect = async (id: string, orgName: string) => {
-    if (!confirm(`${orgName} 계정 연동을 해제하시겠습니까?`)) return;
+  const handleDisconnect = async (id: string, orgName: string, permanent = false) => {
+    const msg = permanent
+      ? `${orgName} 계정과 관련 내역을 모두 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`
+      : `${orgName} 계정 연동을 해제하시겠습니까?`;
+    if (!confirm(msg)) return;
     setDisconnecting(id);
     try {
-      const res = await apiFetch(`/api/accounts/${id}`, { method: 'DELETE' });
+      const url = permanent ? `/api/accounts/${id}?permanent=true` : `/api/accounts/${id}`;
+      const res = await apiFetch(url, { method: 'DELETE' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       fetchAccounts();
@@ -814,13 +818,22 @@ export default function AccountsPage() {
                         재연동
                       </button>
                     )}
-                    {mainAcc && (
+                    {mainAcc && connectedAcc && (
                       <button
                         onClick={() => handleDisconnect(mainAcc.id, orgN)}
                         disabled={disconnecting === mainAcc.id}
                         className="text-[11px] text-red-400 hover:text-red-600 px-2 py-1 border border-red-200 rounded-lg disabled:opacity-50"
                       >
                         {disconnecting === mainAcc.id ? '해제 중...' : '해제'}
+                      </button>
+                    )}
+                    {mainAcc && !connectedAcc && (
+                      <button
+                        onClick={() => handleDisconnect(mainAcc.id, orgN, true)}
+                        disabled={disconnecting === mainAcc.id}
+                        className="text-[11px] text-red-500 hover:text-white hover:bg-red-500 px-2 py-1 border border-red-300 rounded-lg disabled:opacity-50 transition"
+                      >
+                        {disconnecting === mainAcc.id ? '삭제 중...' : '삭제'}
                       </button>
                     )}
                   </div>
@@ -885,13 +898,22 @@ export default function AccountsPage() {
                         재연동
                       </button>
                     )}
-                    {mainAcc && (
+                    {mainAcc && connectedAcc && (
                       <button
                         onClick={() => handleDisconnect(mainAcc.id, orgN)}
                         disabled={disconnecting === mainAcc.id}
                         className="text-[11px] text-red-400 hover:text-red-600 px-2 py-1 border border-red-200 rounded-lg disabled:opacity-50"
                       >
                         {disconnecting === mainAcc.id ? '해제 중...' : '해제'}
+                      </button>
+                    )}
+                    {mainAcc && !connectedAcc && (
+                      <button
+                        onClick={() => handleDisconnect(mainAcc.id, orgN, true)}
+                        disabled={disconnecting === mainAcc.id}
+                        className="text-[11px] text-red-500 hover:text-white hover:bg-red-500 px-2 py-1 border border-red-300 rounded-lg disabled:opacity-50 transition"
+                      >
+                        {disconnecting === mainAcc.id ? '삭제 중...' : '삭제'}
                       </button>
                     )}
                   </div>
@@ -1105,13 +1127,16 @@ function AddAccountModal({
     setShowCertSelector(false);
     setError(''); setResult(''); setSubmitting(true);
     try {
+      const body: Record<string, string> = {
+        organization, der_file: certData.der_file, key_file: certData.key_file,
+        cert_name: certData.cert_name, cert_password: certPassword,
+        client_type: clientType, business_type: type === 'bank' ? 'BK' : 'CD',
+      };
+      if (type === 'card' && cardNo) body.card_no = cardNo;
+      if (type === 'card' && cardPassword) body.card_password = cardPassword;
       const res = await apiFetch('/api/accounts/register', {
         method: 'POST',
-        body: JSON.stringify({
-          organization, der_file: certData.der_file, key_file: certData.key_file,
-          cert_name: certData.cert_name, cert_password: certPassword,
-          client_type: clientType, business_type: type === 'bank' ? 'BK' : 'CD',
-        }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -1234,6 +1259,20 @@ function AddAccountModal({
         {/* 공인인증서 방식 */}
         {loginMethod === 'cert' && (
           <div className="space-y-3">
+            {type === 'card' && organization === '0302' && (
+              <>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">카드번호 (현대카드 필수)</label>
+                  <input type="text" value={cardNo} onChange={e => setCardNo(e.target.value)}
+                    placeholder="카드번호 16자리 (- 없이)" className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">카드 비밀번호 (현대카드 필수)</label>
+                  <input type="password" value={cardPassword} onChange={e => setCardPassword(e.target.value)}
+                    placeholder="카드 비밀번호 앞 2자리" className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg" />
+                </div>
+              </>
+            )}
             {error && <div className="rounded-lg p-3 bg-red-50 text-red-600 text-xs">{error}</div>}
             {result && <div className="rounded-lg p-3 bg-green-50 text-green-600 text-xs">{result}</div>}
             <button

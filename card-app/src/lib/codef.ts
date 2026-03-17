@@ -362,6 +362,8 @@ export async function registerAccount(
     accountInfo.derFile = derData;
     accountInfo.keyFile = keyData;
     accountInfo.password = encryptRSA(certPassword, publicKey);
+    if (cardNo) accountInfo.cardNo = cardNo;
+    if (cardPassword) accountInfo.cardPassword = encryptRSA(cardPassword, publicKey);
     loginId = loginId || displayName;
   } else {
     // 아이디/비밀번호 로그인

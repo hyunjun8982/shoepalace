@@ -33,6 +33,7 @@ interface LimitItem {
   one_time_limit?: number | null;
   installment_limit?: number | null;
   cash_advance_limit?: number | null;
+  card_company?: string | null;
   error?: string;
 }
 
@@ -380,6 +381,11 @@ export default function LimitsPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className="text-sm font-semibold text-gray-800">{orgName(item.organization)}</span>
+                    {item.card_company && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-gray-100 text-gray-500">
+                        {item.card_company}
+                      </span>
+                    )}
                     <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium
                       ${item.client_type === 'B' ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-blue-600'}`}>
                       {item.client_type === 'B' ? '법인' : '개인'}
@@ -458,8 +464,13 @@ export default function LimitsPage() {
           >
             <div className="flex justify-between items-start mb-4">
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <p className="text-lg font-bold text-gray-900">{orgName(detail.organization)}</p>
+                  {detail.card_company && (
+                    <span className="text-xs px-2 py-0.5 rounded font-medium bg-gray-100 text-gray-500">
+                      {detail.card_company}
+                    </span>
+                  )}
                   <span className={`text-xs px-2 py-0.5 rounded font-medium
                     ${detail.client_type === 'B' ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-blue-600'}`}>
                     {detail.client_type === 'B' ? '법인' : '개인'}

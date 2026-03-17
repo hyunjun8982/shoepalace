@@ -16,8 +16,8 @@ export async function GET(req: NextRequest) {
   try {
     const isAdmin = user.role === 'super_admin';
     const rows = isAdmin
-      ? await queryAll('SELECT organization, client_type, owner_name, total_limit, used_limit, remaining_limit, one_time_limit, installment_limit, cash_advance_limit, error, fetched_at FROM card_limits ORDER BY organization')
-      : await queryAll('SELECT organization, client_type, owner_name, total_limit, used_limit, remaining_limit, one_time_limit, installment_limit, cash_advance_limit, error, fetched_at FROM card_limits WHERE user_id = $1 ORDER BY organization', [user.userId]);
+      ? await queryAll(`SELECT DISTINCT ON (organization, client_type) organization, client_type, owner_name, total_limit, used_limit, remaining_limit, one_time_limit, installment_limit, cash_advance_limit, card_company, error, fetched_at FROM card_limits ORDER BY organization, client_type, fetched_at DESC NULLS LAST`)
+      : await queryAll('SELECT organization, client_type, owner_name, total_limit, used_limit, remaining_limit, one_time_limit, installment_limit, cash_advance_limit, card_company, error, fetched_at FROM card_limits WHERE user_id = $1 ORDER BY organization', [user.userId]);
 
     const lastFetchedAt = rows.length > 0
       ? rows.reduce((max, r) => r.fetched_at > max ? r.fetched_at : max, rows[0].fetched_at)
@@ -76,9 +76,27 @@ export async function POST(req: NextRequest) {
 
     for (const acc of accounts) {
       try {
-        // 한도 API 직접 호출 (카드목록 API 불필요)
-        // 법인 총한도 지원 카드사: inquiryType=1, 그 외: inquiryType=0 + first_card_no
-        const limitInfo = await getCardLimit(acc.organization, acc.connected_id, acc.first_card_no || acc.card_no || '', acc.client_type);
+        // 한도 API 직접 호출
+        // 법인 총한도 지원 카드사: inquiryType=1, 그 외: inquiryType=0 + cardNo 필요
+        let cardNoForLimit = acc.first_card_no || acc.card_no || '';
+
+        // 카드번호가 없고 총한도 조회 미지원 카드사면 → 카드목록에서 자동 조회
+        if (!cardNoForLimit && !CORP_TOTAL_LIMIT_ORGS.includes(acc.organization)) {
+          try {
+            const cards = await getCardList(acc.organization, acc.connected_id, acc.client_type);
+            const activeCard = cards.find((c: any) => c.resSleepYN !== 'Y' && c.resState !== '분실');
+            if (activeCard) {
+              cardNoForLimit = activeCard.resCardNo || '';
+              // DB에 first_card_no 저장
+              if (cardNoForLimit) {
+                await query('UPDATE codef_accounts SET first_card_no = $1 WHERE organization = $2 AND connected_id = $3 AND client_type = $4 AND first_card_no IS NULL',
+                  [cardNoForLimit, acc.organization, acc.connected_id, acc.client_type]);
+              }
+            }
+          } catch {}
+        }
+
+        const limitInfo = await getCardLimit(acc.organization, acc.connected_id, cardNoForLimit, acc.client_type);
 
         let limitData: any;
         if (Array.isArray(limitInfo)) {
@@ -106,6 +124,7 @@ export async function POST(req: NextRequest) {
           one_time_limit: parseAmt(fullTotalList?.resLimitAmount),
           installment_limit: parseAmt(installmentList?.resLimitAmount),
           cash_advance_limit: parseAmt(shortLoanList?.resLimitAmount),
+          card_company: limitData?.resCardCompany || null,
         };
 
         // 개별 카드사 조회 시 raw 응답 포함 (디버그용)
@@ -204,17 +223,18 @@ export async function POST(req: NextRequest) {
 
 async function upsertLimit(userId: number, item: any) {
   await query(
-    `INSERT INTO card_limits (user_id, organization, client_type, owner_name, total_limit, used_limit, remaining_limit, one_time_limit, installment_limit, cash_advance_limit, error, fetched_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+    `INSERT INTO card_limits (user_id, organization, client_type, owner_name, total_limit, used_limit, remaining_limit, one_time_limit, installment_limit, cash_advance_limit, card_company, error, fetched_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
      ON CONFLICT (user_id, organization, client_type) DO UPDATE SET
        owner_name = $4, total_limit = $5, used_limit = $6, remaining_limit = $7,
        one_time_limit = $8, installment_limit = $9, cash_advance_limit = $10,
+       card_company = COALESCE($11, card_limits.card_company),
        error = NULL, fetched_at = NOW(), updated_at = NOW()`,
     [
       userId, item.organization, item.client_type, item.owner_name || null,
       item.total_limit ?? null, item.used_limit ?? null, item.remaining_limit ?? null,
       item.one_time_limit ?? null, item.installment_limit ?? null, item.cash_advance_limit ?? null,
-      item.error || null,
+      item.card_company || null, item.error || null,
     ]
   );
 }

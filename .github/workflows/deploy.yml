@@ -8,7 +8,6 @@ on:
       - 'backend/**'
       - 'frontend/**'
       - 'card-app/**'
-      - 'coupon-app/**'
       - 'nginx/**'
       - 'docker-compose*.yml'
       - '.github/workflows/**'
@@ -18,7 +17,6 @@ env:
   DOCKER_BACKEND_IMAGE: shoepalace-backend
   DOCKER_FRONTEND_IMAGE: shoepalace-frontend
   DOCKER_CARD_APP_IMAGE: shoepalace-card-app
-  DOCKER_COUPON_APP_IMAGE: shoepalace-coupon-app
 
 jobs:
   build-and-deploy:
@@ -56,18 +54,11 @@ jobs:
             echo "card_app=false" >> $GITHUB_OUTPUT
           fi
 
-          if echo "$changed" | grep -q "^coupon-app/"; then
-            echo "coupon_app=true" >> $GITHUB_OUTPUT
-          else
-            echo "coupon_app=false" >> $GITHUB_OUTPUT
-          fi
-
           # docker-compose, nginx, workflow 변경 시 전체 빌드
           if echo "$changed" | grep -qE "^(docker-compose|nginx/|\.github/)"; then
             echo "backend=true" >> $GITHUB_OUTPUT
             echo "frontend=true" >> $GITHUB_OUTPUT
             echo "card_app=true" >> $GITHUB_OUTPUT
-            echo "coupon_app=true" >> $GITHUB_OUTPUT
             echo "infra=true" >> $GITHUB_OUTPUT
           else
             echo "infra=false" >> $GITHUB_OUTPUT
@@ -95,12 +86,6 @@ jobs:
           docker build -t ${{ env.DOCKER_CARD_APP_IMAGE }}:latest -f card-app/Dockerfile card-app/
           docker save ${{ env.DOCKER_CARD_APP_IMAGE }}:latest | gzip > card-app-image.tar.gz
 
-      - name: Build Coupon App Image
-        if: steps.changes.outputs.coupon_app == 'true'
-        run: |
-          docker build -t ${{ env.DOCKER_COUPON_APP_IMAGE }}:latest -f coupon-app/Dockerfile coupon-app/
-          docker save ${{ env.DOCKER_COUPON_APP_IMAGE }}:latest | gzip > coupon-app-image.tar.gz
-
       # 빌드된 이미지만 서버로 전송
       - name: Prepare transfer list
         id: transfer
@@ -112,9 +97,6 @@ jobs:
           fi
           if [ -f card-app-image.tar.gz ]; then
             [ -n "$files" ] && files="$files,card-app-image.tar.gz" || files="card-app-image.tar.gz"
-          fi
-          if [ -f coupon-app-image.tar.gz ]; then
-            [ -n "$files" ] && files="$files,coupon-app-image.tar.gz" || files="coupon-app-image.tar.gz"
           fi
           echo "files=$files" >> $GITHUB_OUTPUT
           echo "Transfer files: $files"
@@ -146,7 +128,7 @@ jobs:
             echo "=========================================="
             echo "  Shoepalace 운영 배포 시작"
             echo "  시간: $(date '+%Y-%m-%d %H:%M:%S')"
-            echo "  변경: backend=${{ steps.changes.outputs.backend }} frontend=${{ steps.changes.outputs.frontend }} card-app=${{ steps.changes.outputs.card_app }} coupon-app=${{ steps.changes.outputs.coupon_app }}"
+            echo "  변경: backend=${{ steps.changes.outputs.backend }} frontend=${{ steps.changes.outputs.frontend }} card-app=${{ steps.changes.outputs.card_app }}"
             echo "=========================================="
 
             cd ${{ secrets.DEPLOY_PATH }}
@@ -171,11 +153,6 @@ jobs:
               gunzip -c /tmp/shoepalace-deploy/card-app-image.tar.gz | docker load
             fi
 
-            if [ -f /tmp/shoepalace-deploy/coupon-app-image.tar.gz ]; then
-              echo "[5] Coupon App 이미지 로드 중..."
-              gunzip -c /tmp/shoepalace-deploy/coupon-app-image.tar.gz | docker load
-            fi
-
             rm -rf /tmp/shoepalace-deploy
 
             # 변경된 서비스만 재시작 (인프라 변경 시 전체 재시작)
@@ -188,7 +165,6 @@ jobs:
               if [ "${{ steps.changes.outputs.backend }}" == "true" ]; then SERVICES="$SERVICES backend"; fi
               if [ "${{ steps.changes.outputs.frontend }}" == "true" ]; then SERVICES="$SERVICES frontend"; fi
               if [ "${{ steps.changes.outputs.card_app }}" == "true" ]; then SERVICES="$SERVICES card-app"; fi
-              if [ "${{ steps.changes.outputs.coupon_app }}" == "true" ]; then SERVICES="$SERVICES coupon-app"; fi
 
               if [ -n "$SERVICES" ]; then
                 echo "[5] 변경된 서비스 재시작:$SERVICES"

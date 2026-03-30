@@ -33,7 +33,9 @@ function parseVouchers(vouchersJson) {
             expiry: v.expiryDate || v.expiry || '',      // expiryDate -> expiry 매핑
             value: v.value || '',
             sold: v.sold || false,
-            soldTo: v.soldTo || ''
+            sold_to: v.sold_to || v.soldTo || '',
+            deleted_unused: v.deleted_unused || false,
+            deleted_at: v.deleted_at || ''
         }));
     } catch { return []; }
 }

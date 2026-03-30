@@ -21,65 +21,106 @@ export async function GET(req: NextRequest) {
   const cancelStatus = searchParams.get('cancel_status');
   const ownerName = searchParams.get('owner_name');
   const clientType = searchParams.get('client_type');
+  const assignedUser = searchParams.get('assigned_user');
 
   const conditions: string[] = [];
   const params: any[] = [];
   let paramIdx = 1;
 
-  // 권한 기반 필터
-  paramIdx = applyOwnerFilter(allowedOwners, conditions, params, paramIdx);
+  // 권한 기반 필터: owner_name OR assigned_user 매칭
+  if (allowedOwners !== null) {
+    if (allowedOwners.length === 0 && !user.displayName) {
+      conditions.push('1 = 0');
+    } else {
+      const orParts: string[] = [];
+      if (allowedOwners.length > 0) {
+        const placeholders = allowedOwners.map(() => `$${paramIdx++}`).join(',');
+        orParts.push(`t.owner_name IN (${placeholders})`);
+        params.push(...allowedOwners);
+      }
+      // 자기 이름으로 배정된 카드 내역도 볼 수 있음
+      if (user.displayName) {
+        orParts.push(`cua.user_name = $${paramIdx++}`);
+        params.push(user.displayName);
+      }
+      if (orParts.length > 0) {
+        conditions.push(`(${orParts.join(' OR ')})`);
+      } else {
+        conditions.push('1 = 0');
+      }
+    }
+  }
 
   if (startDate) {
-    conditions.push(`used_date >= $${paramIdx++}`);
+    conditions.push(`t.used_date >= $${paramIdx++}`);
     params.push(startDate);
   }
   if (endDate) {
-    conditions.push(`used_date <= $${paramIdx++}`);
+    conditions.push(`t.used_date <= $${paramIdx++}`);
     params.push(endDate);
   }
   if (organizations) {
     const orgList = organizations.split(',').filter(Boolean);
     const placeholders = orgList.map(() => `$${paramIdx++}`).join(',');
-    conditions.push(`organization IN (${placeholders})`);
+    conditions.push(`t.organization IN (${placeholders})`);
     params.push(...orgList);
   } else if (organization) {
-    conditions.push(`organization = $${paramIdx++}`);
+    conditions.push(`t.organization = $${paramIdx++}`);
     params.push(organization);
   }
   if (owners) {
     const ownerList = owners.split(',').filter(Boolean);
     const placeholders = ownerList.map(() => `$${paramIdx++}`).join(',');
-    conditions.push(`owner_name IN (${placeholders})`);
+    conditions.push(`t.owner_name IN (${placeholders})`);
     params.push(...ownerList);
   } else if (ownerName) {
-    conditions.push(`owner_name = $${paramIdx++}`);
+    conditions.push(`t.owner_name = $${paramIdx++}`);
     params.push(ownerName);
   }
   if (paymentType) {
-    conditions.push(`payment_type = $${paramIdx++}`);
+    conditions.push(`t.payment_type = $${paramIdx++}`);
     params.push(paymentType);
   }
   if (cancelStatus) {
-    conditions.push(`cancel_status = $${paramIdx++}`);
+    conditions.push(`t.cancel_status = $${paramIdx++}`);
     params.push(cancelStatus);
   }
   if (clientType) {
-    conditions.push(`client_type = $${paramIdx++}`);
+    conditions.push(`t.client_type = $${paramIdx++}`);
     params.push(clientType);
   }
   if (search) {
-    conditions.push(`(merchant_name ILIKE $${paramIdx} OR card_no ILIKE $${paramIdx} OR approval_no ILIKE $${paramIdx})`);
+    conditions.push(`(t.merchant_name ILIKE $${paramIdx} OR t.card_no ILIKE $${paramIdx} OR t.approval_no ILIKE $${paramIdx})`);
     params.push(`%${search}%`);
     paramIdx++;
+  }
+  if (assignedUser) {
+    conditions.push(`cua.user_name = $${paramIdx++}`);
+    params.push(assignedUser);
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  const countResult = await queryOne(`SELECT COUNT(*) as total FROM card_transactions ${where}`, params);
+  const countResult = await queryOne(
+    `SELECT COUNT(*) as total FROM card_transactions t
+     LEFT JOIN card_user_assignments cua
+       ON t.card_no = cua.card_no
+       AND t.used_date >= cua.start_date
+       AND (cua.end_date IS NULL OR t.used_date <= cua.end_date)
+     ${where}`,
+    params
+  );
   const total = parseInt(countResult.total);
 
   const items = await queryAll(
-    `SELECT * FROM card_transactions ${where} ORDER BY used_date DESC, used_time DESC LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
+    `SELECT t.*, cua.user_name AS assigned_user
+     FROM card_transactions t
+     LEFT JOIN card_user_assignments cua
+       ON t.card_no = cua.card_no
+       AND t.used_date >= cua.start_date
+       AND (cua.end_date IS NULL OR t.used_date <= cua.end_date)
+     ${where}
+     ORDER BY t.used_date DESC, t.used_time DESC LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
     [...params, limit, skip]
   );
 

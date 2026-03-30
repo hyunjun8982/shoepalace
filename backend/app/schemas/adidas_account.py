@@ -17,6 +17,7 @@ class AdidasAccountBase(BaseModel):
     phone: Optional[str] = None
     current_points: Optional[int] = None
     owned_vouchers: Optional[str] = None
+    adiclub_level: Optional[str] = None
     is_active: bool = True
     fetch_status: Optional[str] = None
     web_fetch_status: Optional[str] = None
@@ -42,6 +43,7 @@ class AdidasAccountUpdate(BaseModel):
     phone: Optional[str] = None
     current_points: Optional[int] = None
     owned_vouchers: Optional[str] = None
+    adiclub_level: Optional[str] = None
     is_active: Optional[bool] = None
     fetch_status: Optional[str] = None
     web_fetch_status: Optional[str] = None

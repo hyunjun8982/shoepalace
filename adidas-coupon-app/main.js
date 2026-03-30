@@ -306,6 +306,25 @@ ipcMain.handle('run-installer', (event, type) => {
         child.unref();
 
         return { success: true, message: '모바일 환경 설치를 시작했습니다. (MuMu Player, ADB, Appium)' };
+    } else if (type === 'playwright') {
+        // Embedded Python + Playwright 일괄 설치
+        if (app.isPackaged) {
+            batPath = path.join(process.resourcesPath, 'setup_python.bat');
+        } else {
+            batPath = path.join(__dirname, 'setup_python.bat');
+        }
+
+        if (!fs.existsSync(batPath)) {
+            return { success: false, error: '설치 파일을 찾을 수 없습니다: ' + batPath };
+        }
+
+        const child = spawn('cmd.exe', ['/c', 'start', 'cmd', '/k', batPath], {
+            detached: true,
+            shell: false
+        });
+        child.unref();
+
+        return { success: true, message: 'Python + Playwright 환경 설치를 시작했습니다.' };
     }
 
     return { success: false, error: '알 수 없는 설치 유형입니다.' };
@@ -348,16 +367,37 @@ ipcMain.handle('check-install-status', async () => {
     // 1. Python 확인 - 여러 방법으로 시도
     let pythonPath = null;
 
-    // 방법 1: 저장된 설정에서 Python 경로 확인
-    const settingsPath = path.join(app.getPath('userData'), 'python_settings.json');
-    if (fs.existsSync(settingsPath)) {
-        try {
-            const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-            if (settings.pythonPath && fs.existsSync(settings.pythonPath)) {
-                pythonPath = settings.pythonPath;
+    // 방법 0: 앱 내장 Embedded Python (최우선)
+    const bundledPaths = [
+        path.join(process.resourcesPath || '', 'python', 'python.exe'),
+        path.join(__dirname, 'python', 'python.exe')
+    ];
+    // exe 기준 상위 폴더도 확인 (exe와 python이 같은 폴더에 있는 경우)
+    if (app.isPackaged) {
+        bundledPaths.push(path.join(path.dirname(app.getPath('exe')), 'python', 'python.exe'));
+        bundledPaths.push(path.join(path.dirname(app.getPath('exe')), 'resources', 'python', 'python.exe'));
+    }
+    console.log('[Install Check] Searching bundled Python paths:', bundledPaths);
+    for (const bp of bundledPaths) {
+        if (bp && fs.existsSync(bp)) {
+            pythonPath = bp;
+            console.log('[Install Check] Using bundled Python:', bp);
+            break;
+        }
+    }
+
+    // 방법 1: 저장된 설정에서 Python 경로 확인 (bundled 못 찾았을 때만)
+    if (!pythonPath) {
+        const settingsPath = path.join(app.getPath('userData'), 'python_settings.json');
+        if (fs.existsSync(settingsPath)) {
+            try {
+                const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+                if (settings.pythonPath && fs.existsSync(settings.pythonPath)) {
+                    pythonPath = settings.pythonPath;
+                }
+            } catch (e) {
+                // Settings read error
             }
-        } catch (e) {
-            // Settings read error
         }
     }
 
@@ -431,21 +471,39 @@ ipcMain.handle('check-install-status', async () => {
             result.web.selenium = pipList.toLowerCase().includes('selenium');
             result.web.undetectedChromedriver = pipList.toLowerCase().includes('undetected-chromedriver');
             result.web.requests = pipList.toLowerCase().includes('requests');
+            result.web.playwright = pipList.toLowerCase().includes('playwright');
             console.log('[Install Check] Packages - selenium:', result.web.selenium,
                         'undetected-chromedriver:', result.web.undetectedChromedriver,
-                        'requests:', result.web.requests);
+                        'requests:', result.web.requests,
+                        'playwright:', result.web.playwright);
         } catch (e) {
             console.log('[Install Check] pip list failed:', e.message);
             // pip 실패 시 모두 false 유지
         }
     }
 
-    // 웹 크롤러 전체 설치 여부
+    // 4. Playwright 브라우저 설치 확인
+    result.web.playwrightBrowser = false;
+    if (result.web.playwright && pythonPath) {
+        try {
+            const pwCheck = runCommand(pythonPath, ['-c', 'from playwright.sync_api import sync_playwright; print("ok")']);
+            result.web.playwrightBrowser = pwCheck.trim().includes('ok');
+        } catch (e) {
+            // playwright browser not installed
+        }
+    }
+
+    // 웹 크롤러 전체 설치 여부 (Selenium)
     result.web.allInstalled = result.web.python &&
                               result.web.chrome &&
                               result.web.selenium &&
                               result.web.undetectedChromedriver &&
                               result.web.requests;
+
+    // Playwright 전체 설치 여부
+    result.web.playwrightReady = result.web.python &&
+                                  result.web.playwright &&
+                                  result.web.playwrightBrowser;
 
     // ========== 모바일 크롤러 설치 상태 확인 ==========
 

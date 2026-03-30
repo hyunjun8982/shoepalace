@@ -6,6 +6,7 @@ const SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secr
 export interface TokenPayload {
   userId: number;
   username: string;
+  displayName?: string;
   role: string;
   groupId: number | null;
 }

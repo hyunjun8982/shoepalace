@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
     const token = await createToken({
       userId: user.id,
       username: user.username,
+      displayName: user.display_name || user.username,
       role: user.role,
       groupId: user.group_id || null,
     });

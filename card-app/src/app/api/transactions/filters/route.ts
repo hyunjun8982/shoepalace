@@ -21,8 +21,14 @@ export async function GET(req: NextRequest) {
     owners = await queryAll(`SELECT DISTINCT owner_name FROM card_transactions WHERE owner_name IN (${placeholders}) AND owner_name IS NOT NULL AND owner_name != '' ORDER BY owner_name`, allowedOwners);
   }
 
+  // 배정된 사용자 목록
+  const assignedUsers = await queryAll(
+    "SELECT DISTINCT user_name FROM card_user_assignments ORDER BY user_name"
+  );
+
   return Response.json({
     organizations: orgs.map((r: any) => r.organization),
     owners: owners.map((r: any) => r.owner_name),
+    assigned_users: assignedUsers.map((r: any) => r.user_name),
   });
 }

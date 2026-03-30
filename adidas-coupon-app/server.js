@@ -39,6 +39,28 @@ function getPythonPath() {
 
     const { spawnSync } = require('child_process');
 
+    // 0. 앱 내장 Embedded Python 확인 (최우선)
+    const bundledPaths = [];
+    if (process.resourcesPath) {
+        bundledPaths.push(path.join(process.resourcesPath, 'python', 'python.exe'));
+    }
+    bundledPaths.push(path.join(__dirname, 'python', 'python.exe'));
+    // exe 기준 경로도 확인 (빌드 후 폴더 구조 대응)
+    if (process.execPath) {
+        const exeDir = path.dirname(process.execPath);
+        bundledPaths.push(path.join(exeDir, 'python', 'python.exe'));
+        bundledPaths.push(path.join(exeDir, 'resources', 'python', 'python.exe'));
+    }
+    console.log('[Python] Searching bundled paths:', bundledPaths);
+
+    for (const bp of bundledPaths) {
+        if (fs.existsSync(bp)) {
+            cachedPythonPath = bp;
+            console.log('[Python] Using bundled Python:', bp);
+            return bp;
+        }
+    }
+
     // 1. 설치 bat 파일이 저장한 Python 경로 확인 (가장 확실한 방법)
     const savedConfigPath = path.join(process.env.LOCALAPPDATA || '', 'adidas-coupon-manager', 'python_path.txt');
     try {
@@ -392,6 +414,74 @@ const pool = new Pool({
     password: 'shoepalace_pass',
 });
 
+// ========== 로그인 / 회원가입 API ==========
+const bcryptjs = require('bcryptjs');
+
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        if (!username || !password) {
+            return res.json({ success: false, error: '아이디와 비밀번호를 입력하세요.' });
+        }
+        const user = await pool.query(
+            'SELECT id, username, full_name, role, is_active, hashed_password FROM users WHERE username = $1',
+            [username]
+        );
+        if (user.rows.length === 0) {
+            return res.json({ success: false, error: '존재하지 않는 아이디입니다.' });
+        }
+        const u = user.rows[0];
+        if (!u.is_active) {
+            return res.json({ success: false, error: '비활성화된 계정입니다.' });
+        }
+        const valid = bcryptjs.compareSync(password, u.hashed_password);
+        if (!valid) {
+            return res.json({ success: false, error: '비밀번호가 일치하지 않습니다.' });
+        }
+        res.json({
+            success: true,
+            user: { id: u.id, username: u.username, fullName: u.full_name, role: u.role }
+        });
+    } catch (err) {
+        console.error('[Auth] Login error:', err);
+        res.json({ success: false, error: '로그인 중 오류가 발생했습니다.' });
+    }
+});
+
+app.post('/api/auth/register', async (req, res) => {
+    try {
+        const { username, password, fullName } = req.body;
+        if (!username || !password || !fullName) {
+            return res.json({ success: false, error: '모든 항목을 입력하세요.' });
+        }
+        if (username.length < 3) {
+            return res.json({ success: false, error: '아이디는 3자 이상이어야 합니다.' });
+        }
+        if (password.length < 4) {
+            return res.json({ success: false, error: '비밀번호는 4자 이상이어야 합니다.' });
+        }
+        // 중복 확인
+        const existing = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
+        if (existing.rows.length > 0) {
+            return res.json({ success: false, error: '이미 사용 중인 아이디입니다.' });
+        }
+        const hashedPassword = bcryptjs.hashSync(password, 10);
+        const result = await pool.query(
+            `INSERT INTO users (username, email, hashed_password, full_name, role)
+             VALUES ($1, $2, $3, $4, 'buyer') RETURNING id, username, full_name, role`,
+            [username, username + '@coupon-app.local', hashedPassword, fullName]
+        );
+        const u = result.rows[0];
+        res.json({
+            success: true,
+            user: { id: u.id, username: u.username, fullName: u.full_name, role: u.role }
+        });
+    } catch (err) {
+        console.error('[Auth] Register error:', err);
+        res.json({ success: false, error: '회원가입 중 오류가 발생했습니다.' });
+    }
+});
+
 // DB 헬퍼 함수 (async)
 async function query(sql, params = []) {
     const { rows } = await pool.query(sql, params);
@@ -411,6 +501,9 @@ async function initDB() {
     try {
         await pool.query('SELECT 1');
         addLog('[DB] PostgreSQL 연결 완료 (129.212.227.252:5433)');
+        // 컬럼 자동 추가 (없으면)
+        await pool.query(`ALTER TABLE adidas_accounts ADD COLUMN IF NOT EXISTS adiclub_level TEXT`).catch(() => {});
+        await pool.query(`ALTER TABLE adidas_accounts ADD COLUMN IF NOT EXISTS proxy_url TEXT`).catch(() => {});
     } catch (err) {
         addLog(`[DB] PostgreSQL 연결 실패: ${err.message}`);
         throw err;
@@ -424,14 +517,28 @@ async function initDB() {
 function mergeVouchers(newVouchers, existingVouchersJson) {
     let existing = [];
     try { existing = JSON.parse(existingVouchersJson || '[]'); } catch {}
+    const existingByCode = new Map();
+    existing.forEach(v => { if (v.code && v.code !== 'N/A') existingByCode.set(v.code, v); });
     const newCodes = new Set(
         newVouchers.filter(v => v.code && v.code !== 'N/A').map(v => v.code)
     );
+    // 새 쿠폰에 fetched_at 추가 (기존에 있었으면 기존 날짜 유지)
+    const now = getNowTime();
+    const mergedNew = newVouchers.map(v => {
+        const prev = existingByCode.get(v.code);
+        return { ...v, fetched_at: prev?.fetched_at || v.fetched_at || now };
+    });
     // 이전에 있었지만 새 목록에 없는 쿠폰 → 코드가 있는 것만 보존
     const historical = existing.filter(v =>
         v.code && v.code !== 'N/A' && !newCodes.has(v.code)
-    );
-    return [...newVouchers, ...historical];
+    ).map(v => {
+        // 시스템에서 판매 처리하지 않았는데 사라진 쿠폰 → '미사용 삭제' 처리
+        if (!v.sold && !v.deleted_unused) {
+            return { ...v, deleted_unused: true, deleted_at: getNowTime() };
+        }
+        return v;
+    });
+    return [...mergedNew, ...historical];
 }
 
 // 현재 시간을 [YY-MM-DD HH:MM] 형식으로 반환
@@ -618,16 +725,112 @@ app.post('/api/accounts/:id/voucher-sale', async (req, res) => {
 
         await runQuery('UPDATE adidas_accounts SET owned_vouchers = $1, updated_at = NOW() WHERE id = $2', [JSON.stringify(vouchers), id]);
 
-        res.json({ message: sold ? '판매완료로 표시되었습니다' : '판매 취소되었습니다' });
+        res.json({ message: sold ? '사용완료로 표시되었습니다' : '사용 취소되었습니다' });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
+// 쿠폰 메모만 저장 (sold 상태 변경 없이)
+app.post('/api/accounts/:id/voucher-memo', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { voucher_index, sold_to } = req.body;
+
+        const account = await queryOne('SELECT owned_vouchers FROM adidas_accounts WHERE id = $1', [id]);
+        if (!account || !account.owned_vouchers) {
+            return res.status(404).json({ error: '계정 또는 쿠폰을 찾을 수 없습니다' });
+        }
+
+        const vouchers = JSON.parse(account.owned_vouchers);
+        if (voucher_index >= 0 && voucher_index < vouchers.length) {
+            vouchers[voucher_index].sold_to = sold_to || '';
+        }
+
+        await runQuery('UPDATE adidas_accounts SET owned_vouchers = $1, updated_at = NOW() WHERE id = $2', [JSON.stringify(vouchers), id]);
+
+        res.json({ message: '메모가 저장되었습니다' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ========== 프록시 관리 API ==========
+
+// 프록시 목록 조회
+app.get('/api/proxy/list', async (req, res) => {
+    try {
+        const proxyFile = path.join(__dirname, 'proxy_list.txt');
+        if (!fs.existsSync(proxyFile)) return res.json({ proxies: [] });
+        const content = fs.readFileSync(proxyFile, 'utf-8');
+        const proxies = content.split('\n').map(l => l.trim()).filter(Boolean);
+        res.json({ proxies });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 프록시 목록 저장
+app.post('/api/proxy/save', async (req, res) => {
+    try {
+        const { proxies } = req.body; // 줄바꿈 구분 문자열 또는 배열
+        const content = Array.isArray(proxies) ? proxies.join('\n') : proxies;
+        fs.writeFileSync(path.join(__dirname, 'proxy_list.txt'), content, 'utf-8');
+        const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
+        res.json({ success: true, count: lines.length });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 프록시 자동 배정 (미배정 계정에 라운드로빈)
+app.post('/api/proxy/assign', async (req, res) => {
+    try {
+        const proxyFile = path.join(__dirname, 'proxy_list.txt');
+        if (!fs.existsSync(proxyFile)) return res.status(400).json({ error: '프록시 목록 파일이 없습니다' });
+        const proxies = fs.readFileSync(proxyFile, 'utf-8').split('\n').map(l => l.trim()).filter(Boolean);
+        if (proxies.length === 0) return res.status(400).json({ error: '프록시 목록이 비어있습니다' });
+
+        // 미배정 계정 조회
+        const unassigned = await query("SELECT id FROM adidas_accounts WHERE proxy_url IS NULL OR proxy_url = '' ORDER BY id");
+        if (unassigned.length === 0) return res.json({ success: true, assigned: 0, message: '모든 계정에 프록시가 배정되어 있습니다' });
+
+        let assigned = 0;
+        for (let i = 0; i < unassigned.length; i++) {
+            const proxy = proxies[i % proxies.length];
+            await runQuery('UPDATE adidas_accounts SET proxy_url = $1 WHERE id = $2', [proxy, unassigned[i].id]);
+            assigned++;
+        }
+        res.json({ success: true, assigned, totalProxies: proxies.length });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 프록시 전체 해제
+app.post('/api/proxy/clear', async (req, res) => {
+    try {
+        const result = await runQuery("UPDATE adidas_accounts SET proxy_url = NULL");
+        res.json({ success: true, cleared: result.rowCount });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 프록시 배정 현황
+app.get('/api/proxy/status', async (req, res) => {
+    try {
+        const total = await queryOne("SELECT COUNT(*) as cnt FROM adidas_accounts");
+        const assigned = await queryOne("SELECT COUNT(*) as cnt FROM adidas_accounts WHERE proxy_url IS NOT NULL AND proxy_url != ''");
+        const proxyGroups = await query("SELECT proxy_url, COUNT(*) as cnt FROM adidas_accounts WHERE proxy_url IS NOT NULL AND proxy_url != '' GROUP BY proxy_url ORDER BY cnt DESC");
+        res.json({
+            total: parseInt(total.cnt),
+            assigned: parseInt(assigned.cnt),
+            unassigned: parseInt(total.cnt) - parseInt(assigned.cnt),
+            proxyGroups
+        });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ========== Appium 자동화 API ==========
 
-// 현재 사용 모드 (web 또는 mobile) - 정보조회와 쿠폰발급 모두 이 모드 사용 (기본값: mobile)
-let extractMode = 'mobile';
+// 현재 사용 모드 - 정보조회와 쿠폰발급 모두 이 모드 사용 (기본값: Playwright 백그라운드+시크릿)
+let extractMode = 'playwright_incognito';
+
+// 계정 간 대기시간 (초) - IP 레이트 리밋 방지용
+let accountDelaySec = 10;
 
 // Python 스크립트 경로 (하이브리드 스크립트 사용)
 function getPythonScriptPath() {
@@ -679,6 +882,44 @@ function getMobileExtractScriptPath() {
     return getPythonScriptPath();
 }
 
+// Playwright 정보조회 스크립트 경로
+function getPlaywrightExtractScriptPath() {
+    if (process.resourcesPath) {
+        const prodPath = path.join(process.resourcesPath, 'scripts', 'extract_hybrid_pw.py');
+        if (fs.existsSync(prodPath)) return prodPath;
+    }
+    const devPath = path.join(__dirname, 'scripts', 'extract_hybrid_pw.py');
+    if (fs.existsSync(devPath)) return devPath;
+    return null;
+}
+
+// Playwright 쿠폰발급 스크립트 경로
+function getPlaywrightIssueCouponScriptPath() {
+    if (process.resourcesPath) {
+        const prodPath = path.join(process.resourcesPath, 'scripts', 'issue_coupon_pw.py');
+        if (fs.existsSync(prodPath)) return prodPath;
+    }
+    const devPath = path.join(__dirname, 'scripts', 'issue_coupon_pw.py');
+    if (fs.existsSync(devPath)) return devPath;
+    return null;
+}
+
+// 계정 간 대기시간 조회/변경 API
+app.get('/api/account-delay', (req, res) => {
+    res.json({ delay: accountDelaySec });
+});
+
+app.post('/api/account-delay', (req, res) => {
+    const { delay } = req.body;
+    const sec = parseInt(delay);
+    if (isNaN(sec) || sec < 0 || sec > 600) {
+        return res.status(400).json({ error: '대기시간은 0~600초 사이로 설정하세요.' });
+    }
+    accountDelaySec = sec;
+    addLog(`[설정] 계정 간 대기시간 변경: ${sec}초`);
+    res.json({ message: `계정 간 대기시간이 ${sec}초로 변경되었습니다`, delay: sec });
+});
+
 // 추출 모드 조회 API
 app.get('/api/extract-mode', (req, res) => {
     res.json({ mode: extractMode });
@@ -687,21 +928,30 @@ app.get('/api/extract-mode', (req, res) => {
 // 추출 모드 변경 API
 app.post('/api/extract-mode', (req, res) => {
     const { mode } = req.body;
-    const validModes = ['web', 'web_incognito', 'mobile', 'hybrid'];
-    const modeLabels = { web: '웹브라우저(기본)', web_incognito: '웹브라우저(시크릿)', mobile: '모바일 Appium', hybrid: '웹+모바일' };
+    const validModes = ['web', 'web_incognito', 'mobile', 'hybrid', 'playwright', 'playwright_incognito', 'playwright_headless', 'playwright_headless_incognito'];
+    const modeLabels = { web: '웹브라우저(기본)', web_incognito: '웹브라우저(시크릿)', mobile: '모바일 Appium', hybrid: '웹+모바일', playwright: 'Playwright(기본)', playwright_incognito: 'Playwright(시크릿)', playwright_headless: 'Playwright(백그라운드)', playwright_headless_incognito: 'Playwright(백그라운드+시크릿)' };
 
     if (validModes.includes(mode)) {
         extractMode = mode;
         addLog(`[모드] 추출 모드 변경: ${modeLabels[mode]}`);
         res.json({ message: `추출 모드가 ${modeLabels[mode]}(으)로 변경되었습니다`, mode });
     } else {
-        res.status(400).json({ error: '유효하지 않은 모드입니다. web, web_incognito, mobile, hybrid 중 하나만 가능합니다.' });
+        res.status(400).json({ error: '유효하지 않은 모드입니다.' });
     }
 });
 
 // 일괄 정보 추출 (반드시 /api/extract/:id 앞에 위치해야 함!)
 app.post('/api/extract/bulk', async (req, res) => {
-    const { ids } = req.body;
+    const { ids, actionBy } = req.body;
+
+    // 작업자 기록
+    console.log('[Extract] actionBy:', actionBy, 'ids count:', ids?.length);
+    if (actionBy && ids && ids.length > 0) {
+        const ph = ids.map((_, i) => `$${i + 2}`).join(',');
+        pool.query(`UPDATE adidas_accounts SET last_action_by = $1, last_action_type = '조회', last_action_at = NOW() WHERE id IN (${ph})`, [actionBy, ...ids])
+            .then(r => console.log('[Extract] Action by updated:', r.rowCount, 'rows'))
+            .catch(e => console.error('[Extract] Action by update failed:', e.message));
+    }
 
     try {
         if (!ids || !Array.isArray(ids) || ids.length === 0) {
@@ -729,9 +979,10 @@ app.post('/api/extract/bulk', async (req, res) => {
             // 백그라운드에서 배치 처리
             processAccountsBatchMode(accounts);
         } else {
-            // 웹 모드 또는 하이브리드 모드 → 기존 순차 처리 방식
-            addLog(`[일괄추출] 순차 처리 모드로 ${accounts.length}개 계정 처리`);
-            res.json({ message: `${accounts.length}개 계정 정보 조회를 시작합니다. 순차적으로 처리됩니다.` });
+            // 웹/Playwright/하이브리드 모드 → 순차 처리 방식
+            const modeDesc = extractMode.startsWith('playwright') ? 'Playwright' : '웹';
+            addLog(`[일괄추출] ${modeDesc} 순차 처리 모드로 ${accounts.length}개 계정 처리`);
+            res.json({ message: `${accounts.length}개 계정 정보 조회를 시작합니다. (${modeDesc} 순차 처리)` });
 
             // 백그라운드에서 순차 처리
             processAccountsSequentially(accounts);
@@ -754,33 +1005,46 @@ app.post('/api/extract/:id', async (req, res) => {
 
         // 상태 업데이트 (DB + 모니터링) - 모드에 따라 적절한 컬럼 업데이트
         // hybrid 모드는 웹 먼저 시도하므로 web_fetch_status에 기록
-        // web_incognito 모드는 web과 동일하게 처리하되 --incognito 플래그 추가
-        const effectiveMode = (extractMode === 'hybrid' || extractMode === 'web_incognito') ? 'web' : extractMode;
-        const modeLabels = { web: '[웹브라우저]', web_incognito: '[웹브라우저(시크릿)]', mobile: '[모바일]', hybrid: '[웹+모바일]' };
+        // web_incognito, playwright, playwright_incognito 모드는 web과 동일하게 처리
+        const effectiveMode = (extractMode === 'hybrid' || extractMode === 'web_incognito' || extractMode.startsWith('playwright')) ? 'web' : extractMode;
+        const modeLabels = { web: '[웹브라우저]', web_incognito: '[웹브라우저(시크릿)]', mobile: '[모바일]', hybrid: '[웹+모바일]', playwright: '[Playwright]', playwright_incognito: '[Playwright(시크릿)]', playwright_headless: '[PW백그라운드]', playwright_headless_incognito: '[PW백그라운드(시크릿)]' };
         const modeLabel = modeLabels[extractMode] || '[웹브라우저]';
         const statusColumn = effectiveMode === 'web' ? 'web_fetch_status' : 'mobile_fetch_status';
-        addLog(`[추출] 시작 - extractMode=${extractMode}, effectiveMode=${effectiveMode}, statusColumn=${statusColumn}`);
+        addLog(`[추출] 시작 - ${account.email} | 모드=${extractMode} | 프록시=${account.proxy_url || '없음'}`);
         runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [`${modeLabel} 조회 중... ${getNowTime()}`, id]).catch(e => addLog(`[DB 오류] ${e.message}`));
         updateProgress(id, 'extract', 'processing', `조회 중... ${account.email}`);
 
-        const scriptPath = getPythonScriptPath();
+        // Playwright 모드면 Playwright 스크립트, 아니면 기존 Selenium 스크립트
+        const isPlaywright = extractMode.startsWith('playwright');
+        const scriptPath = isPlaywright ? (getPlaywrightExtractScriptPath() || getPythonScriptPath()) : getPythonScriptPath();
         const androidHome = (process.env.ANDROID_HOME || 'C:\\platform-tools').trim();
-        const isHybridScript = scriptPath.includes('extract_hybrid.py');
+        const isHybridScript = scriptPath.includes('extract_hybrid');
 
         const { spawn } = require('child_process');
 
-        // 하이브리드 스크립트면 모드 인자 추가 (hybrid 모드도 그대로 전달)
-        // --id 인자를 추가하여 진행 상태 출력에 사용
-        // web_incognito → --mode web --incognito 로 전달
-        const scriptMode = extractMode === 'web_incognito' ? 'web' : extractMode;
-        let pythonArgs = isHybridScript
-            ? ['-u', scriptPath, account.email, account.password, '--mode', scriptMode, '--id', id.toString()]
-            : ['-u', scriptPath, account.email, account.password];
-        if (extractMode === 'web_incognito' && isHybridScript) {
-            pythonArgs.push('--incognito');
+        // 하이브리드 스크립트면 모드 인자 추가
+        let scriptMode;
+        if (extractMode.includes('incognito') || extractMode === 'web_incognito') {
+            scriptMode = 'web';
+        } else if (extractMode.startsWith('playwright')) {
+            scriptMode = 'web';
+        } else {
+            scriptMode = extractMode;
+        }
+        let pythonArgs;
+        if (isHybridScript) {
+            // named args 먼저, -- separator 후 positional args (비밀번호에 -- 포함 대비)
+            pythonArgs = ['-u', scriptPath, '--mode', scriptMode, '--id', id.toString()];
+            if (extractMode.includes('incognito')) pythonArgs.push('--incognito');
+            if (extractMode.includes('headless')) pythonArgs.push('--headless');
+            if (account.proxy_url) pythonArgs.push('--proxy', account.proxy_url);
+            pythonArgs.push('--', account.email, account.password);
+        } else {
+            pythonArgs = ['-u', scriptPath, account.email, account.password];
         }
 
         const pythonPath = getPythonPath();
+        addLog(`[추출] 스크립트: ${scriptPath}, 인자: ${JSON.stringify(pythonArgs)}`);
 
         const pythonProcess = spawn(pythonPath, pythonArgs, {
             env: {
@@ -929,6 +1193,7 @@ app.post('/api/extract/:id', async (req, res) => {
                             SET name = $1, phone = $2, adikr_barcode = $3, current_points = $4, owned_vouchers = $5,
                                 web_fetch_status = COALESCE($6, web_fetch_status),
                                 mobile_fetch_status = COALESCE($7, mobile_fetch_status),
+                                adiclub_level = COALESCE($9, adiclub_level),
                                 updated_at = NOW()
                             WHERE id = $8
                         `, [
@@ -939,14 +1204,16 @@ app.post('/api/extract/:id', async (req, res) => {
                             JSON.stringify(mergeVouchers(result.vouchers || [], account.owned_vouchers)),
                             webStatus,
                             mobileStatus,
-                            id
+                            id,
+                            result.level || null
                         ]).catch(e => addLog(`[DB 오류] ${e.message}`));
                     } else {
                         addLog(`[추출] 단일모드 상태 저장: statusColumn=${statusColumn}, successStatus=${successStatus}, id=${id}`);
                         runQuery(`
                             UPDATE adidas_accounts
                             SET name = $1, phone = $2, adikr_barcode = $3, current_points = $4, owned_vouchers = $5,
-                                ${statusColumn} = $6, updated_at = NOW()
+                                ${statusColumn} = $6, adiclub_level = COALESCE($8, adiclub_level),
+                                updated_at = NOW()
                             WHERE id = $7
                         `, [
                             result.name || account.name,
@@ -955,7 +1222,8 @@ app.post('/api/extract/:id', async (req, res) => {
                             result.points || account.current_points,
                             JSON.stringify(mergeVouchers(result.vouchers || [], account.owned_vouchers)),
                             successStatus,
-                            id
+                            id,
+                            result.level || null
                         ]).catch(e => addLog(`[DB 오류] ${e.message}`));
                     }
                     addLog(`[추출] 성공 완료 - ${account.email}, extractMode=${extractMode}`);
@@ -1044,24 +1312,68 @@ app.post('/api/extract/:id', async (req, res) => {
 async function processAccountsSequentially(accounts) {
     // 배치 프로세스 시작 등록 (순차 처리는 process 없이 등록)
     const accountIds = accounts.map(a => a.id);
-    startBatchProcess('extract-web', '웹 정보 조회', accountIds, null);
+    const batchLabel = extractMode.startsWith('playwright') ? 'Playwright 정보 조회' : '웹 정보 조회';
+    startBatchProcess('extract-web', batchLabel, accountIds, null);
+
+    const IP_BLOCK_WAIT = 60000; // IP 차단 시 60초 대기
+    const IP_BLOCK_MAX_RETRIES = 3; // 최대 재시도 횟수
 
     try {
-        for (const account of accounts) {
+        for (let i = 0; i < accounts.length; i++) {
+            const account = accounts[i];
             // 중지 요청 확인
             if (runningBatchProcess.abortRequested) {
                 addLog(`[일괄추출] 사용자 중지 요청 - 남은 계정 건너뜀`);
-                // 남은 계정 상태 업데이트
-                const idx = accounts.indexOf(account);
-                for (let i = idx; i < accounts.length; i++) {
-                    updateProgress(accounts[i].id, 'extract', 'error', '사용자에 의해 중지됨');
+                for (let j = i; j < accounts.length; j++) {
+                    updateProgress(accounts[j].id, 'extract', 'error', '사용자에 의해 중지됨');
                 }
                 break;
             }
 
-            await extractAccountInfo(account);
-            // 다음 계정 전 잠시 대기
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            let result = await extractAccountInfo(account);
+
+            // 봇 차단 감지 시 즉시 중지
+            if (result && result.botBlocked) {
+                addLog(`[일괄추출] 봇 차단 감지 - 남은 계정 일괄 중지`);
+                for (let j = i + 1; j < accounts.length; j++) {
+                    const skipMsg = `봇 차단으로 중지됨 ${getNowTime()}`;
+                    updateProgress(accounts[j].id, 'extract', 'error', skipMsg);
+                    runQuery('UPDATE adidas_accounts SET web_fetch_status = $1, updated_at = NOW() WHERE id = $2', [skipMsg, accounts[j].id]).catch(() => {});
+                }
+                break;
+            }
+
+            // IP 차단 시 대기 후 재시도
+            if (result && result.ipBlocked) {
+                for (let retry = 0; retry < IP_BLOCK_MAX_RETRIES; retry++) {
+                    if (runningBatchProcess.abortRequested) break;
+                    const waitSec = IP_BLOCK_WAIT / 1000;
+                    addLog(`[일괄추출] IP 차단 감지 - ${waitSec}초 대기 후 재시도 (${retry + 1}/${IP_BLOCK_MAX_RETRIES})`);
+                    updateProgress(account.id, 'extract', 'processing', `IP 차단 - ${waitSec}초 대기 후 재시도...`);
+                    await new Promise(resolve => setTimeout(resolve, IP_BLOCK_WAIT));
+                    if (runningBatchProcess.abortRequested) break;
+                    result = await extractAccountInfo(account);
+                    if (!result || !result.ipBlocked) break;
+                }
+                if (result && result.ipBlocked) {
+                    addLog(`[일괄추출] IP 차단 지속 - 남은 계정 건너뜀`);
+                    for (let j = i + 1; j < accounts.length; j++) {
+                        const skipMsg = `IP 차단으로 건너뜀 ${getNowTime()}`;
+                        updateProgress(accounts[j].id, 'extract', 'error', skipMsg);
+                        const effectiveMode = (extractMode === 'hybrid' || extractMode === 'web_incognito' || extractMode.startsWith('playwright')) ? 'web' : extractMode;
+                        const statusCol = effectiveMode === 'web' ? 'web_fetch_status' : 'mobile_fetch_status';
+                        runQuery(`UPDATE adidas_accounts SET ${statusCol} = $1, updated_at = NOW() WHERE id = $2`, [skipMsg, accounts[j].id]).catch(() => {});
+                    }
+                    break;
+                }
+            }
+
+            // 다음 계정 전 대기 (IP 레이트 리밋 방지)
+            if (i < accounts.length - 1) {
+                const delaySec = accountDelaySec || 10;
+                addLog(`[일괄추출] 다음 계정까지 ${delaySec}초 대기...`);
+                await new Promise(resolve => setTimeout(resolve, delaySec * 1000));
+            }
         }
     } finally {
         // 배치 프로세스 종료
@@ -1088,7 +1400,8 @@ async function processAccountsBatchMode(accounts) {
     const batchData = accounts.map(acc => ({
         id: acc.id,
         email: acc.email,
-        password: acc.password
+        password: acc.password,
+        proxy: acc.proxy_url || null
     }));
 
     const batchJsonPath = path.join(getWritableTempDir(), 'batch_accounts.json');
@@ -1290,6 +1603,8 @@ async function processBatchResult(result, modeLabel, statusColumn) {
 
         const barcode = member.memberId || account.adikr_barcode;
         const points = wallet.availablePoints !== undefined ? wallet.availablePoints : account.current_points;
+        const loyaltyStatus = apiResult.loyaltyStatus || {};
+        const level = loyaltyStatus.levelDescription || null;
 
         // 쿠폰 정보 변환 + 기존 쿠폰과 병합 (사라진 코드도 보존)
         const formattedVouchers = Array.isArray(vouchers) ? vouchers.map(v => ({
@@ -1306,9 +1621,10 @@ async function processBatchResult(result, modeLabel, statusColumn) {
         await runQuery(`
             UPDATE adidas_accounts
             SET name = $1, phone = $2, adikr_barcode = $3, current_points = $4, owned_vouchers = $5,
-                ${statusColumn} = $6, updated_at = NOW()
+                ${statusColumn} = $6, adiclub_level = COALESCE($8, adiclub_level),
+                updated_at = NOW()
             WHERE id = $7
-        `, [name, phone, barcode, points, voucherData, successStatus, accountId]);
+        `, [name, phone, barcode, points, voucherData, successStatus, accountId, level]);
 
         addLog(`[배치추출] ${email} - 조회 완료 (이름: ${name}, 바코드: ${barcode}, 포인트: ${points})`);
         updateProgress(accountId, 'extract', 'success', successStatus);
@@ -1346,31 +1662,44 @@ function extractAccountInfo(account) {
         // 상태 업데이트 (DB + 모니터링) - 모드에 따라 적절한 컬럼 업데이트
         // hybrid 모드는 웹 먼저 시도하므로 web_fetch_status에 기록
         // web_incognito 모드는 web과 동일하게 처리하되 --incognito 플래그 추가
-        const effectiveMode = (extractMode === 'hybrid' || extractMode === 'web_incognito') ? 'web' : extractMode;
-        const modeLabels2 = { web: '[웹브라우저]', web_incognito: '[웹브라우저(시크릿)]', mobile: '[모바일]', hybrid: '[웹+모바일]' };
+        const effectiveMode = (extractMode === 'hybrid' || extractMode === 'web_incognito' || extractMode.startsWith('playwright')) ? 'web' : extractMode;
+        const modeLabels2 = { web: '[웹브라우저]', web_incognito: '[웹브라우저(시크릿)]', mobile: '[모바일]', hybrid: '[웹+모바일]', playwright: '[Playwright]', playwright_incognito: '[Playwright(시크릿)]', playwright_headless: '[PW백그라운드]', playwright_headless_incognito: '[PW백그라운드(시크릿)]' };
         const modeLabel = modeLabels2[extractMode] || '[웹브라우저]';
         const statusColumn = effectiveMode === 'web' ? 'web_fetch_status' : 'mobile_fetch_status';
+        addLog(`[추출] ${account.email} | 프록시=${account.proxy_url || '없음'}`);
         runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [`${modeLabel} 조회 중... ${getNowTime()}`, account.id]).catch(e => addLog(`[DB 오류] ${e.message}`));
         updateProgress(account.id, 'extract', 'processing', `조회 중... ${account.email}`);
 
-        const scriptPath = getPythonScriptPath();
+        // Playwright 모드면 Playwright 스크립트, 아니면 기존 Selenium 스크립트
+        const isPlaywright = extractMode.startsWith('playwright');
+        const scriptPath = isPlaywright ? (getPlaywrightExtractScriptPath() || getPythonScriptPath()) : getPythonScriptPath();
         const androidHome = (process.env.ANDROID_HOME || 'C:\\platform-tools').trim();
-        const isHybridScript = scriptPath.includes('extract_hybrid.py');
+        const isHybridScript = scriptPath.includes('extract_hybrid');
 
         const { spawn } = require('child_process');
 
-        // 하이브리드 스크립트면 모드 인자 추가 (hybrid 모드도 그대로 전달)
-        // --id 인자를 추가하여 진행 상태 출력에 사용
-        // web_incognito → --mode web --incognito 로 전달
-        const scriptMode = extractMode === 'web_incognito' ? 'web' : extractMode;
-        let pythonArgs = isHybridScript
-            ? ['-u', scriptPath, account.email, account.password, '--mode', scriptMode, '--id', account.id.toString()]
-            : ['-u', scriptPath, account.email, account.password];
-        if (extractMode === 'web_incognito' && isHybridScript) {
-            pythonArgs.push('--incognito');
+        let scriptMode;
+        if (extractMode.includes('incognito') || extractMode === 'web_incognito') {
+            scriptMode = 'web';
+        } else if (extractMode.startsWith('playwright')) {
+            scriptMode = 'web';
+        } else {
+            scriptMode = extractMode;
+        }
+        let pythonArgs;
+        if (isHybridScript) {
+            // named args 먼저, -- separator 후 positional args (비밀번호에 -- 포함 대비)
+            pythonArgs = ['-u', scriptPath, '--mode', scriptMode, '--id', account.id.toString()];
+            if (extractMode.includes('incognito')) pythonArgs.push('--incognito');
+            if (extractMode.includes('headless')) pythonArgs.push('--headless');
+            if (account.proxy_url) pythonArgs.push('--proxy', account.proxy_url);
+            pythonArgs.push('--', account.email, account.password);
+        } else {
+            pythonArgs = ['-u', scriptPath, account.email, account.password];
         }
 
         const pythonPath = getPythonPath();
+        addLog(`[추출] 스크립트: ${scriptPath}, 인자: ${JSON.stringify(pythonArgs)}`);
 
         const pythonProcess = spawn(pythonPath, pythonArgs, {
             env: {
@@ -1433,6 +1762,9 @@ function extractAccountInfo(account) {
             const hasApiResult = stdout.includes('이름:') && stdout.includes('바코드:');
             // 에러 조건: BOT_BLOCKED, PASSWORD_WRONG, 또는 [ERROR] 메시지
             // 단, 프로필 화면 타임아웃/로그아웃 실패는 토큰+API 성공이면 무시 (비치명적)
+            // IP 차단 (Access Denied) 감지
+            const isIpBlocked = stdout.includes('IP_BLOCKED') || stdout.includes('Access Denied');
+
             const hasCriticalError = stdout.includes('BOT_BLOCKED') ||
                              stdout.includes('PASSWORD_WRONG');
             const hasNonCriticalError = stdout.includes('[ERROR]') &&
@@ -1440,6 +1772,15 @@ function extractAccountInfo(account) {
                              !stdout.includes('로그아웃 실패');
             const hasError = hasCriticalError || hasNonCriticalError;
             const isSuccess = code === 0 && (hasToken || hasApiResult) && !hasError;
+
+            if (isIpBlocked) {
+                const ipBlockMsg = `${modeLabel} IP 차단 (Access Denied) ${getNowTime()}`;
+                addLog(`[일괄추출] ${account.email} - IP 차단됨 (Access Denied)`);
+                runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [ipBlockMsg, account.id]).catch(e => addLog(`[DB 오류] ${e.message}`));
+                updateProgress(account.id, 'extract', 'error', ipBlockMsg);
+                resolve({ ipBlocked: true });
+                return;
+            }
 
             if (isSuccess) {
                 const result = parseExtractResult(stdout, account.email);
@@ -1483,6 +1824,7 @@ function extractAccountInfo(account) {
                             SET name = $1, phone = $2, adikr_barcode = $3, current_points = $4, owned_vouchers = $5,
                                 web_fetch_status = COALESCE($6, web_fetch_status),
                                 mobile_fetch_status = COALESCE($7, mobile_fetch_status),
+                                adiclub_level = COALESCE($9, adiclub_level),
                                 updated_at = NOW()
                             WHERE id = $8
                         `, [
@@ -1493,13 +1835,15 @@ function extractAccountInfo(account) {
                             JSON.stringify(mergeVouchers(result.vouchers || [], account.owned_vouchers)),
                             webStatus,
                             mobileStatus,
-                            account.id
+                            account.id,
+                            result.level || null
                         ]).catch(e => addLog(`[DB 오류] ${e.message}`));
                     } else {
                         runQuery(`
                             UPDATE adidas_accounts
                             SET name = $1, phone = $2, adikr_barcode = $3, current_points = $4, owned_vouchers = $5,
-                                ${statusColumn} = $6, updated_at = NOW()
+                                ${statusColumn} = $6, adiclub_level = COALESCE($8, adiclub_level),
+                                updated_at = NOW()
                             WHERE id = $7
                         `, [
                             result.name || account.name,
@@ -1508,7 +1852,8 @@ function extractAccountInfo(account) {
                             result.points || account.current_points,
                             JSON.stringify(mergeVouchers(result.vouchers || [], account.owned_vouchers)),
                             successStatus,
-                            account.id
+                            account.id,
+                            result.level || null
                         ]).catch(e => addLog(`[DB 오류] ${e.message}`));
                     }
                     addLog(`[일괄추출] ${account.email} - 조회 완료`);
@@ -1566,6 +1911,10 @@ function extractAccountInfo(account) {
                     const botBlockMsg = botBlockMatch ? botBlockMatch[1].trim() : '';
                     errorMsg = botBlockMsg ? `${modeLabel} 차단 의심 : ${botBlockMsg} ${getNowTime()}` : `${modeLabel} 차단 의심 ${getNowTime()}`;
                     addLog(`[일괄추출] ${account.email} - 차단 의심${botBlockMsg ? ': ' + botBlockMsg : ''}`);
+                    runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [errorMsg, account.id]).catch(e => addLog(`[DB 오류] ${e.message}`));
+                    updateProgress(account.id, 'extract', 'error', errorMsg);
+                    resolve({ botBlocked: true });
+                    return;
                 } else if (hasErrorMessage) {
                     // [ERROR] 메시지에서 세부 내용 추출
                     const errorMatch = stdout.match(/\[ERROR\]\s*([^\n\r]+)/);
@@ -1592,7 +1941,7 @@ function extractAccountInfo(account) {
 }
 
 function parseExtractResult(output, email) {
-    const result = { email, name: null, phone: null, barcode: null, points: null, vouchers: null, emailMismatch: false, foundEmail: null };
+    const result = { email, name: null, phone: null, barcode: null, level: null, points: null, vouchers: null, emailMismatch: false, foundEmail: null };
 
     // 핵심: 해당 이메일이 포함된 "Adidas API 테스트" 섹션만 파싱
     // "이메일: xxx@xxx.com" 이후의 데이터만 사용
@@ -1666,6 +2015,12 @@ function parseExtractResult(output, email) {
     const barcodeMatch = parseSection.match(/바코드:\s*(ADIKR\d+|ADI[A-Z]{2}\d+)/);
     if (barcodeMatch) {
         result.barcode = barcodeMatch[1].trim();
+    }
+
+    // adiClub 레벨 추출 - "레벨: Level 4" 형식
+    const levelMatch = parseSection.match(/레벨:\s*(Level\s*\d+)/i);
+    if (levelMatch) {
+        result.level = levelMatch[1].trim();
     }
 
     // 포인트 추출 - "포인트: 1,234" 또는 "포인트: 1234" 형식
@@ -1754,7 +2109,13 @@ function getIssueCouponMobileScriptPath() {
 
 // 쿠폰 일괄 발급 (반드시 단건 발급보다 먼저 정의해야 함 - Express 라우팅 순서)
 app.post('/api/issue-coupon/bulk', async (req, res) => {
-    const { ids, coupon_type, coupon_types, mode } = req.body;
+    const { ids, coupon_type, coupon_types, mode, actionBy } = req.body;
+
+    // 작업자 기록
+    if (actionBy && ids && ids.length > 0) {
+        const ph = ids.map((_, i) => `$${i + 2}`).join(',');
+        pool.query(`UPDATE adidas_accounts SET last_action_by = $1, last_action_type = '발급', last_action_at = NOW() WHERE id IN (${ph})`, [actionBy, ...ids]).catch(() => {});
+    }
 
     try {
         if (!ids || !Array.isArray(ids) || ids.length === 0) {
@@ -1804,19 +2165,21 @@ app.post('/api/issue-coupon/bulk', async (req, res) => {
         };
         const couponTypesStr = targetCouponTypes.map(ct => couponNames[ct] || `${ct}원`).join(', ');
 
-        const modeLabels = { web: '[웹]', web_incognito: '[웹(시크릿)]', mobile: '[모바일]', hybrid: '[웹+모바일]' };
+        const modeLabels = { web: '[웹]', web_incognito: '[웹(시크릿)]', mobile: '[모바일]', hybrid: '[웹+모바일]', playwright: '[Playwright]', playwright_incognito: '[Playwright(시크릿)]', playwright_headless: '[PW백그라운드]', playwright_headless_incognito: '[PW백그라운드(시크릿)]' };
         const modeLabel = modeLabels[issueMode] || '[웹]';
         addLog(`[쿠폰발급] ${modeLabel} ${accounts.length}개 계정 ${couponTypesStr} 발급 시작`);
         res.json({ message: `${modeLabel} ${accounts.length}개 계정 쿠폰 발급(${couponTypesStr})을 시작합니다. 순차적으로 처리됩니다.` });
 
         // 백그라운드에서 순차 처리 (모드에 따라 분기)
-        const useIncognito = issueMode === 'web_incognito';
+        const useIncognito = issueMode.includes('incognito');
+        const usePlaywright = issueMode.startsWith('playwright');
+        const useHeadless = issueMode.includes('headless');
         if (issueMode === 'mobile') {
             processIssueCouponMobileSequentially(accounts, targetCouponTypes);
         } else if (issueMode === 'hybrid') {
             processIssueCouponHybridSequentially(accounts, targetCouponTypes[0]); // 하이브리드는 아직 단일만 지원
         } else {
-            processIssueCouponSequentially(accounts, targetCouponTypes[0], useIncognito); // 웹은 아직 단일만 지원
+            processIssueCouponSequentially(accounts, targetCouponTypes[0], useIncognito, usePlaywright, useHeadless); // 웹/Playwright 순차 처리
         }
     } catch (error) {
         addLog(`[쿠폰발급] 오류: ${error.message}`);
@@ -1842,7 +2205,7 @@ app.post('/api/issue-coupon/:id', async (req, res) => {
 
         // 요청에서 모드를 전달받거나, 없으면 서버의 extractMode 사용
         const issueMode = mode || extractMode;
-        const issueModeLabels = { web: '[웹브라우저]', web_incognito: '[웹브라우저(시크릿)]', mobile: '[모바일]', hybrid: '[웹+모바일]' };
+        const issueModeLabels = { web: '[웹브라우저]', web_incognito: '[웹브라우저(시크릿)]', mobile: '[모바일]', hybrid: '[웹+모바일]', playwright: '[Playwright]', playwright_incognito: '[Playwright(시크릿)]', playwright_headless: '[PW백그라운드]', playwright_headless_incognito: '[PW백그라운드(시크릿)]' };
         const modeLabel = issueModeLabels[issueMode] || '[웹브라우저]';
 
         addLog(`[쿠폰발급] ${modeLabel} 시작 - ${account.email} (${coupon_type}원 상품권)`);
@@ -1861,12 +2224,14 @@ app.post('/api/issue-coupon/:id', async (req, res) => {
             return;
         }
 
-        // 웹 브라우저 모드 (web 또는 web_incognito)
+        // 웹 브라우저 또는 Playwright 모드
         // 상태 업데이트 (web_issue_status 사용)
         runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [`${modeLabel} ${coupon_type}원 발급 중... ${getNowTime()}`, id]).catch(e => addLog(`[DB오류] ${e.message}`));
         updateProgress(id, 'issue', 'processing', `${coupon_type}원 발급 중...`);
 
-        const scriptPath = getIssueCouponScriptPath();
+        // Playwright 모드면 Playwright 스크립트 사용
+        const isPlaywrightIssue = issueMode.startsWith('playwright');
+        const scriptPath = isPlaywrightIssue ? (getPlaywrightIssueCouponScriptPath() || getIssueCouponScriptPath()) : getIssueCouponScriptPath();
         if (!scriptPath) {
             addLog('[쿠폰발급] Python 스크립트를 찾을 수 없음');
             return res.status(500).json({ error: '쿠폰 발급 스크립트를 찾을 수 없습니다' });
@@ -1875,10 +2240,12 @@ app.post('/api/issue-coupon/:id', async (req, res) => {
         const { spawn } = require('child_process');
         const pythonPath = getPythonPath();
 
-        const issueArgs = ['-u', scriptPath, account.email, account.password, coupon_type];
-        if (issueMode === 'web_incognito') {
-            issueArgs.push('--incognito');
-        }
+        // named args 먼저, -- separator 후 positional args (비밀번호에 -- 포함 대비)
+        const issueArgs = ['-u', scriptPath];
+        if (issueMode.includes('incognito')) issueArgs.push('--incognito');
+        if (issueMode.includes('headless')) issueArgs.push('--headless');
+        if (account.proxy_url) issueArgs.push('--proxy', account.proxy_url);
+        issueArgs.push('--', account.email, account.password, coupon_type);
         const pythonProcess = spawn(pythonPath, issueArgs, {
             env: {
                 ...process.env,
@@ -1946,18 +2313,26 @@ app.post('/api/issue-coupon/:id', async (req, res) => {
             const isSuccess = confirmButtonSuccess || (result && result.success);
 
             if (isSuccess) {
-                // 발급 성공 - 포인트 및 쿠폰 목록 업데이트 (web_issue_status 사용)
+                // 발급 성공 - 포인트, 쿠폰, 계정 정보 업데이트 (web_issue_status 사용)
                 const newPoints = result.remaining_points || 0;
                 const vouchers = result.vouchers ? JSON.stringify(mergeVouchers(result.vouchers, account.owned_vouchers)) : null;
                 const successMsg = `${modeLabel} ${coupon_type}원 발급 완료 ${getNowTime()}`;
+                const name = result.name || null;
+                const phone = result.phone || null;
+                const barcode = result.barcode || null;
+                const level = result.level || null;
                 runQuery(`
                     UPDATE adidas_accounts
                     SET current_points = $1,
                         owned_vouchers = COALESCE($2, owned_vouchers),
                         web_issue_status = $3,
+                        name = COALESCE($5, name),
+                        phone = COALESCE($6, phone),
+                        adikr_barcode = COALESCE($7, adikr_barcode),
+                        adiclub_level = COALESCE($8, adiclub_level),
                         updated_at = NOW()
                     WHERE id = $4
-                `, [newPoints, vouchers, successMsg, id]).catch(e => addLog(`[DB오류] ${e.message}`));
+                `, [newPoints, vouchers, successMsg, id, name, phone, barcode, level]).catch(e => addLog(`[DB오류] ${e.message}`));
                 addLog(`[쿠폰발급] 성공 - ${account.email}: ${coupon_type}원 발급, 잔여 ${newPoints}P, 쿠폰 ${result.vouchers?.length || 0}개`);
                 updateProgress(id, 'issue', 'success', successMsg);
             } else {
@@ -1990,18 +2365,26 @@ app.post('/api/issue-coupon/:id', async (req, res) => {
                     errorMsg = `${modeLabel} 알 수 없는 오류 ${getNowTime()}`;
                 }
 
-                // 실패해도 result에 포인트/쿠폰 정보가 있으면 업데이트
-                if (result && (result.remaining_points !== undefined || result.vouchers)) {
+                // 실패해도 result에 포인트/쿠폰/계정 정보가 있으면 업데이트
+                if (result && (result.remaining_points !== undefined || result.vouchers || result.name || result.barcode)) {
                     const newPoints = result.remaining_points || 0;
                     const vouchers = result.vouchers ? JSON.stringify(mergeVouchers(result.vouchers, account.owned_vouchers)) : null;
+                    const name = result.name || null;
+                    const phone = result.phone || null;
+                    const barcode = result.barcode || null;
+                    const level = result.level || null;
                     runQuery(`
                         UPDATE adidas_accounts
                         SET current_points = $1,
                             owned_vouchers = COALESCE($2, owned_vouchers),
                             web_issue_status = $3,
+                            name = COALESCE($5, name),
+                            phone = COALESCE($6, phone),
+                            adikr_barcode = COALESCE($7, adikr_barcode),
+                            adiclub_level = COALESCE($8, adiclub_level),
                             updated_at = NOW()
                         WHERE id = $4
-                    `, [newPoints, vouchers, errorMsg, id]).catch(e => addLog(`[DB오류] ${e.message}`));
+                    `, [newPoints, vouchers, errorMsg, id, name, phone, barcode, level]).catch(e => addLog(`[DB오류] ${e.message}`));
                     addLog(`[쿠폰발급] 실패 - ${account.email}: ${errorMsg} (포인트: ${newPoints}P, 쿠폰: ${result.vouchers?.length || 0}개 업데이트됨)`);
                 } else {
                     runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [errorMsg, id]).catch(e => addLog(`[DB오류] ${e.message}`));
@@ -2025,27 +2408,70 @@ app.post('/api/issue-coupon/:id', async (req, res) => {
     }
 });
 
-async function processIssueCouponSequentially(accounts, coupon_type, useIncognito = false) {
+async function processIssueCouponSequentially(accounts, coupon_type, useIncognito = false, usePlaywright = false, useHeadless = false) {
     // 배치 프로세스 시작 등록 (순차 처리는 process 없이 등록)
     const accountIds = accounts.map(a => a.id);
-    startBatchProcess('issue-web', `웹 쿠폰 발급 (${coupon_type}원)`, accountIds, null);
+    const batchLabel = usePlaywright ? 'Playwright' : '웹';
+    startBatchProcess('issue-web', `${batchLabel} 쿠폰 발급 (${coupon_type}원)`, accountIds, null);
+
+    const IP_BLOCK_WAIT = 60000; // IP 차단 시 60초 대기
+    const IP_BLOCK_MAX_RETRIES = 3; // 최대 재시도 횟수
 
     try {
-        for (const account of accounts) {
+        for (let i = 0; i < accounts.length; i++) {
+            const account = accounts[i];
             // 중지 요청 확인
             if (runningBatchProcess.abortRequested) {
                 addLog(`[일괄발급] 사용자 중지 요청 - 남은 계정 건너뜀`);
-                // 남은 계정 상태 업데이트
-                const idx = accounts.indexOf(account);
-                for (let i = idx; i < accounts.length; i++) {
-                    updateProgress(accounts[i].id, 'issue', 'error', '사용자에 의해 중지됨');
+                for (let j = i; j < accounts.length; j++) {
+                    updateProgress(accounts[j].id, 'issue', 'error', '사용자에 의해 중지됨');
                 }
                 break;
             }
 
-            await issueCouponForAccount(account, coupon_type, false, useIncognito);
-            // 다음 계정 전 잠시 대기
-            await new Promise(resolve => setTimeout(resolve, 3000));
+            let result = await issueCouponForAccount(account, coupon_type, false, useIncognito, usePlaywright, useHeadless);
+
+            // 봇 차단 감지 시 즉시 중지 (브라우저 더 이상 띄우지 않음)
+            const isBotBlocked = result && result.error && result.error.startsWith('BOT_BLOCKED');
+            if (isBotBlocked) {
+                addLog(`[일괄발급] 봇 차단 감지 - 남은 계정 일괄 중지`);
+                for (let j = i + 1; j < accounts.length; j++) {
+                    const skipMsg = `봇 차단으로 중지됨 ${getNowTime()}`;
+                    updateProgress(accounts[j].id, 'issue', 'error', skipMsg);
+                    runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [skipMsg, accounts[j].id]).catch(() => {});
+                }
+                break;
+            }
+
+            // IP 차단 시 대기 후 재시도
+            if (result && result.ipBlocked) {
+                for (let retry = 0; retry < IP_BLOCK_MAX_RETRIES; retry++) {
+                    if (runningBatchProcess.abortRequested) break;
+                    const waitSec = IP_BLOCK_WAIT / 1000;
+                    addLog(`[일괄발급] IP 차단 감지 - ${waitSec}초 대기 후 재시도 (${retry + 1}/${IP_BLOCK_MAX_RETRIES})`);
+                    updateProgress(account.id, 'issue', 'processing', `IP 차단 - ${waitSec}초 대기 후 재시도...`);
+                    await new Promise(resolve => setTimeout(resolve, IP_BLOCK_WAIT));
+                    if (runningBatchProcess.abortRequested) break;
+                    result = await issueCouponForAccount(account, coupon_type, false, useIncognito, usePlaywright, useHeadless);
+                    if (!result || !result.ipBlocked) break;
+                }
+                if (result && result.ipBlocked) {
+                    addLog(`[일괄발급] IP 차단 지속 - 남은 계정 건너뜀`);
+                    for (let j = i + 1; j < accounts.length; j++) {
+                        const skipMsg = `IP 차단으로 건너뜀 ${getNowTime()}`;
+                        updateProgress(accounts[j].id, 'issue', 'error', skipMsg);
+                        runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [skipMsg, accounts[j].id]).catch(() => {});
+                    }
+                    break;
+                }
+            }
+
+            // 다음 계정 전 대기 (IP 레이트 리밋 방지)
+            if (i < accounts.length - 1) {
+                const delaySec = accountDelaySec || 10;
+                addLog(`[일괄발급] 다음 계정까지 ${delaySec}초 대기...`);
+                await new Promise(resolve => setTimeout(resolve, delaySec * 1000));
+            }
         }
     } finally {
         // 배치 프로세스 종료
@@ -2308,16 +2734,20 @@ async function processIssueCouponMobileSequentially(accounts, coupon_types) {
 
 // isHybridMode: true면 결과만 반환하고 상태 업데이트는 호출자가 처리
 // useIncognito: true면 시크릿 모드로 브라우저 실행
-function issueCouponForAccount(account, coupon_type, isHybridMode = false, useIncognito = false) {
+function issueCouponForAccount(account, coupon_type, isHybridMode = false, useIncognito = false, usePlaywright = false, useHeadless = false) {
     return new Promise((resolve) => {
-        const webLabel = useIncognito ? '[웹브라우저(시크릿)]' : '[웹브라우저]';
+        const webLabel = usePlaywright
+            ? (useIncognito ? '[Playwright(시크릿)]' : '[Playwright]')
+            : (useIncognito ? '[웹브라우저(시크릿)]' : '[웹브라우저]');
         // 상태 업데이트 (web_issue_status 사용)
         runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [`${webLabel} ${coupon_type}원 발급 중... ${getNowTime()}`, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
         if (!isHybridMode) {
             updateProgress(account.id, 'issue', 'processing', `${webLabel} ${coupon_type}원 발급 중...`);
         }
 
-        const scriptPath = getIssueCouponScriptPath();
+        const scriptPath = usePlaywright
+            ? (getPlaywrightIssueCouponScriptPath() || getIssueCouponScriptPath())
+            : getIssueCouponScriptPath();
         if (!scriptPath) {
             const errorMsg = `${webLabel} 스크립트 없음 ${getNowTime()}`;
             runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [errorMsg, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
@@ -2331,10 +2761,12 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false, useIn
         const { spawn } = require('child_process');
         const pythonPath = getPythonPath();
 
-        const issueArgs = ['-u', scriptPath, account.email, account.password, coupon_type];
-        if (useIncognito) {
-            issueArgs.push('--incognito');
-        }
+        // named args 먼저, -- separator 후 positional args (비밀번호에 -- 포함 대비)
+        const issueArgs = ['-u', scriptPath];
+        if (useIncognito) issueArgs.push('--incognito');
+        if (useHeadless) issueArgs.push('--headless');
+        if (account.proxy_url) issueArgs.push('--proxy', account.proxy_url);
+        issueArgs.push('--', account.email, account.password, coupon_type);
         const pythonProcess = spawn(pythonPath, issueArgs, {
             env: {
                 ...process.env,
@@ -2380,6 +2812,19 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false, useIn
                 }
             }
 
+            // IP 차단 (Access Denied) 감지
+            const isIpBlocked = (result && result.error === 'IP_BLOCKED') || stdout.includes('IP_BLOCKED') || stdout.includes('Access Denied');
+            if (isIpBlocked) {
+                const ipBlockMsg = `${webLabel} IP 차단 (Access Denied) ${getNowTime()}`;
+                addLog(`[쿠폰발급] id=${account.id} - IP 차단됨 (Access Denied)`);
+                runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [ipBlockMsg, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
+                if (!isHybridMode) {
+                    updateProgress(account.id, 'issue', 'error', ipBlockMsg);
+                }
+                resolve({ success: false, error: 'IP_BLOCKED', ipBlocked: true, needMobileFallback: false });
+                return;
+            }
+
             // 성공 조건: 확인 버튼 클릭 성공 OR [RESULT].success
             const isSuccess = confirmButtonSuccess || (result && result.success);
 
@@ -2387,15 +2832,23 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false, useIn
                 const newPoints = result.remaining_points || 0;
                 const vouchers = result.vouchers ? JSON.stringify(mergeVouchers(result.vouchers, account.owned_vouchers)) : null;
                 const successMsg = `${webLabel} ${coupon_type}원 발급 완료 ${getNowTime()}`;
-                // web_issue_status 사용, 쿠폰 목록도 업데이트
+                const name = result.name || null;
+                const phone = result.phone || null;
+                const barcode = result.barcode || null;
+                const level = result.level || null;
+                // web_issue_status 사용, 쿠폰 목록 + 계정 정보 업데이트
                 runQuery(`
                     UPDATE adidas_accounts
                     SET current_points = $1,
                         owned_vouchers = COALESCE($2, owned_vouchers),
                         web_issue_status = $3,
+                        name = COALESCE($5, name),
+                        phone = COALESCE($6, phone),
+                        adikr_barcode = COALESCE($7, adikr_barcode),
+                        adiclub_level = COALESCE($8, adiclub_level),
                         updated_at = NOW()
                     WHERE id = $4
-                `, [newPoints, vouchers, successMsg, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
+                `, [newPoints, vouchers, successMsg, account.id, name, phone, barcode, level]).catch(e => addLog(`[DB오류] ${e.message}`));
                 addLog(`[쿠폰발급] id=${account.id} ✓ ${coupon_type}원 발급완료 (${newPoints}P)`);
                 if (!isHybridMode) {
                     updateProgress(account.id, 'issue', 'success', successMsg);
@@ -2447,14 +2900,22 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false, useIn
                 if (result && (result.remaining_points !== undefined || result.vouchers)) {
                     const newPoints = result.remaining_points || 0;
                     const vouchers = result.vouchers ? JSON.stringify(mergeVouchers(result.vouchers, account.owned_vouchers)) : null;
+                    const resultName = result.name || null;
+                    const resultPhone = result.phone || null;
+                    const resultBarcode = result.barcode || null;
+                    const resultLevel = result.level || null;
                     runQuery(`
                         UPDATE adidas_accounts
                         SET current_points = $1,
                             owned_vouchers = COALESCE($2, owned_vouchers),
                             web_issue_status = $3,
+                            name = COALESCE($5, name),
+                            phone = COALESCE($6, phone),
+                            adikr_barcode = COALESCE($7, adikr_barcode),
+                            adiclub_level = COALESCE($8, adiclub_level),
                             updated_at = NOW()
                         WHERE id = $4
-                    `, [newPoints, vouchers, errorMsg, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
+                    `, [newPoints, vouchers, errorMsg, account.id, resultName, resultPhone, resultBarcode, resultLevel]).catch(e => addLog(`[DB오류] ${e.message}`));
                     const statusIcon = progressStatus === 'warning' ? '!' : '✗';
                     addLog(`[쿠폰발급] id=${account.id} ${statusIcon} ${displayError} (${newPoints}P)`);
                 } else {
@@ -2549,9 +3010,10 @@ async function processIssueCouponHybridSequentially(accounts, coupon_type) {
                 addLog(`[하이브리드] id=${account.id} 웹 결과: ${displayError}`);
             }
 
-            // 다음 계정 전 잠시 대기
+            // 다음 계정 전 대기 (IP 레이트 리밋 방지)
             if (i < accounts.length - 1) {
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                const delaySec = accountDelaySec || 10;
+                await new Promise(resolve => setTimeout(resolve, delaySec * 1000));
             }
         }
 
@@ -2572,7 +3034,7 @@ function issueCouponMobileSingle(account, coupon_type) {
         const { spawn } = require('child_process');
         const pythonPath = getPythonPath();
 
-        const pythonProcess = spawn(pythonPath, ['-u', scriptPath, account.email, account.password, coupon_type], {
+        const pythonProcess = spawn(pythonPath, ['-u', scriptPath, '--', account.email, account.password, coupon_type], {
             env: {
                 ...process.env,
                 PYTHONIOENCODING: 'utf-8',

@@ -29,6 +29,7 @@ export interface CardTransaction {
   synced_at?: string;
   created_at: string;
   updated_at: string;
+  assigned_user?: string;
 }
 
 export interface CardTransactionStats {

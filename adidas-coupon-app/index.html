@@ -14,7 +14,9 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            background: #f5f5f5;
+            background: #f0f2f5;
+            color: #1a1a1a;
+            font-size: 14px;
         }
 
         .app-container {
@@ -24,45 +26,205 @@
         }
 
         /* 헤더 */
+        /* ===== 로그인 화면 ===== */
+        .login-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #f0f2f5;
+        }
+        .login-card {
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+            padding: 40px 36px 32px;
+            width: 380px;
+        }
+        .login-logo {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            font-size: 18px;
+            font-weight: 700;
+            color: #1a1a1a;
+            margin-bottom: 28px;
+        }
+        .login-tabs {
+            display: flex;
+            border-bottom: 2px solid #e5e7eb;
+            margin-bottom: 20px;
+        }
+        .login-tab {
+            flex: 1;
+            padding: 10px 0;
+            border: none;
+            background: none;
+            font-size: 14px;
+            font-weight: 600;
+            color: #9ca3af;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.15s;
+        }
+        .login-tab.active {
+            color: #4f7df5;
+            border-bottom-color: #4f7df5;
+        }
+        .login-form {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .login-input {
+            padding: 12px 14px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+        .login-input:focus {
+            border-color: #4f7df5;
+            box-shadow: 0 0 0 3px rgba(79,125,245,0.1);
+        }
+        .login-btn {
+            padding: 12px;
+            background: #4f7df5;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 4px;
+            transition: background 0.15s;
+        }
+        .login-btn:hover {
+            background: #3b6de0;
+        }
+        .login-error {
+            background: #fef2f2;
+            color: #dc2626;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            margin-bottom: 12px;
+        }
+        .login-version {
+            text-align: center;
+            color: #9ca3af;
+            font-size: 12px;
+            margin-top: 24px;
+        }
+
+        /* ===== 사용자 정보 (헤더) ===== */
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: 16px;
+            padding-left: 16px;
+            border-left: 1px solid #444;
+        }
+        .user-name {
+            font-size: 13px;
+            color: #ccc;
+        }
+        .btn-logout {
+            padding: 4px 12px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background: transparent;
+            color: #aaa;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .btn-logout:hover {
+            background: #333;
+            color: #fff;
+        }
+
+        /* ===== 카테고리 쿠폰 셀 ===== */
+        .cat-cell { padding: 2px 4px !important; vertical-align: top; overflow: visible !important; position: relative; }
+        .cat-coupon {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 4px;
+            margin-bottom: 2px;
+            border-radius: 4px;
+            background: #f0fdf4;
+            font-size: 11px;
+            cursor: pointer;
+            border: 1px solid #e5e7eb;
+            line-height: 1.3;
+        }
+        .cat-coupon:hover { background: #dcfce7; }
+        .cat-coupon.sold { background: #f3f4f6; opacity: 0.5; text-decoration: line-through; }
+        .cat-coupon.deleted-unused { background: #fef2f2; opacity: 0.5; text-decoration: line-through; }
+        .cat-coupon.expired { background: #fef2f2; opacity: 0.6; }
+        .cat-coupon.expiring-soon { background: #fffbeb; border-color: #f59e0b; }
+        .cat-code { font-family: monospace; font-weight: 600; color: #1a1a1a; white-space: nowrap; }
+        .cat-dates { color: #888; font-size: 10px; white-space: nowrap; }
+        .cat-sold { font-size: 9px; color: #ef4444; font-weight: 700; }
+        .cat-deleted { font-size: 9px; color: #9ca3af; font-weight: 700; }
+        .col-coupon-cat { width: 210px; text-align: center; overflow: visible !important; }
+
+        /* 리스트 필터 textarea */
+        .filter-list-input {
+            width: 100%;
+            padding: 6px 8px;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            font-size: 12px;
+            font-family: monospace;
+            resize: vertical;
+            margin-top: 4px;
+        }
+        .filter-list-input:focus { border-color: #4f7df5; outline: none; }
+
         .header {
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            background: #000;
             color: white;
-            padding: 16px 24px;
+            padding: 0 20px;
+            height: 48px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
             position: relative;
         }
 
         .header h1 {
-            font-size: 20px;
-            font-weight: 600;
+            font-size: 15px;
+            font-weight: 700;
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 8px;
             margin: 0;
+            letter-spacing: -0.3px;
         }
 
         .header-actions {
             display: flex;
-            gap: 12px;
+            gap: 8px;
             align-items: center;
         }
 
         .mode-buttons {
             display: flex;
             align-items: center;
-            gap: 8px;
-            background: rgba(255,255,255,0.1);
-            padding: 6px 12px;
-            border-radius: 6px;
+            gap: 6px;
         }
 
         .mode-label {
-            font-size: 12px;
+            font-size: 13px;
             color: rgba(255,255,255,0.7);
-            margin-right: 4px;
+            margin-right: 2px;
         }
 
         .btn-mode {
@@ -83,8 +245,9 @@
         }
 
         .btn-mode.active {
-            background: #0958d9;
-            color: white;
+            background: #fff;
+            color: #000;
+            font-weight: 600;
         }
 
         .btn-mode.disabled {
@@ -214,7 +377,7 @@
 
         .guide-content h2 {
             margin: 0 0 8px 0;
-            color: #1a1a2e;
+            color: #111;
             font-size: 24px;
         }
 
@@ -247,7 +410,7 @@
         }
 
         .guide-toc a {
-            color: #1890ff;
+            color: #111;
             text-decoration: none;
         }
 
@@ -260,11 +423,11 @@
         }
 
         .guide-content h3 {
-            color: #1a1a2e;
+            color: #111;
             font-size: 18px;
             margin: 24px 0 16px 0;
             padding-bottom: 8px;
-            border-bottom: 2px solid #1890ff;
+            border-bottom: 2px solid #111;
         }
 
         .guide-content h4 {
@@ -356,25 +519,25 @@
         }
 
         .btn {
-            padding: 8px 16px;
+            padding: 7px 16px;
             border: none;
             border-radius: 6px;
             cursor: pointer;
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 500;
-            transition: all 0.2s;
+            transition: all 0.15s;
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 5px;
         }
 
         .btn-primary {
-            background: #1890ff;
+            background: #111;
             color: white;
         }
 
         .btn-primary:hover {
-            background: #40a9ff;
+            background: #333;
         }
 
         .btn-success {
@@ -406,27 +569,27 @@
 
         .btn-default {
             background: #fff;
-            color: #333;
-            border: 1px solid #d9d9d9;
+            color: #374151;
+            border: 1px solid #d1d5db;
         }
 
         .btn-default:hover {
-            border-color: #40a9ff;
-            color: #40a9ff;
+            border-color: #111;
+            color: #111;
         }
 
         .btn-small {
-            padding: 4px 12px;
+            padding: 5px 12px;
             font-size: 12px;
         }
 
         .btn-navy {
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            background: #111;
             color: white;
         }
 
         .btn-navy:hover {
-            background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
+            background: #333;
         }
 
         .btn-danger-muted {
@@ -475,12 +638,33 @@
         }
 
         .btn-appium {
-            background: #1a1a2e;
+            background: #111;
             color: white;
         }
 
         .btn-appium:hover {
-            background: #2a2a4e;
+            background: #222;
+        }
+
+        /* 헤더 액션 버튼 */
+        .btn-header-action {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: 1px solid rgba(255,255,255,0.3);
+            background: transparent;
+            color: rgba(255,255,255,0.7);
+            font-size: 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+        .btn-header-action:hover {
+            background: rgba(255,255,255,0.1);
+            color: #fff;
+            border-color: rgba(255,255,255,0.5);
         }
 
         /* 설치 토글 버튼 */
@@ -596,27 +780,7 @@
             font-size: 12px;
         }
 
-        .btn-filter-active {
-            background: #e8eef7;
-            color: #1a1a2e;
-            border: 1px solid #b8c5d9;
-        }
-
-        .btn-filter-active:hover {
-            background: #d8e2f0;
-        }
-
-        .btn-filter-reset {
-            background: #e6f4ff;
-            color: #0958d9;
-            border: 1px solid #91caff;
-        }
-
-        .btn-filter-reset:hover {
-            background: #bae0ff;
-        }
-
-        /* 토글 스위치 */
+/* 토글 스위치 */
         .toggle-group {
             display: flex;
             align-items: center;
@@ -701,46 +865,47 @@
             min-width: 100px;
         }
 
-        /* 작업 버튼 그리드 (기존) */
+        /* 작업 버튼 그리드 */
         .action-btn-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 3px;
+            display: flex;
+            gap: 5px;
         }
 
         .action-btn-grid .btn {
-            padding: 3px 6px;
-            font-size: 11px;
+            padding: 6px 12px;
+            font-size: 12px;
             white-space: nowrap;
             text-align: center;
             display: flex;
             align-items: center;
             justify-content: center;
+            border-radius: 5px;
+            font-weight: 500;
         }
 
         /* 툴바 */
         .toolbar {
             background: white;
-            padding: 16px 24px;
+            padding: 10px 20px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1px solid #e8e8e8;
+            border-bottom: 1px solid #e5e7eb;
             flex-wrap: wrap;
-            gap: 12px;
+            gap: 8px;
         }
 
         .toolbar-left, .toolbar-right {
             display: flex;
-            gap: 12px;
+            gap: 8px;
             align-items: center;
             flex-wrap: wrap;
         }
 
         .selection-badge {
-            background: #e6f4ff;
-            color: #0958d9;
-            border: 1px solid #91caff;
+            background: #f3f4f6;
+            color: #111;
+            border: 1px solid #d1d5db;
             padding: 6px 14px;
             border-radius: 6px;
             font-weight: 600;
@@ -749,7 +914,7 @@
 
         /* 선택 텍스트 (밑줄 스타일) */
         .selection-text {
-            color: #1890ff;
+            color: #111;
             font-weight: 600;
             font-size: 13px;
             text-decoration: underline;
@@ -792,32 +957,34 @@
             color: white;
         }
 
-        /* 삭제 버튼 (아웃라인 빨간색) */
+        /* 삭제 버튼 */
         .btn-delete {
             background: white;
-            color: #cf1322;
-            border: 1px solid #cf1322;
+            color: #9ca3af;
+            border: 1px solid #e5e7eb;
         }
 
         .btn-delete:hover {
-            background: #fff1f0;
+            color: #ef4444;
+            border-color: #ef4444;
+            background: #fef2f2;
         }
 
-        /* 계정 등록 버튼 (일반 파란색) */
+        /* 계정 등록 버튼 */
         .btn-primary-dark {
-            background: #1890ff;
+            background: #111;
             color: white;
-            border: 1px solid #1890ff;
+            border: 1px solid #111;
         }
 
         .btn-primary-dark:hover {
-            background: #40a9ff;
-            border-color: #40a9ff;
+            background: #333;
+            border-color: #333;
         }
 
         .search-input {
-            padding: 8px 12px;
-            border: 1px solid #d9d9d9;
+            padding: 7px 14px;
+            border: 1px solid #d1d5db;
             border-radius: 6px;
             width: 200px;
             font-size: 14px;
@@ -825,14 +992,14 @@
 
         .search-input:focus {
             outline: none;
-            border-color: #40a9ff;
-            box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+            border-color: #111;
+            box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.08);
         }
 
         /* 메인 컨텐츠 */
         .main-content {
             flex: 1;
-            padding: 24px;
+            padding: 16px 20px;
             overflow: auto;
             display: flex;
             flex-direction: column;
@@ -842,8 +1009,8 @@
         /* 테이블 */
         .table-container {
             background: white;
-            border-radius: 8px;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+            border-radius: 10px;
+            border: 1px solid #e5e7eb;
             overflow: auto;
             flex: 1;
             min-height: 0;
@@ -852,25 +1019,31 @@
         table {
             width: 100%;
             border-collapse: collapse;
+        }
+
+        .table-container > table {
             table-layout: fixed;
         }
 
         th, td {
-            padding: 8px 10px;
+            padding: 4px 6px;
             text-align: left;
-            border-bottom: 1px solid #f0f0f0;
+            border-bottom: 1px solid #f3f4f6;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
         }
 
         th {
-            background: #fafafa;
+            background: #f9fafb;
             font-weight: 600;
-            color: #333;
+            color: #6b7280;
             font-size: 12px;
             position: relative;
             user-select: none;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            border-bottom: 1px solid #e5e7eb;
         }
 
         th.resizable {
@@ -889,24 +1062,24 @@
         }
 
         th.resizable:hover::after {
-            background: #1890ff;
+            background: #111;
         }
 
-        tr:hover {
-            background: #f5f5f5;
+        tbody tr:hover {
+            background: #f9fafb;
         }
 
         /* 선택된 행 스타일 */
         tr.row-selected {
-            background: #e6f7ff !important;
+            background: #f0f7ff !important;
         }
 
         tr.row-selected:hover {
-            background: #bae7ff !important;
+            background: #e0efff !important;
         }
 
         .checkbox-cell {
-            width: 50px;
+            width: 36px;
             text-align: center;
             padding: 0 !important;
         }
@@ -915,7 +1088,7 @@
             width: 20px;
             height: 20px;
             cursor: pointer;
-            accent-color: #1890ff;
+            accent-color: #111;
         }
 
         .checkbox-wrapper {
@@ -955,7 +1128,7 @@
 
         .tag-processing {
             background: #e6f7ff;
-            color: #1890ff;
+            color: #111;
             border: 1px solid #91d5ff;
         }
 
@@ -980,104 +1153,60 @@
 
         /* 쿠폰 컨테이너 - 버튼과 쿠폰을 가로 배치 */
         .coupon-wrapper {
-            display: flex;
-            align-items: stretch;
-            gap: 6px;
+            display: inline-block;
             position: relative;
         }
 
-        /* 확장 버튼 (개수 위, 화살표 아래 - 세로 배치) */
-        .coupon-expand-container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 4px 6px;
-            background: #fff;
-            border: 1px solid #1a1a2e;
-            border-radius: 6px;
-            cursor: pointer;
-            flex-shrink: 0;
-            transition: all 0.2s;
-            min-width: 28px;
-        }
+        /* (확장 버튼 제거 - 호버로 대체) */
 
-        .coupon-expand-container .expand-count {
-            font-size: 11px;
-            font-weight: 700;
-            color: #1a1a2e;
-            line-height: 1.1;
-        }
 
-        .coupon-expand-container .expand-arrow {
-            font-size: 8px;
-            color: #1a1a2e;
-            transition: transform 0.2s;
-            line-height: 1;
-        }
-
-        .coupon-expand-container:hover {
-            background: #f0f0f5;
-        }
-
-        .coupon-expand-container.expanded {
-            background: #ea580c;
-            border-color: #ea580c;
-        }
-
-        .coupon-expand-container.expanded .expand-count {
-            color: white;
-        }
-
-        .coupon-expand-container.expanded .expand-arrow {
-            transform: rotate(180deg);
-            color: white;
-        }
-
-        /* 첫번째 쿠폰 표시 영역 */
-        .coupon-main {
-            flex-shrink: 0;
-        }
-
-        /* 숨겨진 쿠폰들 - 아래쪽 오버레이로 표시 */
+        /* 숨겨진 쿠폰들 - 호버 시 아래쪽 오버레이로 표시 */
         .coupon-hidden-list {
             display: none;
             position: absolute;
             left: 0;
             top: 100%;
             margin-top: 4px;
-            background: white;
-            border: 1px solid #d9d9d9;
-            border-radius: 6px;
+            background: #f1f5f9;
+            border: 2px solid #1e3a5f;
+            border-radius: 8px;
             padding: 6px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            box-shadow: 0 12px 32px rgba(0,0,0,0.25);
             z-index: 1000;
             flex-direction: column;
             gap: 4px;
-            min-width: 180px;
+            min-width: 210px;
         }
 
         .coupon-hidden-list.show {
             display: flex;
         }
 
-        /* 쿠폰 목록 확장 시 overflow 허용 */
-        .coupon-list:has(.coupon-hidden-list.show) {
-            overflow: visible;
-        }
-
-        td:has(.coupon-hidden-list.show) {
-            overflow: visible;
-        }
-
         .coupon-hidden-list .coupon-card {
             margin: 0;
-            max-width: 100%;
+            width: 205px;
         }
 
         /* 숨김 클래스 */
         .coupon-card.coupon-hidden {
             display: none !important;
+        }
+
+        /* 호버 확장 시 overflow 허용 */
+        .coupon-wrapper:hover .coupon-hidden-list,
+        .coupon-wrapper.hover-active .coupon-hidden-list {
+            display: flex;
+        }
+
+        td.coupon-hover-active,
+        td:has(.coupon-wrapper:hover) {
+            overflow: visible !important;
+        }
+
+        tr.coupon-hover-active,
+        tr:has(.coupon-wrapper:hover) {
+            position: relative;
+            z-index: 10;
         }
 
         /* 상태 컨테이너 (조회현황 + 발급현황) */
@@ -1115,7 +1244,7 @@
 
         .status-line.status-processing {
             background: #e6f7ff;
-            color: #1890ff;
+            color: #111;
         }
 
         .status-line.status-password-wrong {
@@ -1226,7 +1355,7 @@
             background: #e6f7ff;
         }
         .status-table .cell-processing .cell-text {
-            color: #1890ff;
+            color: #111;
         }
         .status-table .cell-processing .cell-time {
             color: #69c0ff;
@@ -1254,86 +1383,7 @@
             color: #bfbfbf;
         }
 
-        /* 간소화된 상태 테이블 (정보조회/쿠폰발급만) */
-        .status-table-simple {
-            border-collapse: collapse;
-            font-size: 11px;
-            width: 100%;
-        }
-        .status-table-simple td {
-            padding: 4px 8px;
-            border: 1px solid #e8e8e8;
-        }
-        .status-table-simple .row-label {
-            background: #fafafa;
-            color: #666;
-            font-weight: 600;
-            font-size: 10px;
-            width: 60px;
-            text-align: center;
-        }
-        .status-table-simple .status-cell {
-            text-align: left;
-        }
-        .status-table-simple .cell-text {
-            font-weight: 600;
-            font-size: 11px;
-        }
-        .status-table-simple .cell-time {
-            font-size: 9px;
-            color: #888;
-            margin-left: 4px;
-        }
-        .status-table-simple .cell-content {
-            display: inline;
-        }
-        .status-table-simple .cell-none {
-            color: #ccc;
-        }
-        .status-table-simple .cell-success {
-            background: #f6ffed;
-        }
-        .status-table-simple .cell-success .cell-text,
-        .status-table-simple .cell-success .cell-content {
-            color: #52c41a;
-        }
-        .status-table-simple .cell-error {
-            background: #fff2f0;
-        }
-        .status-table-simple .cell-error .cell-text,
-        .status-table-simple .cell-error .cell-content {
-            color: #ff4d4f;
-        }
-        .status-table-simple .cell-warning {
-            background: #fffbe6;
-        }
-        .status-table-simple .cell-warning .cell-text,
-        .status-table-simple .cell-warning .cell-content {
-            color: #faad14;
-        }
-        .status-table-simple .cell-password-wrong {
-            background: #fff7e6;
-        }
-        .status-table-simple .cell-password-wrong .cell-text,
-        .status-table-simple .cell-password-wrong .cell-content {
-            color: #ff7f00;
-        }
-        .status-table-simple .cell-processing {
-            background: #e6f7ff;
-        }
-        .status-table-simple .cell-processing .cell-text,
-        .status-table-simple .cell-processing .cell-content {
-            color: #1890ff;
-        }
-        .status-table-simple .cell-waiting {
-            background: #f5f5f5;
-        }
-        .status-table-simple .cell-waiting .cell-text,
-        .status-table-simple .cell-waiting .cell-content {
-            color: #8c8c8c;
-        }
-
-        /* 웹/모바일 상태 라인 */
+        /* 상태 라인 */
         .status-line {
             display: flex;
             align-items: baseline;
@@ -1346,12 +1396,18 @@
             margin-top: 1px;
             padding-top: 2px;
         }
-        .status-line .mode-label {
+        .status-line .cell-text {
+            font-weight: 600;
+            font-size: 11px;
+        }
+        .status-line .cell-time {
             font-size: 9px;
-            color: #999;
-            font-weight: 500;
+            color: #888;
+            margin-left: 4px;
             flex-shrink: 0;
-            min-width: 24px;
+        }
+        .status-line .cell-content {
+            display: inline;
         }
         .status-line.cell-success .cell-text,
         .status-line.cell-success .cell-content { color: #52c41a; font-weight: 600; }
@@ -1362,7 +1418,7 @@
         .status-line.cell-password-wrong .cell-text,
         .status-line.cell-password-wrong .cell-content { color: #ff7f00; font-weight: 600; }
         .status-line.cell-processing .cell-text,
-        .status-line.cell-processing .cell-content { color: #1890ff; font-weight: 600; }
+        .status-line.cell-processing .cell-content { color: #111; font-weight: 600; }
         .status-line.cell-waiting .cell-text,
         .status-line.cell-waiting .cell-content { color: #8c8c8c; font-weight: 600; }
 
@@ -1421,42 +1477,67 @@
             flex-direction: column;
             gap: 3px;
             position: relative;
-            overflow: hidden;
+            overflow: visible;
             max-width: 100%;
         }
 
-        /* 쿠폰 컬럼 td - 내용이 넘치지 않도록 */
-        td:has(.coupon-list) {
-            overflow: hidden;
+        /* 내용에 맞게 축소하는 컬럼 */
+        td:has(.barcode-img),
+        th.col-barcode-img {
+            width: 1px;
+            white-space: nowrap;
+            overflow: visible;
             position: relative;
         }
 
-        /* 쿠폰 카드 스타일 (새 디자인) */
+        /* 쿠폰 개수 뱃지 */
+        .coupon-count-badge {
+            position: absolute;
+            top: -6px;
+            right: -8px;
+            background: #1e3a5f;
+            color: #fff;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 1px 5px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 3;
+            white-space: nowrap;
+            border: 2px solid #fff;
+        }
+
+        .coupon-main {
+            position: relative;
+            flex-shrink: 0;
+        }
+
+        /* 쿠폰 카드 스타일 */
         .coupon-card {
             display: flex;
-            width: 100%;
-            max-width: 200px;
-            height: 50px;
-            border-radius: 6px;
+            width: 205px;
+            height: 42px;
+            border-radius: 5px;
             overflow: hidden;
             cursor: pointer;
-            transition: all 0.2s;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: all 0.15s;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.08);
             position: relative;
-            background: #166534;
-            border: 2px solid transparent;
+            background: linear-gradient(135deg, #15803d 0%, #166534 100%);
+            border: 1.5px solid transparent;
             flex-shrink: 0;
         }
 
         .coupon-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            transform: translateY(-1px);
+            box-shadow: 0 3px 8px rgba(21,128,61,0.3);
         }
 
         .coupon-card.sold {
-            opacity: 0.6;
-            filter: grayscale(0.8);
-            background: #6b7280;
+            opacity: 0.5;
+            background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
         }
 
         /* 노치 장식 제거 - 컴팩트한 디자인 */
@@ -1466,8 +1547,8 @@
             display: flex;
             flex-direction: column;
             justify-content: center;
-            padding: 5px 10px 5px 12px;
-            color: white;
+            padding: 3px 5px 3px 7px;
+            color: #fff;
             position: relative;
             min-width: 0;
             overflow: hidden;
@@ -1480,15 +1561,17 @@
         }
 
         .coupon-card-logo {
-            width: 26px;
-            height: 17px;
+            width: 18px;
+            height: 12px;
             filter: brightness(0) invert(1);
+            opacity: 0.85;
             flex-shrink: 0;
         }
 
         .coupon-card-amount {
-            font-size: 14px;
+            font-size: 10.5px;
             font-weight: 700;
+            color: #fff;
             line-height: 1.1;
             white-space: nowrap;
             overflow: hidden;
@@ -1498,14 +1581,14 @@
         .coupon-card-code {
             display: inline-flex;
             align-items: center;
-            gap: 3px;
-            font-size: 9px;
+            gap: 2px;
+            font-size: 8px;
             font-weight: 600;
-            letter-spacing: 0.3px;
-            margin-top: 3px;
-            background: #fef9c3;
-            color: #713f12;
-            padding: 2px 6px;
+            letter-spacing: 0.2px;
+            margin-top: 2px;
+            background: rgba(255,255,255,0.15);
+            color: rgba(255,255,255,0.85);
+            padding: 1px 4px;
             border-radius: 3px;
             max-width: 100%;
             overflow: hidden;
@@ -1519,25 +1602,45 @@
         }
 
         .coupon-card-code:hover {
-            background: #fef08a;
+            background: rgba(255,255,255,0.25);
+        }
+
+        .coupon-card-memo {
+            font-size: 10px;
+            color: rgba(255,255,255,0.65);
+            margin-top: 2px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 120px;
+        }
+
+        .coupon-card.sold .coupon-card-memo {
+            color: rgba(255,255,255,0.5);
         }
 
         .coupon-card-right {
-            width: 48px;
-            background: #fef9c3;
+            width: 42px;
+            background: #facc15;
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            padding: 4px 5px;
-            border-left: 1px dashed #a3a3a3;
+            padding: 3px 4px;
+            border-left: none;
             flex-shrink: 0;
             border-radius: 0 6px 6px 0;
         }
 
+        .coupon-card-issued {
+            font-size: 8.5px;
+            color: #6b7280;
+            text-align: center;
+            line-height: 1.2;
+        }
         .coupon-card-expiry {
-            font-size: 10px;
-            color: #713f12;
+            font-size: 9px;
+            color: #422006;
             font-weight: 700;
             text-align: center;
             line-height: 1.2;
@@ -1545,34 +1648,32 @@
 
         /* 유효기간 임박 (1주일 이내) - 빨간 테두리 */
         .coupon-card.expiring-soon {
-            border: 2px solid #ef4444;
-            box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
+            border: 1.5px solid #ef4444;
+            box-shadow: 0 1px 4px rgba(239, 68, 68, 0.25);
         }
 
         .coupon-card.expiring-soon .coupon-card-expiry {
-            color: #dc2626;
+            color: #ef4444;
             font-weight: 700;
         }
 
         /* 유효기간 만료 - 회색 처리 */
         .coupon-card.expired {
-            opacity: 0.6;
-            filter: grayscale(0.8);
-            background: #6b7280;
+            opacity: 0.45;
+            background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
         }
 
         .coupon-card.expired .coupon-card-right {
-            background: #d4d4d4;
+            background: #a1a1aa;
         }
 
         .coupon-card.expired .coupon-card-code {
-            background: #d4d4d4;
-            color: #525252;
+            background: rgba(255,255,255,0.1);
+            color: rgba(255,255,255,0.6);
         }
 
-        /* 판매완료 표시 */
-        .coupon-card.sold .coupon-card-left::after {
-            content: '판매완료';
+        /* 사용완료 오버레이 */
+        .coupon-sold-overlay {
             position: absolute;
             top: 50%;
             left: 50%;
@@ -1580,18 +1681,68 @@
             font-size: 10px;
             font-weight: 600;
             color: #fff;
-            background: rgba(0,0,0,0.7);
+            background: rgba(30,41,59,0.7);
             padding: 4px 10px;
             border-radius: 4px;
+            white-space: nowrap;
+            max-width: 90%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            z-index: 2;
         }
 
         .coupon-card.sold .coupon-card-right {
-            background: #d4d4d4;
+            background: #a1a1aa;
         }
 
         .coupon-card.sold .coupon-card-code {
+            background: rgba(255,255,255,0.1);
+            color: rgba(255,255,255,0.6);
+        }
+
+        .coupon-card.deleted-unused {
+            opacity: 0.45;
+            background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
+        }
+
+        .coupon-card.deleted-unused .coupon-card-left::after {
+            content: '미사용삭제';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 107, 107, 0.9);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 700;
+            z-index: 1;
+        }
+
+        .coupon-card.deleted-unused .coupon-card-right {
+            background: #a1a1aa;
+        }
+
+        /* 메모 input placeholder 흐릿하게 */
+        .voucher-memo-input::placeholder {
+            color: #cbd5e1;
+            font-weight: 400;
+        }
+
+        .coupon-card.deleted-unused .coupon-card-code {
             background: #d4d4d4;
             color: #525252;
+        }
+
+        .deleted-unused-tag {
+            font-size: 9px;
+            background: #ff6b6b;
+            color: #fff;
+            padding: 1px 4px;
+            border-radius: 3px;
+            margin-left: 4px;
+            vertical-align: middle;
         }
 
         /* 기존 배지 스타일 (호환성 유지) */
@@ -1649,7 +1800,7 @@
             background: #e6f7ff;
             padding: 8px 16px;
             border-radius: 6px;
-            color: #1890ff;
+            color: #111;
             font-weight: 500;
         }
 
@@ -1672,7 +1823,7 @@
             border: 1px solid #91d5ff;
             border-radius: 4px;
             font-size: 12px;
-            color: #1890ff;
+            color: #111;
             cursor: pointer;
         }
 
@@ -1699,7 +1850,7 @@
             align-items: center;
             padding: 18px 24px;
             border-bottom: 1px solid #e8e8e8;
-            background: #1a1a2e;
+            background: #111;
         }
 
         .filter-modal-title {
@@ -1801,14 +1952,14 @@
         }
 
         .filter-chip:hover {
-            border-color: #1a1a2e;
-            color: #1a1a2e;
+            border-color: #111;
+            color: #111;
             background: #f0f0f5;
         }
 
         .filter-chip.active {
-            background: #1a1a2e;
-            border-color: #1a1a2e;
+            background: #111;
+            border-color: #111;
             color: white;
         }
 
@@ -1823,8 +1974,8 @@
         }
 
         .filter-chip.active.primary {
-            background: #1a1a2e;
-            border-color: #1a1a2e;
+            background: #111;
+            border-color: #111;
         }
 
         .filter-chip.active.warning {
@@ -1873,7 +2024,7 @@
         }
 
         .filter-date-input:focus {
-            border-color: #1a1a2e;
+            border-color: #111;
         }
 
         .filter-date-input::-webkit-calendar-picker-indicator {
@@ -1948,7 +2099,7 @@
         }
 
         .filter-range-input:focus-within {
-            border-color: #1a1a2e;
+            border-color: #111;
             box-shadow: 0 0 0 3px rgba(26, 26, 46, 0.1);
         }
 
@@ -1971,7 +2122,7 @@
 
         .range-unit {
             font-size: 13px;
-            color: #1a1a2e;
+            color: #111;
             font-weight: 600;
         }
 
@@ -2001,14 +2152,14 @@
         }
 
         .filter-month:hover {
-            border-color: #1a1a2e;
-            color: #1a1a2e;
+            border-color: #111;
+            color: #111;
             background: #f0f0f5;
         }
 
         .filter-month.active {
-            background: #1a1a2e;
-            border-color: #1a1a2e;
+            background: #111;
+            border-color: #111;
             color: white;
         }
 
@@ -2047,12 +2198,12 @@
         }
 
         .filter-action-btn.apply {
-            background: #1a1a2e;
+            background: #111;
             color: white;
         }
 
         .filter-action-btn.apply:hover {
-            background: #2d2d4a;
+            background: #222;
         }
 
         /* ===== 정렬 아이콘 스타일 ===== */
@@ -2096,7 +2247,7 @@
 
         th.sorted {
             background: #e6f7ff;
-            color: #1890ff;
+            color: #111;
         }
 
         /* ===== 커스텀 알림 시스템 ===== */
@@ -2119,7 +2270,7 @@
             align-items: center;
             gap: 12px;
             padding: 14px 20px;
-            background: #1a1a2e;
+            background: #111;
             color: white;
             border-radius: 10px;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
@@ -2143,7 +2294,7 @@
         }
 
         .toast.toast-info {
-            background: linear-gradient(135deg, #1a1a2e 0%, #2d2d4a 100%);
+            background: #111;
         }
 
         .toast-icon {
@@ -2297,12 +2448,12 @@
         }
 
         .confirm-btn.confirm {
-            background: #1a1a2e;
+            background: #111;
             color: white;
         }
 
         .confirm-btn.confirm:hover {
-            background: #2d2d4a;
+            background: #222;
         }
 
         .confirm-btn.danger {
@@ -2350,6 +2501,7 @@
             width: 500px;
             max-width: 90vw;
             max-height: 90vh;
+            table-layout: auto;
             overflow: auto;
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         }
@@ -2391,12 +2543,19 @@
             padding: 24px;
         }
 
+        .modal-body table {
+            table-layout: auto;
+            width: auto;
+        }
+
         .modal-footer {
             padding: 16px 24px;
             border-top: 1px solid #f0f0f0;
             display: flex;
             justify-content: flex-end;
             gap: 12px;
+            position: relative;
+            z-index: 1;
         }
 
         /* 폼 */
@@ -2421,7 +2580,7 @@
 
         .form-group input:focus, .form-group textarea:focus {
             outline: none;
-            border-color: #40a9ff;
+            border-color: #111;
             box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
         }
 
@@ -2437,54 +2596,57 @@
         /* 통계 + 액션 버튼 컨테이너 */
         .stats-action-container {
             display: flex;
-            gap: 24px;
+            gap: 20px;
             align-items: stretch;
-            margin-bottom: 24px;
+            margin-bottom: 12px;
         }
 
         .stats-container {
             display: flex;
-            gap: 16px;
+            gap: 12px;
             flex: 1;
+            min-width: 0;
         }
 
         .main-action-buttons {
             flex: 1;
+            min-width: 0;
         }
 
         .stat-card {
             background: white;
-            padding: 14px 18px;
-            border-radius: 8px;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+            padding: 16px 20px;
+            border-radius: 10px;
+            border: 1px solid #e5e7eb;
             flex: 1;
-            min-width: 140px;
+            min-width: 120px;
             display: flex;
             align-items: center;
             justify-content: space-between;
+            transition: all 0.15s;
         }
 
         .stat-card.clickable {
             cursor: pointer;
-            transition: all 0.2s;
-            border: 2px solid transparent;
+            border: 1px solid #e5e7eb;
         }
 
         .stat-card.clickable:hover {
-            border-color: #1890ff;
-            box-shadow: 0 2px 8px rgba(24, 144, 255, 0.2);
+            border-color: #000;
+            background: #fafafa;
         }
 
         .stat-card.clickable.active {
-            border-color: #1890ff;
-            background: #e6f7ff;
+            border-color: #000;
+            background: #f5f5f5;
         }
 
         .stat-card-left h4 {
-            color: #333;
-            font-size: 14px;
+            color: #6b7280;
+            font-size: 12px;
             font-weight: 600;
             margin: 0;
+            letter-spacing: 0.3px;
         }
 
         .stat-card-right {
@@ -2492,21 +2654,22 @@
         }
 
         .stat-card-right .value {
-            font-size: 22px;
-            font-weight: 700;
-            color: #1f2937;
+            font-size: 20px;
+            font-weight: 800;
+            color: #111;
+            letter-spacing: -0.5px;
         }
 
         .stat-card-right .stat-subtitle {
             font-size: 11px;
-            color: #999;
-            margin-top: 2px;
+            color: #9ca3af;
+            margin-top: 1px;
         }
 
-        /* 주요 액션 버튼 - flex: 1은 위에서 정의됨 */
+        /* 주요 액션 버튼 */
         .main-action-buttons {
             display: flex;
-            gap: 12px;
+            gap: 10px;
         }
 
         .btn-main-action {
@@ -2514,52 +2677,34 @@
             flex-direction: row;
             align-items: center;
             justify-content: flex-start;
-            padding: 14px 16px;
-            border-radius: 8px;
+            padding: 14px 18px;
+            flex: 1;
+            border-radius: 12px;
             cursor: pointer;
             border: none;
-            flex: 1;
             min-width: 0;
             transition: all 0.2s;
             gap: 12px;
-        }
-
-        .btn-main-action.btn-info {
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            background: #4f7df5;
             color: white;
         }
 
-        .btn-main-action.btn-info:hover {
-            background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(26, 26, 46, 0.5);
-        }
-
-        .btn-main-action.btn-success {
-            background: linear-gradient(135deg, #2d3a4f 0%, #3d4f6f 100%);
-            color: white;
-        }
-
-        .btn-main-action.btn-success:hover {
-            background: linear-gradient(135deg, #1f2937 0%, #2d3a4f 100%);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(45, 58, 79, 0.5);
-        }
-
-        .btn-main-action.btn-download {
-            background: linear-gradient(135deg, #374151 0%, #4b5563 100%);
-            color: white;
-        }
-
-        .btn-main-action.btn-download:hover {
-            background: linear-gradient(135deg, #2d3748 0%, #374151 100%);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(55, 65, 81, 0.5);
+        .btn-main-action:hover {
+            background: #3d6de3;
+            transform: translateY(-1px);
+            box-shadow: 0 6px 16px rgba(79,125,245,0.35);
         }
 
         .btn-main-action .btn-icon {
-            font-size: 26px;
+            width: 38px;
+            height: 38px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
             flex-shrink: 0;
+            background: rgba(255,255,255,0.2);
+            border-radius: 10px;
         }
 
         .btn-main-action .btn-content {
@@ -2569,28 +2714,32 @@
         }
 
         .btn-main-action .btn-text {
-            font-size: 15px;
+            font-size: 14px;
             font-weight: 600;
         }
 
         .btn-main-action .btn-desc {
             font-size: 11px;
-            opacity: 0.7;
+            opacity: 0.6;
             margin-top: 2px;
         }
 
         .btn-main-action.disabled {
-            background: #9ca3af;
-            color: white;
+            background: #cbd5e1;
+            color: #f1f5f9;
             cursor: not-allowed;
-            opacity: 0.7;
+            border-color: #cbd5e1;
             position: relative;
         }
 
         .btn-main-action.disabled:hover {
+            background: #cbd5e1;
             transform: none;
             box-shadow: none;
-            background: #9ca3af;
+        }
+
+        .btn-main-action.disabled .btn-icon {
+            background: rgba(255,255,255,0.15);
         }
 
         .btn-main-action.disabled:hover::after {
@@ -2634,7 +2783,7 @@
             display: inline-block;
             width: 20px;
             height: 20px;
-            border: 2px solid #1890ff;
+            border: 2px solid #111;
             border-radius: 50%;
             border-top-color: transparent;
             animation: spin 1s linear infinite;
@@ -2679,11 +2828,11 @@
         }
 
         .page-size-select:hover {
-            border-color: #40a9ff;
+            border-color: #111;
         }
 
         .page-size-select:focus {
-            border-color: #40a9ff;
+            border-color: #111;
             box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
         }
 
@@ -2698,7 +2847,7 @@
         }
 
         .page-size-input:focus {
-            border-color: #40a9ff;
+            border-color: #111;
             box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
         }
 
@@ -2725,14 +2874,14 @@
         }
 
         .pagination button:hover {
-            border-color: #40a9ff;
-            color: #40a9ff;
+            border-color: #111;
+            color: #111;
         }
 
         .pagination button.active {
-            background: #1890ff;
+            background: #111;
             color: white;
-            border-color: #1890ff;
+            border-color: #111;
         }
 
         .pagination button:disabled {
@@ -2802,93 +2951,88 @@
         /* 쿠폰 발급 모달 */
         .coupon-issue-grid {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 12px;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
         }
 
         .coupon-issue-card {
-            background: linear-gradient(135deg, #1a1a2e 0%, #2d2d4a 100%);
-            border-radius: 12px;
-            padding: 20px;
+            background: white;
+            border: 1.5px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 22px 12px;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: all 0.15s;
             text-align: center;
-            color: white;
             position: relative;
-            overflow: hidden;
-        }
-
-        .coupon-issue-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, transparent 50%);
-            pointer-events: none;
         }
 
         .coupon-issue-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
-        }
-
-        .coupon-issue-card:active {
-            transform: translateY(-2px);
-        }
-
-        .coupon-issue-points {
-            font-size: 14px;
-            color: rgba(255,255,255,0.7);
-            margin-bottom: 4px;
-        }
-
-        .coupon-issue-arrow {
-            font-size: 16px;
-            color: #52c41a;
-            margin: 8px 0;
+            border-color: #94a3b8;
+            background: #f8fafc;
         }
 
         .coupon-issue-value {
-            font-size: 24px;
+            font-size: 20px;
             font-weight: 700;
-            color: #52c41a;
-            margin-bottom: 4px;
+            color: #1e293b;
+            line-height: 1.2;
         }
 
-        .coupon-issue-name {
-            font-size: 12px;
-            color: rgba(255,255,255,0.7);
+        .coupon-issue-points {
+            font-size: 11px;
+            color: #94a3b8;
+            margin-top: 5px;
         }
 
-        /* 호버 시 초록색 테두리 */
-        .coupon-issue-card:hover {
-            border: 2px solid #52c41a;
-        }
-
-        /* 선택된 쿠폰 카드 스타일 */
         .coupon-issue-card.selected {
-            border: 2px solid #52c41a;
-            background: linear-gradient(135deg, #1e4d2b 0%, #2d4a3a 100%);
+            border-color: #3b82f6;
+            background: #eff6ff;
         }
 
-        /* 순서 배지 스타일 */
+        .coupon-issue-card.selected .coupon-issue-value {
+            color: #2563eb;
+        }
+
+        .coupon-issue-card.selected .coupon-issue-points {
+            color: #60a5fa;
+        }
+
         .coupon-order-badge {
             position: absolute;
-            top: 8px;
-            left: 8px;
-            width: 24px;
-            height: 24px;
-            background: #52c41a;
+            top: 6px;
+            right: 6px;
+            width: 20px;
+            height: 20px;
+            background: #3b82f6;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 14px;
+            font-size: 11px;
             font-weight: 700;
             color: white;
-            z-index: 1;
+        }
+
+        /* 발급 순서 요약 */
+        .coupon-order-summary {
+            margin-top: 14px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+            color: #64748b;
+        }
+        .coupon-order-summary .order-label {
+            font-weight: 600;
+            color: #334155;
+            white-space: nowrap;
+        }
+        .coupon-order-summary .order-value {
+            color: #1e293b;
+            font-weight: 500;
+        }
+        .coupon-order-summary .order-empty {
+            color: #94a3b8;
         }
 
         /* ===== 모니터링 팝업 ===== */
@@ -2907,7 +3051,7 @@
             justify-content: space-between;
             align-items: center;
             padding: 16px 24px;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            background: #111;
             color: white;
         }
 
@@ -2935,7 +3079,7 @@
         }
 
         .monitor-badge.completed {
-            background: #1890ff;
+            background: #111;
         }
 
         @keyframes pulse {
@@ -2973,7 +3117,7 @@
         .monitor-stat-value {
             font-size: 20px;
             font-weight: 700;
-            color: #1a1a2e;
+            color: #111;
         }
 
         .monitor-stat-value.success {
@@ -2985,7 +3129,7 @@
         }
 
         .monitor-stat-value.processing {
-            color: #1890ff;
+            color: #111;
         }
 
         .monitor-stat-value.warning {
@@ -3017,7 +3161,7 @@
 
         .monitor-progress-fill {
             height: 100%;
-            background: linear-gradient(90deg, #52c41a 0%, #73d13d 100%);
+            background: #111;
             border-radius: 4px;
             transition: width 0.3s ease;
         }
@@ -3102,7 +3246,7 @@
         }
 
         .monitor-item.processing .monitor-item-index {
-            background: #1890ff;
+            background: #111;
             color: white;
         }
 
@@ -3139,7 +3283,7 @@
             width: 16px;
             height: 16px;
             cursor: pointer;
-            accent-color: #1890ff;
+            accent-color: #111;
         }
 
         .monitor-select-all {
@@ -3155,12 +3299,12 @@
             width: 14px;
             height: 14px;
             cursor: pointer;
-            accent-color: #1890ff;
+            accent-color: #111;
         }
 
         .monitor-selected-count {
             font-size: 12px;
-            color: #1890ff;
+            color: #111;
             font-weight: 500;
             margin-left: 12px;
         }
@@ -3197,7 +3341,7 @@
         }
 
         .monitor-item.processing .monitor-item-status {
-            color: #1890ff;
+            color: #111;
         }
 
         .monitor-item.success .monitor-item-status {
@@ -3234,7 +3378,7 @@
         }
 
         .monitor-item.processing .monitor-item-icon {
-            color: #1890ff;
+            color: #111;
             animation: spin 1s linear infinite;
         }
 
@@ -3280,7 +3424,7 @@
 
         /* 배치 작업 진행 상태 바 */
         .batch-status-bar {
-            background: linear-gradient(90deg, #1890ff 0%, #096dd9 100%);
+            background: #111;
             color: white;
             padding: 10px 24px;
             display: flex;
@@ -3348,251 +3492,479 @@
             border-color: #ff7875;
         }
 
-        /* ===== 확장형 필터 패널 ===== */
-        .filter-expand-panel {
+        /* 쿠폰 선택 버튼 (판매 처리 모달용) */
+        .filter-coupon-btn {
+            padding: 6px 12px;
+            border: 1px solid #e5e7eb;
             background: white;
-            border-bottom: 1px solid #e8e8e8;
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.3s ease, padding 0.3s ease;
-            padding: 0 24px;
-        }
-
-        .filter-expand-panel.open {
-            max-height: 600px;
-            padding: 20px 24px;
-        }
-
-        .filter-expand-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 16px;
-        }
-
-        .filter-expand-title {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .filter-expand-title span {
-            font-size: 13px;
-            color: #666;
-        }
-
-        .filter-expand-title .total-count {
-            font-weight: 600;
-            color: #1a1a2e;
-        }
-
-        .filter-expand-close {
-            width: 28px;
-            height: 28px;
-            border: none;
-            background: #f3f4f6;
-            border-radius: 4px;
+            border-radius: 6px;
+            font-size: 12px;
+            color: #374151;
             cursor: pointer;
-            font-size: 18px;
-            color: #666;
+            transition: all 0.15s;
+        }
+        .filter-coupon-btn:hover {
+            border-color: #111;
+        }
+        .filter-coupon-btn.active {
+            background: #111;
+            border-color: #111;
+            color: white;
+        }
+        .filter-coupon-btn .count {
+            font-size: 11px;
+            color: #9ca3af;
+            margin-left: 2px;
+        }
+        .filter-coupon-btn.active .count {
+            color: #ccc;
+        }
+
+        /* 쿠폰 상세 메모 placeholder */
+        #voucherSoldTo::placeholder {
+            color: #cbd5e1;
+            font-style: italic;
+        }
+
+        /* ===== 팝오버 필터 바 ===== */
+        .filter-bar {
+            background: white;
+            border-bottom: 1px solid #e5e7eb;
+            padding: 10px 24px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .filter-bar-label {
+            font-size: 13px;
+            color: #6b7280;
+            font-weight: 600;
+            margin-right: 8px;
+            padding-right: 12px;
+            border-right: 1.5px solid #d1d5db;
+        }
+
+        /* 필터 트리거 칩 */
+        .filter-trigger {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 20px;
+            border: 1px solid #d1d5db;
+            background: white;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #374151;
+            cursor: pointer;
+            transition: all 0.15s;
+            white-space: nowrap;
+            user-select: none;
+        }
+
+        .filter-trigger:hover {
+            border-color: #1e3a5f;
+            background: #f8fafc;
+        }
+
+        .filter-trigger.has-value {
+            border-color: #1e3a5f;
+            background: #1e3a5f;
+            color: white;
+        }
+
+        .filter-trigger.has-value:hover {
+            background: #2a4a6f;
+        }
+
+        .filter-trigger .ft-arrow {
+            font-size: 10px;
+            opacity: 0.5;
+            transition: transform 0.15s;
+        }
+
+        .filter-trigger.open .ft-arrow {
+            transform: rotate(180deg);
+        }
+
+        .filter-trigger .ft-count {
+            background: rgba(255,255,255,0.9);
+            color: #1e3a5f;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 0 6px;
+            border-radius: 10px;
+            min-width: 18px;
+            text-align: center;
+            line-height: 18px;
+        }
+
+        .filter-trigger .ft-clear {
+            font-size: 14px;
+            opacity: 0.6;
+            margin-left: 2px;
+        }
+
+        .filter-trigger .ft-clear:hover {
+            opacity: 1;
+        }
+
+        /* 팝오버 드롭다운 */
+        .filter-popover {
+            position: absolute;
+            top: calc(100% + 6px);
+            left: 0;
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+            z-index: 100;
+            min-width: 180px;
+            padding: 8px;
+            display: none;
+        }
+
+        .filter-popover.show {
+            display: block;
+            animation: filterPopIn 0.15s ease;
+        }
+
+        .filter-popover.align-right {
+            left: auto;
+            right: 0;
+        }
+
+        @keyframes filterPopIn {
+            from { opacity: 0; transform: translateY(-4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .filter-popover-title {
+            padding: 6px 8px;
+            font-size: 11px;
+            font-weight: 600;
+            color: #9ca3af;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* 팝오버 옵션 */
+        .fp-option {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 10px;
+            border: none;
+            background: none;
+            width: 100%;
+            font-size: 13px;
+            color: #374151;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: background 0.1s;
+            text-align: left;
+        }
+
+        .fp-option:hover {
+            background: #f3f4f6;
+        }
+
+        .fp-option.active {
+            background: #f0f0f0;
+            font-weight: 600;
+        }
+
+        .fp-option .fp-check {
+            width: 18px;
+            height: 18px;
+            border: 2px solid #d1d5db;
+            border-radius: 4px;
             display: flex;
             align-items: center;
             justify-content: center;
-            transition: all 0.15s;
+            font-size: 11px;
+            flex-shrink: 0;
+            transition: all 0.1s;
         }
 
-        .filter-expand-close:hover {
-            background: #e5e7eb;
-            color: #333;
+        .fp-option.active .fp-check {
+            background: #1e3a5f;
+            border-color: #1e3a5f;
+            color: white;
         }
 
-        .filter-expand-row {
-            display: flex;
-            align-items: flex-start;
-            gap: 16px;
-            margin-bottom: 12px;
-            padding-bottom: 12px;
-            border-bottom: 1px solid #f5f5f5;
-        }
-
-        .filter-expand-row:last-child {
-            margin-bottom: 0;
-            padding-bottom: 0;
-            border-bottom: none;
-        }
-
-        .filter-expand-label {
-            min-width: 70px;
-            font-size: 13px;
-            font-weight: 600;
-            color: #333;
-            padding-top: 6px;
-        }
-
-        .filter-expand-content {
-            flex: 1;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-            align-items: center;
-        }
-
-        .filter-hint {
+        .fp-option .fp-count {
+            margin-left: auto;
             font-size: 12px;
-            color: #888;
-            margin-left: 4px;
+            color: #9ca3af;
+            font-weight: 400;
         }
 
-        .filter-separator-text {
-            font-size: 12px;
-            color: #ccc;
-            margin: 0 8px;
+        .fp-option.active .fp-count {
+            color: #6b7280;
         }
 
-        /* 필터 링크 스타일 (밑줄 활성화) */
-        .filter-link {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            padding: 6px 12px;
-            border: none;
-            background: transparent;
-            font-size: 13px;
-            font-weight: 500;
-            color: #666;
-            cursor: pointer;
-            transition: all 0.15s ease;
-            text-decoration: none;
-        }
-
-        .filter-link:hover {
-            color: #1890ff;
-        }
-
-        .filter-link.active {
-            color: #1890ff;
-            text-decoration: underline;
-            font-weight: 600;
-        }
-
-        /* 날짜 입력 */
-        .filter-date-wrapper {
-            display: inline-flex;
+        /* 팝오버 날짜 */
+        .fp-date-row {
+            display: flex;
             align-items: center;
             gap: 8px;
-            margin-left: 12px;
-            padding-left: 12px;
-            border-left: 1px solid #e0e0e0;
+            padding: 6px 10px;
         }
 
-        .filter-date-wrapper label {
+        .fp-date-row label {
             font-size: 12px;
-            color: #666;
+            color: #6b7280;
+            min-width: 36px;
         }
 
-        .filter-date-wrapper input {
-            padding: 4px 8px;
-            border: 1px solid #d9d9d9;
-            border-radius: 4px;
+        .fp-date-row input[type="date"] {
+            flex: 1;
+            padding: 6px 8px;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
             font-size: 12px;
+            color: #374151;
         }
 
-        .filter-date-wrapper input:focus {
-            border-color: #1890ff;
+        .fp-date-row input[type="date"]:focus {
+            border-color: #1e3a5f;
             outline: none;
         }
 
-        .filter-date-wrapper .clear-btn {
+        .fp-date-clear {
             padding: 2px 6px;
             border: none;
-            background: #ff4d4f;
+            background: #ef4444;
             color: white;
-            border-radius: 3px;
+            border-radius: 4px;
             font-size: 10px;
             cursor: pointer;
         }
 
-        /* 포인트 범위 */
-        .filter-range-wrapper {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
+        .fp-divider {
+            height: 1px;
+            background: #f3f4f6;
+            margin: 4px 0;
         }
 
-        .filter-range-wrapper input {
+        .fp-list-textarea {
+            width: 100%;
+            padding: 6px 8px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 12px;
+            font-family: monospace;
+            resize: vertical;
+            box-sizing: border-box;
+        }
+        .fp-list-textarea:focus {
+            border-color: #1e3a5f;
+            outline: none;
+        }
+
+        .list-filter-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.4);
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .list-filter-modal {
+            background: #fff;
+            border-radius: 12px;
+            width: 480px;
+            max-height: 80vh;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            display: flex;
+            flex-direction: column;
+        }
+        .list-filter-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            border-bottom: 1px solid #e5e7eb;
+            font-size: 16px;
+            font-weight: 700;
+        }
+        .list-filter-header button {
+            background: none;
+            border: none;
+            font-size: 22px;
+            cursor: pointer;
+            color: #6b7280;
+            padding: 0 4px;
+        }
+        .list-filter-body {
+            padding: 16px 20px;
+            overflow-y: auto;
+        }
+        .list-filter-section {
+            margin-bottom: 16px;
+        }
+        .list-filter-section label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 6px;
+        }
+        .list-filter-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            padding: 12px 20px;
+            border-top: 1px solid #e5e7eb;
+        }
+        .list-filter-btn {
+            padding: 8px 20px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+        }
+        .list-filter-btn.cancel {
+            background: #f3f4f6;
+            color: #374151;
+        }
+        .list-filter-btn.apply {
+            background: #1e3a5f;
+            color: #fff;
+        }
+        .list-filter-btn:hover { opacity: 0.85; }
+
+        /* 팝오버 내 범위 입력 */
+        .fp-range-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 10px;
+        }
+
+        .fp-range-row input[type="number"] {
             width: 80px;
-            padding: 4px 8px;
-            border: 1px solid #d9d9d9;
-            border-radius: 4px;
+            padding: 6px 8px;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
             font-size: 12px;
             text-align: right;
         }
 
-        .filter-range-wrapper input:focus {
-            border-color: #1890ff;
+        .fp-range-row input[type="number"]:focus {
+            border-color: #1e3a5f;
             outline: none;
         }
 
-        .filter-range-wrapper span {
-            color: #999;
+        .fp-range-row span {
+            color: #9ca3af;
             font-size: 12px;
         }
 
-        /* 생일 월 버튼 */
-        .filter-month-btn {
-            width: 40px;
-            padding: 4px 0;
-            border: 1px solid #d9d9d9;
+        /* 생일 월 그리드 */
+        .fp-month-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 4px;
+            padding: 4px;
+        }
+
+        .fp-month {
+            padding: 6px 0;
+            border: 1px solid #e5e7eb;
             background: white;
-            border-radius: 4px;
+            border-radius: 6px;
             font-size: 12px;
             text-align: center;
             cursor: pointer;
-            transition: all 0.15s;
+            transition: all 0.1s;
+            font-weight: 500;
+            color: #374151;
         }
 
-        .filter-month-btn:hover {
-            border-color: #1890ff;
-            color: #1890ff;
+        .fp-month:hover {
+            border-color: #1e3a5f;
         }
 
-        .filter-month-btn.active {
-            background: #1890ff;
-            border-color: #1890ff;
+        .fp-month.active {
+            background: #1e3a5f;
+            border-color: #1e3a5f;
             color: white;
         }
 
-        /* 쿠폰 종류 버튼 */
-        .filter-coupon-btn {
+        /* 쿠폰 종류 (팝오버 내) */
+        .fp-coupon-list {
+            max-height: 250px;
+            overflow-y: auto;
+        }
+
+        /* 포인트 인라인 입력 */
+        .filter-points-inline {
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            padding: 4px 10px;
-            border: 1px solid #d9d9d9;
+            padding-left: 12px;
+            border-left: 1.5px solid #d1d5db;
+            margin-left: 4px;
+        }
+        .filter-points-inline label {
+            font-size: 13px;
+            color: #6b7280;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+        .filter-points-inline input[type="number"] {
+            width: 90px;
+            padding: 6px 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 13px;
+            text-align: right;
+            color: #374151;
             background: white;
-            border-radius: 4px;
+            transition: border-color 0.15s;
+        }
+        .filter-points-inline input[type="number"]:focus {
+            border-color: #1e3a5f;
+            outline: none;
+        }
+        .filter-points-inline input[type="number"]::placeholder {
+            color: #bbb;
+        }
+        .filter-points-inline span {
             font-size: 12px;
+            color: #9ca3af;
+        }
+
+        /* 필터 초기화 */
+        .filter-reset-wrap {
+            display: inline-flex;
+            align-items: center;
+            padding-left: 12px;
+            border-left: 1.5px solid #d1d5db;
+            margin-left: 4px;
+        }
+        .filter-reset-btn {
+            padding: 7px 16px;
+            border: 1px solid #93c5fd;
+            background: #eff6ff;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #2563eb;
             cursor: pointer;
             transition: all 0.15s;
         }
 
-        .filter-coupon-btn:hover {
-            border-color: #1890ff;
-        }
-
-        .filter-coupon-btn.active {
-            border-color: #1890ff;
-            background: #e6f4ff;
-            color: #1890ff;
-        }
-
-        .filter-coupon-btn .count {
-            font-size: 11px;
-            color: #999;
-        }
-
-        .filter-coupon-btn.active .count {
-            color: #1890ff;
+        .filter-reset-btn:hover {
+            background: #dbeafe;
+            border-color: #60a5fa;
         }
     </style>
 </head>

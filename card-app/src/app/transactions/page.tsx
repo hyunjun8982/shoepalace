@@ -43,6 +43,8 @@ export default function TransactionsPage() {
   // available filter options (from DB)
   const [availableOrgs, setAvailableOrgs] = useState<string[]>([]);
   const [availableOwners, setAvailableOwners] = useState<string[]>([]);
+  const [availableAssignedUsers, setAvailableAssignedUsers] = useState<string[]>([]);
+  const [selectedAssignedUser, setSelectedAssignedUser] = useState('');
 
   // stats
   const [stats, setStats] = useState({ total_amount: 0, total_count: 0 });
@@ -56,6 +58,7 @@ export default function TransactionsPage() {
       .then(data => {
         setAvailableOrgs(data.organizations || []);
         setAvailableOwners(data.owners || []);
+        setAvailableAssignedUsers(data.assigned_users || []);
       })
       .catch(() => {});
   }, []);
@@ -77,6 +80,7 @@ export default function TransactionsPage() {
       params.set('owners', Array.from(selectedOwners).join(','));
     }
     if (clientType) params.set('client_type', clientType);
+    if (selectedAssignedUser) params.set('assigned_user', selectedAssignedUser);
 
     try {
       const res = await apiFetch(`/api/transactions?${params}`);
@@ -95,7 +99,7 @@ export default function TransactionsPage() {
     } finally {
       setLoading(false);
     }
-  }, [apiFetch, page, startDate, endDate, search, selectedOrgs, selectedOwners, clientType, availableOrgs.length, availableOwners.length]);
+  }, [apiFetch, page, startDate, endDate, search, selectedOrgs, selectedOwners, clientType, selectedAssignedUser, availableOrgs.length, availableOwners.length]);
 
   const fetchStats = useCallback(async () => {
     const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
@@ -106,6 +110,7 @@ export default function TransactionsPage() {
       params.set('owners', Array.from(selectedOwners).join(','));
     }
     if (clientType) params.set('client_type', clientType);
+    if (selectedAssignedUser) params.set('assigned_user', selectedAssignedUser);
     try {
       const res = await apiFetch(`/api/transactions/stats?${params}`);
       const data = await res.json();
@@ -113,12 +118,12 @@ export default function TransactionsPage() {
     } catch {
       // ignore
     }
-  }, [apiFetch, startDate, endDate, selectedOrgs, selectedOwners, clientType, availableOrgs.length, availableOwners.length]);
+  }, [apiFetch, startDate, endDate, selectedOrgs, selectedOwners, clientType, selectedAssignedUser, availableOrgs.length, availableOwners.length]);
 
   useEffect(() => {
     fetchData(true);
     fetchStats();
-  }, [startDate, endDate, selectedOrgs, selectedOwners, clientType]);
+  }, [startDate, endDate, selectedOrgs, selectedOwners, clientType, selectedAssignedUser]);
 
   const handleSearch = () => {
     fetchData(true);
@@ -269,11 +274,41 @@ export default function TransactionsPage() {
           </div>
         )}
 
+        {/* Assigned User Filter */}
+        {availableAssignedUsers.length > 0 && (
+          <div>
+            <label className="text-xs text-gray-500 mb-1.5 block">카드사용자</label>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                onClick={() => setSelectedAssignedUser('')}
+                className={`px-2.5 py-1 text-xs rounded-full border transition
+                  ${selectedAssignedUser === ''
+                    ? 'border-primary-400 bg-primary-50 text-primary-700'
+                    : 'border-gray-200 text-gray-400'}`}
+              >
+                전체
+              </button>
+              {availableAssignedUsers.map(name => (
+                <button
+                  key={name}
+                  onClick={() => setSelectedAssignedUser(selectedAssignedUser === name ? '' : name)}
+                  className={`px-2.5 py-1 text-xs rounded-full border transition
+                    ${selectedAssignedUser === name
+                      ? 'border-blue-400 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 text-gray-400'}`}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Owner Multi-Select */}
         {availableOwners.length > 0 && (
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <label className="text-xs text-gray-500">사용자</label>
+              <label className="text-xs text-gray-500">소유자</label>
               <button
                 onClick={() => setSelectedOwners(selectedOwners.size === 0 ? new Set(availableOwners) : new Set())}
                 className="text-[11px] text-primary-600"
@@ -317,9 +352,11 @@ export default function TransactionsPage() {
                   <span className="text-[11px] text-gray-400">
                     {orgName(tx.organization)}{tx.client_type ? `[${tx.client_type === 'B' ? '법인' : '개인'}]` : ''}
                   </span>
-                  {tx.owner_name && (
+                  {tx.assigned_user ? (
+                    <span className="text-[11px] text-blue-600 font-medium">{tx.assigned_user}</span>
+                  ) : tx.owner_name ? (
                     <span className="text-[11px] text-gray-400 font-medium">{tx.owner_name}</span>
-                  )}
+                  ) : null}
                   {tx.cancel_status !== 'normal' && (
                     <span className="text-[10px] px-1 py-0.5 rounded bg-red-50 text-red-500">
                       {CANCEL_STATUS_MAP[tx.cancel_status] || tx.cancel_status}
@@ -426,6 +463,7 @@ export default function TransactionsPage() {
                 ['카드번호', detail.card_no],
                 ['카드명', detail.card_name],
                 ['소유자', detail.owner_name],
+                ['사용자', detail.assigned_user],
                 ['구분', detail.client_type === 'B' ? '법인' : detail.client_type === 'P' ? '개인' : null],
                 ['결제유형', detail.payment_type ? (PAYMENT_TYPE_MAP[detail.payment_type] || detail.payment_type) : null],
                 ['할부', detail.installment_month && detail.installment_month > 1 ? `${detail.installment_month}개월` : null],

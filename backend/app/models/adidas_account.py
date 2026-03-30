@@ -27,6 +27,7 @@ class AdidasAccount(Base):
     phone = Column(String, nullable=True, comment="전화번호")
     current_points = Column(Integer, nullable=True, comment="현재 포인트")
     owned_vouchers = Column(Text, nullable=True, comment="보유 쿠폰 목록 (JSON)")
+    adiclub_level = Column(String, nullable=True, comment="adiClub 레벨 (Level 1~4)")
 
     # 상태
     is_active = Column(Boolean, default=True, comment="계정 사용 여부")

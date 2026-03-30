@@ -45,7 +45,7 @@ def test_api_with_token(access_token: str):
     cookies = {'account.grant.accessToken': access_token}
 
     # 프로필
-    print("\n[1/4] 프로필 조회...")
+    print("\n[1/5] 프로필 조회...")
     try:
         resp = requests.get('https://www.adidas.co.kr/api/account/profile', headers=headers, cookies=cookies, timeout=10)
         if resp.status_code == 200:
@@ -59,7 +59,7 @@ def test_api_with_token(access_token: str):
         print(f"  오류: {e}")
 
     # 바코드
-    print("\n[2/4] 바코드 조회...")
+    print("\n[2/5] 바코드 조회...")
     try:
         resp = requests.get('https://www.adidas.co.kr/api/account/loyalty/memberid', headers=headers, cookies=cookies, timeout=10)
         if resp.status_code == 200:
@@ -69,8 +69,20 @@ def test_api_with_token(access_token: str):
     except Exception as e:
         print(f"  오류: {e}")
 
+    # 레벨
+    print("\n[3/5] adiClub 레벨 조회...")
+    try:
+        resp = requests.get('https://www.adidas.co.kr/api/account/loyalty/status', headers=headers, cookies=cookies, timeout=10)
+        if resp.status_code == 200:
+            status_data = resp.json()
+            print(f"  레벨: {status_data.get('levelDescription', 'N/A')}")
+        else:
+            print(f"  실패: HTTP {resp.status_code}")
+    except Exception as e:
+        print(f"  오류: {e}")
+
     # 포인트
-    print("\n[3/4] 포인트 조회...")
+    print("\n[4/5] 포인트 조회...")
     try:
         resp = requests.get('https://www.adidas.co.kr/api/account/loyalty/wallet', headers=headers, cookies=cookies, timeout=10)
         if resp.status_code == 200:
@@ -81,7 +93,7 @@ def test_api_with_token(access_token: str):
         print(f"  오류: {e}")
 
     # 쿠폰
-    print("\n[4/4] 쿠폰 조회...")
+    print("\n[5/5] 쿠폰 조회...")
     try:
         resp = requests.get('https://www.adidas.co.kr/api/account/loyalty/vouchers', headers=headers, cookies=cookies, timeout=10)
         if resp.status_code == 200:
@@ -259,6 +271,15 @@ def web_login(email: str, password: str, headless: bool = False):
                 else:
                     raise Exception(f"페이지 이동 실패: {e}")
 
+        # Access Denied (IP 차단) 감지
+        try:
+            page_source = driver.page_source
+            if 'Access Denied' in page_source or "don't have permission" in page_source:
+                print("  [ERROR] IP_BLOCKED: Access Denied - IP가 일시 차단됨")
+                return "IP_BLOCKED"
+        except Exception:
+            pass
+
         # 페이지 로드 대기
         WebDriverWait(driver, 15).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, 'input[name="email"], input[type="email"]'))
@@ -402,6 +423,12 @@ def web_login(email: str, password: str, headless: bool = False):
                 #         pass
 
                 if login_error:
+                    # 비밀번호 오류 우선 체크 ("잘못된 이메일/비밀번호입니다. 다시 시도하세요" 등)
+                    if any(keyword in login_error for keyword in ['비밀번호', 'password', '잘못된', 'incorrect', '올바르지']):
+                        print(f"  [ERROR] PASSWORD_WRONG: {login_error}")
+                        driver.implicitly_wait(10)
+                        return "PASSWORD_WRONG"
+
                     # "오류가 발생했습니다" 메시지는 봇 차단 의심
                     if any(keyword in login_error for keyword in ['오류가 발생했습니다', '다시 시도하세요', 'error occurred', 'try again']):
                         # ★ 봇 차단 메시지가 떠도 토큰이 있을 수 있음 (로그인 성공 후 후속 페이지에서 에러)
@@ -768,7 +795,7 @@ def main():
     parser.add_argument('--device', '-d', help='모바일 모드에서 사용할 디바이스 UDID')
     parser.add_argument('--headless', action='store_true', default=False,
                         help='헤드리스 모드 (백그라운드 실행, 봇 차단 가능성 높음)')
-    parser.add_argument('--id', type=int, help='계정 ID (진행 상태 출력용)')
+    parser.add_argument('--id', type=str, help='계정 ID (진행 상태 출력용)')
     parser.add_argument('--incognito', action='store_true', default=False,
                         help='시크릿(incognito) 모드로 브라우저 실행')
 

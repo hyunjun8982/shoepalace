@@ -172,7 +172,15 @@
         .cat-dates { color: #888; font-size: 10px; white-space: nowrap; }
         .cat-sold { font-size: 9px; color: #ef4444; font-weight: 700; }
         .cat-deleted { font-size: 9px; color: #9ca3af; font-weight: 700; }
-        .col-coupon-cat { width: 210px; text-align: center; overflow: visible !important; }
+        .col-coupon-cat { width: 200px; text-align: center; overflow: visible !important; }
+        .col-coupon-etc { width: 100px; text-align: center; overflow: visible !important; }
+        .cat-cell-etc .coupon-card { width: 90px !important; height: 34px !important; }
+        .cat-cell-etc .coupon-card-logo { display: none; }
+        .cat-cell-etc .coupon-card-amount { font-size: 9px !important; }
+        .cat-cell-etc .coupon-card-code { font-size: 7px !important; }
+        .cat-cell-etc .coupon-card-right { width: 32px !important; }
+        .cat-cell-etc .coupon-card-expiry { font-size: 8px !important; }
+        .cat-cell-etc .coupon-count-badge { font-size: 9px !important; padding: 1px 4px !important; }
 
         /* 리스트 필터 textarea */
         .filter-list-input {
@@ -584,12 +592,16 @@
         }
 
         .btn-navy {
-            background: #111;
+            background: linear-gradient(135deg, #1e40af, #2563eb);
             color: white;
+            border: 1px solid #1d4ed8;
+            box-shadow: 0 1px 3px rgba(37, 99, 235, 0.3);
+            font-weight: 600;
         }
 
         .btn-navy:hover {
-            background: #333;
+            background: linear-gradient(135deg, #1e3a8a, #1d4ed8);
+            box-shadow: 0 2px 6px rgba(37, 99, 235, 0.4);
         }
 
         .btn-danger-muted {
@@ -665,6 +677,11 @@
             background: rgba(255,255,255,0.1);
             color: #fff;
             border-color: rgba(255,255,255,0.5);
+        }
+        .btn-header-action.proxy-on {
+            background: #3b82f6;
+            color: #fff;
+            border-color: #60a5fa;
         }
 
         /* 설치 토글 버튼 */
@@ -996,6 +1013,8 @@
             box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.08);
         }
 
+        /* 프록시 배정 계정 표시 - 제거 (선택 표시와 혼동) */
+
         /* 메인 컨텐츠 */
         .main-content {
             flex: 1;
@@ -1064,6 +1083,147 @@
         th.resizable:hover::after {
             background: #111;
         }
+
+        /* 헤더 액션 (정렬+필터) */
+        .th-with-actions {
+            position: relative;
+            overflow: visible !important;
+        }
+        .th-name {
+            cursor: pointer;
+            text-decoration: underline;
+            text-decoration-style: dotted;
+            text-underline-offset: 2px;
+        }
+        .th-name:hover { color: #111; }
+        .th-sort {
+            cursor: pointer;
+            margin-left: 2px;
+        }
+        .th-filter-dot {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            background: #3b82f6;
+            border-radius: 50%;
+            margin-left: 2px;
+            vertical-align: middle;
+        }
+
+        .th-date-popover {
+            position: fixed;
+            z-index: 9999;
+            background: #fff;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            padding: 12px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            min-width: 170px;
+        }
+        .th-date-popover label {
+            font-size: 10px;
+            color: #888;
+            font-weight: 600;
+        }
+        .th-date-popover input[type="date"] {
+            font-size: 11px;
+            padding: 4px 6px;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            width: 100%;
+        }
+
+        /* 쿠폰 카테고리 엑셀식 필터 팝업 */
+        .th-category-popover {
+            position: fixed;
+            z-index: 9999;
+            background: #fff;
+            border: 1px solid #c7cbd0;
+            border-radius: 6px;
+            padding: 0;
+            box-shadow: 0 6px 24px rgba(0,0,0,0.18), 0 1px 4px rgba(0,0,0,0.08);
+            min-width: 210px;
+            max-height: 420px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        }
+        .cat-filter-section-title {
+            font-size: 10px;
+            font-weight: 700;
+            color: #fff;
+            background: #475569;
+            padding: 5px 10px;
+            letter-spacing: 0.3px;
+        }
+        .cat-filter-item {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            padding: 5px 10px;
+            cursor: pointer;
+            font-size: 12px;
+            color: #1e293b;
+            transition: background 0.1s;
+            user-select: none;
+        }
+        .cat-filter-item:hover { background: #f1f5f9; }
+        .cat-filter-item.checked { background: #eff6ff; }
+        .cat-filter-check {
+            font-size: 14px;
+            color: #94a3b8;
+            flex-shrink: 0;
+            width: 16px;
+            text-align: center;
+            line-height: 1;
+        }
+        .cat-filter-item.checked .cat-filter-check { color: #2563eb; }
+        .cat-filter-name {
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            text-align: left;
+        }
+        .cat-filter-count {
+            font-size: 10px;
+            color: #94a3b8;
+            flex-shrink: 0;
+            white-space: nowrap;
+        }
+        .cat-filter-item.checked .cat-filter-count { color: #2563eb; }
+        .cat-filter-divider {
+            height: 1px;
+            background: #e2e8f0;
+            margin: 0;
+        }
+        .cat-filter-scroll {
+            max-height: 180px;
+            overflow-y: auto;
+        }
+        .cat-filter-empty {
+            font-size: 11px;
+            color: #cbd5e1;
+            padding: 6px 10px;
+        }
+        .cat-filter-reset {
+            display: block;
+            width: 100%;
+            padding: 7px 10px;
+            font-size: 11px;
+            font-weight: 600;
+            color: #64748b;
+            background: #f8fafc;
+            border: none;
+            cursor: pointer;
+            transition: all 0.1s;
+            text-align: center;
+        }
+        .cat-filter-reset:hover { background: #f1f5f9; color: #334155; }
 
         tbody tr:hover {
             background: #f9fafb;
@@ -2593,37 +2753,65 @@
             flex: 1;
         }
 
-        /* 통계 + 액션 버튼 컨테이너 */
+        /* 통계 + 액션 버튼 컨테이너 - 1열 */
         .stats-action-container {
             display: flex;
-            gap: 20px;
+            gap: 6px;
             align-items: stretch;
             margin-bottom: 12px;
         }
 
         .stats-container {
-            display: flex;
-            gap: 12px;
-            flex: 1;
-            min-width: 0;
+            display: contents;
+        }
+
+        .stat-group-label {
+            display: none;
+        }
+
+        .stat-group-tag {
+            position: absolute;
+            top: -8px;
+            left: 8px;
+            font-size: 9px;
+            font-weight: 700;
+            color: #999;
+            background: #f9fafb;
+            padding: 0 4px;
+            letter-spacing: 0.3px;
         }
 
         .main-action-buttons {
-            flex: 1;
-            min-width: 0;
+            display: contents;
         }
 
         .stat-card {
             background: white;
-            padding: 16px 20px;
-            border-radius: 10px;
+            padding: 14px 12px;
+            border-radius: 8px;
             border: 1px solid #e5e7eb;
             flex: 1;
-            min-width: 120px;
+            position: relative;
+            min-width: 0;
             display: flex;
             align-items: center;
             justify-content: space-between;
             transition: all 0.15s;
+        }
+
+        .stat-card h4 {
+            color: #333;
+            font-size: 14px;
+            font-weight: 700;
+            margin: 0;
+            white-space: nowrap;
+        }
+
+        .stat-card .value {
+            font-size: 12px;
+            font-weight: 600;
+            color: #888;
+            white-space: nowrap;
         }
 
         .stat-card.clickable {
@@ -2637,138 +2825,91 @@
         }
 
         .stat-card.clickable.active {
-            border-color: #000;
-            background: #f5f5f5;
+            border-color: #1e3a5f;
+            background: #1e3a5f;
+            color: #fff;
         }
+        .stat-card.clickable.active h4 { color: #fff; }
+        .stat-card.clickable.active .value { color: rgba(255,255,255,0.6); }
 
-        .stat-card-left h4 {
-            color: #6b7280;
-            font-size: 12px;
-            font-weight: 600;
-            margin: 0;
-            letter-spacing: 0.3px;
-        }
-
-        .stat-card-right {
-            text-align: right;
-        }
+        /* 카드 역할별 좌측 라인 색상 */
+        .stat-card.stat-info { border-left: 3px solid #6b7280; }
+        .stat-card.stat-warn { border-left: 3px solid #f59e0b; }
+        .stat-card.stat-coupon { border-left: 3px solid #15803d; }
+        .stat-card.stat-issue { border-left: 3px solid #2563eb; }
+        .stat-card.stat-birthday { border-left: 3px solid #ec4899; }
 
         .stat-card-right .value {
-            font-size: 20px;
-            font-weight: 800;
+            font-size: 13px;
+            font-weight: 700;
             color: #111;
-            letter-spacing: -0.5px;
+            letter-spacing: -0.3px;
         }
 
         .stat-card-right .stat-subtitle {
-            font-size: 11px;
+            font-size: 10px;
             color: #9ca3af;
             margin-top: 1px;
         }
 
-        /* 주요 액션 버튼 */
-        .main-action-buttons {
-            display: flex;
-            gap: 10px;
-        }
+        /* 주요 액션 버튼 - 필터 카드와 동일 스타일 */
 
         .btn-main-action {
             display: flex;
-            flex-direction: row;
             align-items: center;
-            justify-content: flex-start;
-            padding: 14px 18px;
+            justify-content: space-between;
+            padding: 14px 12px;
             flex: 1;
-            border-radius: 12px;
+            border-radius: 8px;
             cursor: pointer;
             border: none;
             min-width: 0;
-            transition: all 0.2s;
-            gap: 12px;
-            background: #4f7df5;
-            color: white;
+            transition: all 0.15s;
+            background: #1e3a5f;
+            color: #fff;
+        }
+
+        .btn-main-action h4 {
+            font-size: 14px;
+            font-weight: 700;
+            color: #fff;
+            margin: 0;
+            white-space: nowrap;
+        }
+
+        .btn-main-action .value {
+            font-size: 12px;
+            font-weight: 600;
+            color: rgba(255,255,255,0.6);
+            white-space: nowrap;
         }
 
         .btn-main-action:hover {
-            background: #3d6de3;
-            transform: translateY(-1px);
-            box-shadow: 0 6px 16px rgba(79,125,245,0.35);
+            background: #15294a;
         }
 
-        .btn-main-action .btn-icon {
-            width: 38px;
-            height: 38px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-            flex-shrink: 0;
-            background: rgba(255,255,255,0.2);
-            border-radius: 10px;
+        .btn-main-action.btn-main-primary {
+            background: linear-gradient(135deg, #1e40af, #2563eb);
+            border: 2px solid #60a5fa;
+            box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
         }
-
-        .btn-main-action .btn-content {
-            display: flex;
-            flex-direction: column;
-            align-items: flex-start;
+        .btn-main-action.btn-main-primary:hover {
+            background: linear-gradient(135deg, #1e3a8a, #1d4ed8);
+            box-shadow: 0 3px 12px rgba(37, 99, 235, 0.5);
         }
-
-        .btn-main-action .btn-text {
-            font-size: 14px;
-            font-weight: 600;
-        }
-
-        .btn-main-action .btn-desc {
-            font-size: 11px;
-            opacity: 0.6;
-            margin-top: 2px;
+        .btn-main-action.btn-main-primary.disabled {
+            background: linear-gradient(135deg, #1e40af, #2563eb);
+            border-color: #60a5fa;
         }
 
         .btn-main-action.disabled {
-            background: #cbd5e1;
-            color: #f1f5f9;
+            opacity: 0.35;
             cursor: not-allowed;
-            border-color: #cbd5e1;
             position: relative;
         }
 
         .btn-main-action.disabled:hover {
-            background: #cbd5e1;
-            transform: none;
-            box-shadow: none;
-        }
-
-        .btn-main-action.disabled .btn-icon {
-            background: rgba(255,255,255,0.15);
-        }
-
-        .btn-main-action.disabled:hover::after {
-            content: '계정을 선택해야 활성화됩니다';
-            position: absolute;
-            top: calc(100% + 8px);
-            left: 50%;
-            transform: translateX(-50%);
-            background: #fffbe6;
-            color: #8b6914;
-            padding: 8px 12px;
-            border-radius: 6px;
-            font-size: 12px;
-            font-weight: 500;
-            white-space: nowrap;
-            z-index: 1000;
-            border: 1px solid #ffe58f;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }
-
-        .btn-main-action.disabled:hover::before {
-            content: '';
-            position: absolute;
-            top: calc(100% + 2px);
-            left: 50%;
-            transform: translateX(-50%);
-            border: 6px solid transparent;
-            border-bottom-color: #ffe58f;
-            z-index: 1001;
+            background: #1e3a5f;
         }
 
         /* 로딩 */
@@ -2793,6 +2934,12 @@
 
         @keyframes spin {
             to { transform: rotate(360deg); }
+        }
+
+        @keyframes proxyLoadBar {
+            0% { margin-left: 0; }
+            50% { margin-left: 60%; }
+            100% { margin-left: 0; }
         }
 
         /* 페이지네이션 컨테이너 */

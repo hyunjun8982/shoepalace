@@ -35,7 +35,10 @@ function parseVouchers(vouchersJson) {
             sold: v.sold || false,
             sold_to: v.sold_to || v.soldTo || '',
             deleted_unused: v.deleted_unused || false,
-            deleted_at: v.deleted_at || ''
+            deleted_at: v.deleted_at || '',
+            fetched_at: v.fetched_at || '',
+            name: v.name || '',
+            expiryDate: v.expiryDate || ''
         }));
     } catch { return []; }
 }

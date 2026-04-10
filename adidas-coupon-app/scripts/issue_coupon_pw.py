@@ -244,11 +244,16 @@ def web_login_and_issue_coupon(email: str, password: str, coupon_type: str, inco
         print("설치: pip install playwright && playwright install chromium")
         return {"success": False, "error": "LIBRARY_MISSING"}
 
-    if coupon_type not in COUPON_TYPES:
-        print(f"잘못된 쿠폰 타입: {coupon_type}")
+    # 여러 쿠폰 타입 지원 (쉼표 구분)
+    coupon_type_list = [ct.strip() for ct in coupon_type.split(',') if ct.strip()]
+    if not coupon_type_list:
         return {"success": False, "error": "INVALID_COUPON_TYPE"}
+    for ct in coupon_type_list:
+        if ct not in COUPON_TYPES:
+            print(f"잘못된 쿠폰 타입: {ct}")
+            return {"success": False, "error": "INVALID_COUPON_TYPE"}
 
-    coupon_info = COUPON_TYPES[coupon_type]
+    coupon_info = COUPON_TYPES[coupon_type_list[0]]
     print("\n" + "=" * 60)
     print(f"아디다스 쿠폰 발급 (Playwright CDP + API) - {coupon_info['name']}")
     print(f"필요 포인트: {coupon_info['points']}P")
@@ -465,84 +470,69 @@ def web_login_and_issue_coupon(email: str, password: str, coupon_type: str, inco
             account_info['level'] = level
             print(f"  레벨: {level}")
 
-        # ========== API 기반 쿠폰 발급 ==========
-        print("\n[6/6] API로 쿠폰 발급 중...")
+        # ========== API 기반 쿠폰 발급 (여러 타입 순차 처리) ==========
+        all_results = []
+        last_error = None
+        coupon_code = ''
 
-        current_points = get_account_points(access_token)
-        print(f"  현재 포인트: {current_points}P")
+        for ct_idx, ct in enumerate(coupon_type_list):
+            ct_info = COUPON_TYPES[ct]
+            print(f"\n[6/6] API로 쿠폰 발급 중... ({ct_idx+1}/{len(coupon_type_list)}: {ct_info['name']})")
 
-        print("  상품권 목록 조회 중...")
-        offers = get_available_voucher_offers(access_token)
+            current_points = get_account_points(access_token)
+            print(f"  현재 포인트: {current_points}P")
 
-        if not offers:
-            print("  [ERROR] 상품권 목록 조회 실패")
-            return {"success": False, "error": "OFFERS_NOT_FOUND", "remaining_points": current_points, **account_info}
+            print("  상품권 목록 조회 중...")
+            offers = get_available_voucher_offers(access_token)
 
-        target_offer = find_voucher_offer(offers, coupon_info['value'])
+            if not offers:
+                print("  [ERROR] 상품권 목록 조회 실패")
+                all_results.append({"coupon_type": ct, "success": False, "error": "OFFERS_NOT_FOUND"})
+                last_error = "OFFERS_NOT_FOUND"
+                continue
 
-        if not target_offer:
-            print(f"  [WARN] {coupon_info['name']} 상품권 1달 미경과")
-            vouchers = get_account_vouchers(access_token)
-            coupon_list = parse_vouchers(vouchers)
-            print(f"  현재 보유 쿠폰: {len(coupon_list)}개")
-            return {
-                "success": False,
-                "error": "COOLDOWN_PERIOD",
-                "message": "1달 미경과",
-                "remaining_points": current_points,
-                "vouchers": coupon_list,
-                **account_info
-            }
+            target_offer = find_voucher_offer(offers, ct_info['value'])
 
-        print(f"  상품권 발견: {target_offer['name']}")
-        print(f"  offerId: {target_offer['offerId']}, rewardId: {target_offer['rewardId']}")
-        print(f"  필요 포인트: {target_offer['priceInPoints']}P")
-        print(f"  교환 가능: {target_offer['eligible']}")
+            if not target_offer:
+                print(f"  [WARN] {ct_info['name']} 상품권 1달 미경과")
+                all_results.append({"coupon_type": ct, "success": False, "error": "COOLDOWN_PERIOD", "message": "1달 미경과"})
+                last_error = "COOLDOWN_PERIOD"
+                continue
 
-        if not target_offer['eligible']:
-            reasons = target_offer.get('eligibilityReasons', [])
-            if reasons:
-                reason_parts = []
-                for r in reasons:
-                    if isinstance(r, dict):
-                        reason_parts.append(r.get('reason', r.get('message', str(r))))
-                    else:
-                        reason_parts.append(str(r))
-                reason_str = ', '.join(reason_parts)
-            else:
-                reason_str = '알 수 없음'
-            print(f"  [ERROR] 교환 불가: {reason_str}")
+            print(f"  상품권 발견: {target_offer['name']}")
+            print(f"  필요 포인트: {target_offer['priceInPoints']}P")
 
-            if current_points < target_offer['priceInPoints']:
-                return {
-                    "success": False,
-                    "error": "INSUFFICIENT_POINTS",
-                    "current_points": current_points,
-                    "required_points": target_offer['priceInPoints'],
-                    "remaining_points": current_points,
-                    **account_info
-                }
-            return {
-                "success": False,
-                "error": f"NOT_ELIGIBLE:{reason_str}",
-                "remaining_points": current_points,
-                **account_info
-            }
+            if not target_offer['eligible']:
+                reasons = target_offer.get('eligibilityReasons', [])
+                reason_str = ', '.join(
+                    r.get('reason', r.get('message', str(r))) if isinstance(r, dict) else str(r)
+                    for r in reasons
+                ) if reasons else '알 수 없음'
+                print(f"  [ERROR] 교환 불가: {reason_str}")
+                if current_points < target_offer['priceInPoints']:
+                    all_results.append({"coupon_type": ct, "success": False, "error": "INSUFFICIENT_POINTS"})
+                    last_error = "INSUFFICIENT_POINTS"
+                else:
+                    all_results.append({"coupon_type": ct, "success": False, "error": f"NOT_ELIGIBLE:{reason_str}"})
+                    last_error = f"NOT_ELIGIBLE:{reason_str}"
+                continue
 
-        print("  쿠폰 발급 API 호출 중...")
-        claim_result = claim_voucher(access_token, target_offer['offerId'], target_offer['rewardId'])
+            print("  쿠폰 발급 API 호출 중...")
+            claim_result = claim_voucher(access_token, target_offer['offerId'], target_offer['rewardId'])
 
-        if not claim_result['success']:
-            error_msg = claim_result.get('error', 'UNKNOWN_ERROR')
-            print(f"  [ERROR] 쿠폰 발급 실패: {error_msg}")
-            return {"success": False, "error": f"CLAIM_FAILED:{error_msg}", "remaining_points": current_points, **account_info}
+            if not claim_result['success']:
+                error_msg = claim_result.get('error', 'UNKNOWN_ERROR')
+                print(f"  [ERROR] 쿠폰 발급 실패: {error_msg}")
+                all_results.append({"coupon_type": ct, "success": False, "error": f"CLAIM_FAILED:{error_msg}"})
+                last_error = f"CLAIM_FAILED:{error_msg}"
+                continue
 
-        claim_data = claim_result.get('data', {})
-        coupon_code = claim_data.get('code', '')
-        print(f"  쿠폰 발급 성공!")
-        print(f"  쿠폰 코드: {coupon_code}")
+            claim_data = claim_result.get('data', {})
+            coupon_code = claim_data.get('code', '')
+            print(f"  쿠폰 발급 성공! 코드: {coupon_code}")
+            all_results.append({"coupon_type": ct, "success": True, "code": coupon_code})
+            time.sleep(2)
 
-        time.sleep(2)
         new_points = get_account_points(access_token)
         vouchers = get_account_vouchers(access_token)
         coupon_list = parse_vouchers(vouchers)
@@ -556,22 +546,33 @@ def web_login_and_issue_coupon(email: str, password: str, coupon_type: str, inco
         points_used = current_points - new_points
 
         print("\n" + "=" * 60)
-        print(f"쿠폰 발급 완료! [Playwright]")
-        print(f"  발급 쿠폰: {coupon_info['name']}")
-        print(f"  쿠폰 코드: {coupon_code}")
-        print(f"  사용 포인트: {points_used}P")
+        # 결과 정리
+        any_success = any(r['success'] for r in all_results)
+        success_types = [r for r in all_results if r['success']]
+        fail_types = [r for r in all_results if not r['success']]
+
+        points_used = current_points - new_points if 'current_points' in dir() else 0
+
+        print(f"\n쿠폰 발급 완료! [Playwright]")
+        for r in all_results:
+            ct_name = COUPON_TYPES.get(r['coupon_type'], {}).get('name', r['coupon_type'])
+            if r['success']:
+                print(f"  [OK] {ct_name}: {r.get('code', '')}")
+            else:
+                print(f"  [FAIL] {ct_name}: {r.get('error', '')}")
         print(f"  잔여 포인트: {new_points}P")
         print(f"  보유 쿠폰: {len(coupon_list)}개")
         print("=" * 60)
 
         return {
-            "success": True,
+            "success": any_success,
             "coupon_type": coupon_type,
-            "coupon_name": coupon_info['name'],
-            "coupon_code": coupon_code,
-            "points_used": points_used,
+            "coupon_name": ', '.join(COUPON_TYPES[r['coupon_type']]['name'] for r in success_types) if success_types else coupon_info['name'],
+            "coupon_code": success_types[-1]['code'] if success_types else '',
             "remaining_points": new_points,
             "vouchers": coupon_list,
+            "all_results": all_results,
+            "error": last_error if not any_success else None,
             **account_info
         }
 

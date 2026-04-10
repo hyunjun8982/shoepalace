@@ -5,6 +5,7 @@
 // ========== 모니터링 팝업 ==========
 
 async function openMonitor(type, title, accounts) {
+    state._libraryMissingNotified = false;
     state.monitor = {
         active: true,
         type,
@@ -172,6 +173,25 @@ async function pollMonitorStatus() {
             }
         });
 
+        // LIBRARY_MISSING 감지 시 자동 설치 시작 (1회만, 이미 설치 완료면 서버 환경 갱신만)
+        if (hasChanges && !state._libraryMissingNotified) {
+            const hasMissing = state.monitor.items.some(i =>
+                i.message && (i.message.includes('설치 필요') || i.message.includes('LIBRARY_MISSING'))
+            );
+            if (hasMissing) {
+                state._libraryMissingNotified = true;
+                if (installStatus.playwright) {
+                    // 이미 설치됐는데 LIBRARY_MISSING → 서버 환경 갱신
+                    notifyWarning('서버 환경을 갱신합니다. 잠시 후 다시 시도하세요.');
+                    api('/refresh-env', { method: 'POST' }).catch(() => {});
+                } else {
+                    state.showInstallPanel = true;
+                    notifyWarning('웹크롤러가 설치되어 있지 않습니다. 자동 설치를 시작합니다.');
+                    setTimeout(() => runInstaller('playwright'), 500);
+                }
+            }
+        }
+
         // 팝업이 활성 상태이고 변경사항이 있을 때만 렌더링
         if (state.monitor.active && hasChanges) {
             // 스크롤 위치 저장 후 렌더링, 복원
@@ -273,24 +293,37 @@ async function retrySelectedItems() {
     const type = state.monitor.type;
     const title = state.monitor.title;
 
-    // 모니터 닫기
-    closeMonitor();
-
-    // 타입에 따라 재처리
     if (type === 'extract') {
+        // 모니터를 선택된 항목만으로 재구성
+        state.monitor.items = accounts.map(acc => ({
+            id: acc.id,
+            email: acc.email,
+            status: 'waiting',
+            message: '대기 중',
+            startTime: null,
+            endTime: null,
+        }));
+        state.monitor.selectedIds = new Set();
+        state.monitor.startTime = new Date();
+        state.monitor.title = `${title} (재처리)`;
+        render();
+
         try {
-            const response = await api('/extract/bulk', {
+            await api('/extract/bulk', {
                 method: 'POST',
                 body: { ids: selectedIds }
             });
-            if (response.message) {
-                await openMonitor('extract', `${title} (재처리)`, accounts);
-            }
         } catch (error) {
             notifyError('재처리 시작 실패: ' + error.message);
         }
     } else if (type === 'issue') {
+        // 발급: 선택된 항목만 메인 selectedIds에 설정 후 모달
+        closeMonitor();
         state.selectedIds = new Set(selectedIds);
+        state.bulkIssueAllActive = false;
+        state.selectedIssueCouponTypes = [];
+        state.issueCouponQuantity = { '100000': 1, '100000_promo': 0 };
+        initBulkPromoQuantity(false);
         state.modal = 'issue-coupon';
         render();
     }

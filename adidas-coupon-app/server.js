@@ -11,6 +11,37 @@ const os = require('os');
 const WebSocket = require('ws');
 
 // 쓰기 가능한 임시 폴더 경로 (app.asar 외부)
+// 프록시 목록에서 계정에 할당할 프록시를 가져옴 (라운드로빈)
+let proxyListCache = null;
+let proxyIndexCounter = 0;
+function loadProxyList() {
+    const filePath = getProxyFilePath();
+    try {
+        if (fs.existsSync(filePath)) {
+            proxyListCache = fs.readFileSync(filePath, 'utf-8').split('\n').map(l => l.trim()).filter(Boolean);
+        } else {
+            proxyListCache = [];
+        }
+    } catch { proxyListCache = []; }
+    return proxyListCache;
+}
+function getProxyForAccount() {
+    if (!proxyListCache || proxyListCache.length === 0) loadProxyList();
+    if (!proxyListCache || proxyListCache.length === 0) return null;
+    const proxy = proxyListCache[proxyIndexCounter % proxyListCache.length];
+    proxyIndexCounter++;
+    return proxy;
+}
+
+function getProxyFilePath() {
+    // 배포 환경: __dirname이 app.asar 안이면 resources/ 사용 (asar는 쓰기 불가)
+    if (__dirname.includes('app.asar') && process.resourcesPath) {
+        return path.join(process.resourcesPath, 'proxy_list.txt');
+    }
+    // 개발 환경
+    return path.join(__dirname, 'proxy_list.txt');
+}
+
 function getWritableTempDir() {
     // 1. 우선 process.resourcesPath 사용 (Electron 패키징 시)
     if (process.resourcesPath && !process.resourcesPath.includes('app.asar')) {
@@ -504,9 +535,53 @@ async function initDB() {
         // 컬럼 자동 추가 (없으면)
         await pool.query(`ALTER TABLE adidas_accounts ADD COLUMN IF NOT EXISTS adiclub_level TEXT`).catch(() => {});
         await pool.query(`ALTER TABLE adidas_accounts ADD COLUMN IF NOT EXISTS proxy_url TEXT`).catch(() => {});
+        // 조회이력 테이블
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS account_fetch_history (
+                id SERIAL PRIMARY KEY,
+                account_id UUID NOT NULL,
+                fetch_type VARCHAR(20) DEFAULT 'extract',
+                status VARCHAR(20) DEFAULT 'success',
+                message TEXT,
+                fetched_at TIMESTAMP DEFAULT NOW()
+            )
+        `).catch(e => addLog(`[DB] account_fetch_history 테이블 생성 오류: ${e.message}`));
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_afh_account ON account_fetch_history(account_id)`).catch(() => {});
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_afh_fetched ON account_fetch_history(fetched_at)`).catch(() => {});
+        addLog('[DB] account_fetch_history 테이블 확인 완료');
+
+        // 기존 "10만원권✓ 10만원권✓ ..." 패턴을 "프로모션 10만원권 N장 발급"으로 변환
+        try {
+            const rows = await pool.query(`SELECT id, web_issue_status FROM adidas_accounts WHERE web_issue_status LIKE '%10만원권✓%10만원권✓%'`);
+            for (const row of rows.rows) {
+                const status = row.web_issue_status;
+                const match = status.match(/(10만원권✓\s*)+/);
+                if (match) {
+                    const count = (match[0].match(/10만원권✓/g) || []).length;
+                    if (count >= 2) {
+                        const newStatus = status.replace(match[0], `프로모션 10만원권 ${count}장 발급 `).replace(/\s+/g, ' ').trim();
+                        await pool.query('UPDATE adidas_accounts SET web_issue_status = $1 WHERE id = $2', [newStatus, row.id]);
+                    }
+                }
+            }
+            if (rows.rows.length > 0) addLog(`[DB] ${rows.rows.length}개 계정 발급 상태 메시지 변환 완료`);
+        } catch (e) { /* 무시 */ }
     } catch (err) {
         addLog(`[DB] PostgreSQL 연결 실패: ${err.message}`);
         throw err;
+    }
+}
+
+// 조회 이력 기록
+async function recordFetchHistory(accountId, fetchType, status, message) {
+    try {
+        const proxyTag = useProxyFlag ? ' [프록시]' : '';
+        await runQuery(
+            'INSERT INTO account_fetch_history (account_id, fetch_type, status, message) VALUES ($1, $2, $3, $4)',
+            [accountId, fetchType, status, (message || '') + proxyTag]
+        );
+    } catch (e) {
+        addLog(`[이력기록 오류] ${e.message} (accountId=${accountId}, type=${fetchType})`);
     }
 }
 
@@ -554,11 +629,56 @@ function getNowTime() {
 
 // ========== 계정 API ==========
 
-// 계정 목록 조회
+// 계정 목록 조회 (1주 조회횟수 포함)
 app.get('/api/accounts', async (req, res) => {
     try {
         const accounts = await query('SELECT * FROM adidas_accounts ORDER BY created_at DESC');
+        // 1주 조회횟수 별도 쿼리 (테이블 없을 경우 대비)
+        try {
+            const weekCounts = await query(`
+                SELECT account_id, COUNT(*) AS cnt
+                FROM account_fetch_history
+                WHERE fetched_at >= NOW() - INTERVAL '7 days'
+                GROUP BY account_id
+            `);
+            const countMap = new Map(weekCounts.map(r => [r.account_id, parseInt(r.cnt)]));
+            accounts.forEach(a => { a.fetch_count_week = countMap.get(a.id) || 0; });
+        } catch (e) {
+            accounts.forEach(a => { a.fetch_count_week = 0; });
+        }
         res.json(accounts);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 계정별 조회 이력
+app.get('/api/accounts/:id/fetch-history', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const history = await query(
+            'SELECT id, fetch_type, status, message, fetched_at FROM account_fetch_history WHERE account_id = $1 ORDER BY fetched_at DESC LIMIT 200',
+            [id]
+        );
+        const stats = await queryOne(`
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE fetched_at >= NOW() - INTERVAL '30 days') AS month_count,
+                COUNT(*) FILTER (WHERE fetched_at >= NOW() - INTERVAL '7 days') AS week_count
+            FROM account_fetch_history WHERE account_id = $1
+        `, [id]);
+        res.json({ history, stats: { total: parseInt(stats.total), month: parseInt(stats.month_count), week: parseInt(stats.week_count) } });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 조회 이력 건별 삭제
+app.delete('/api/fetch-history/:historyId', async (req, res) => {
+    try {
+        const { historyId } = req.params;
+        await runQuery('DELETE FROM account_fetch_history WHERE id = $1', [historyId]);
+        res.json({ success: true });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -718,9 +838,18 @@ app.post('/api/accounts/:id/voucher-sale', async (req, res) => {
         }
 
         const vouchers = JSON.parse(account.owned_vouchers);
-        if (voucher_index >= 0 && voucher_index < vouchers.length) {
+        const { voucher_code } = req.body;
+        let updated = false;
+        if (voucher_code) {
+            // 코드로 매칭 (정확)
+            const target = vouchers.find(v => v.code === voucher_code);
+            if (target) { target.sold = sold; target.sold_to = sold_to || ''; updated = true; }
+        }
+        if (!updated && voucher_index >= 0 && voucher_index < vouchers.length) {
+            // 폴백: 인덱스로 매칭
             vouchers[voucher_index].sold = sold;
             vouchers[voucher_index].sold_to = sold_to || '';
+            updated = true;
         }
 
         await runQuery('UPDATE adidas_accounts SET owned_vouchers = $1, updated_at = NOW() WHERE id = $2', [JSON.stringify(vouchers), id]);
@@ -743,7 +872,13 @@ app.post('/api/accounts/:id/voucher-memo', async (req, res) => {
         }
 
         const vouchers = JSON.parse(account.owned_vouchers);
-        if (voucher_index >= 0 && voucher_index < vouchers.length) {
+        const { voucher_code } = req.body;
+        let updated = false;
+        if (voucher_code) {
+            const target = vouchers.find(v => v.code === voucher_code);
+            if (target) { target.sold_to = sold_to || ''; updated = true; }
+        }
+        if (!updated && voucher_index >= 0 && voucher_index < vouchers.length) {
             vouchers[voucher_index].sold_to = sold_to || '';
         }
 
@@ -760,7 +895,7 @@ app.post('/api/accounts/:id/voucher-memo', async (req, res) => {
 // 프록시 목록 조회
 app.get('/api/proxy/list', async (req, res) => {
     try {
-        const proxyFile = path.join(__dirname, 'proxy_list.txt');
+        const proxyFile = getProxyFilePath();
         if (!fs.existsSync(proxyFile)) return res.json({ proxies: [] });
         const content = fs.readFileSync(proxyFile, 'utf-8');
         const proxies = content.split('\n').map(l => l.trim()).filter(Boolean);
@@ -773,7 +908,7 @@ app.post('/api/proxy/save', async (req, res) => {
     try {
         const { proxies } = req.body; // 줄바꿈 구분 문자열 또는 배열
         const content = Array.isArray(proxies) ? proxies.join('\n') : proxies;
-        fs.writeFileSync(path.join(__dirname, 'proxy_list.txt'), content, 'utf-8');
+        fs.writeFileSync(getProxyFilePath(), content, 'utf-8');
         const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
         res.json({ success: true, count: lines.length });
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -782,7 +917,7 @@ app.post('/api/proxy/save', async (req, res) => {
 // 프록시 자동 배정 (미배정 계정에 라운드로빈)
 app.post('/api/proxy/assign', async (req, res) => {
     try {
-        const proxyFile = path.join(__dirname, 'proxy_list.txt');
+        const proxyFile = getProxyFilePath();
         if (!fs.existsSync(proxyFile)) return res.status(400).json({ error: '프록시 목록 파일이 없습니다' });
         const proxies = fs.readFileSync(proxyFile, 'utf-8').split('\n').map(l => l.trim()).filter(Boolean);
         if (proxies.length === 0) return res.status(400).json({ error: '프록시 목록이 비어있습니다' });
@@ -791,13 +926,16 @@ app.post('/api/proxy/assign', async (req, res) => {
         const unassigned = await query("SELECT id FROM adidas_accounts WHERE proxy_url IS NULL OR proxy_url = '' ORDER BY id");
         if (unassigned.length === 0) return res.json({ success: true, assigned: 0, message: '모든 계정에 프록시가 배정되어 있습니다' });
 
-        let assigned = 0;
-        for (let i = 0; i < unassigned.length; i++) {
-            const proxy = proxies[i % proxies.length];
-            await runQuery('UPDATE adidas_accounts SET proxy_url = $1 WHERE id = $2', [proxy, unassigned[i].id]);
-            assigned++;
+        // CASE WHEN으로 한번에 배치 UPDATE (UUID는 따옴표 필요)
+        // 1000개 이상이면 500개씩 분할
+        const BATCH_SIZE = 500;
+        for (let start = 0; start < unassigned.length; start += BATCH_SIZE) {
+            const batch = unassigned.slice(start, start + BATCH_SIZE);
+            const cases = batch.map((acc, i) => `WHEN id = '${acc.id}' THEN '${proxies[(start + i) % proxies.length]}'`).join(' ');
+            const ids = batch.map(a => `'${a.id}'`).join(',');
+            await runQuery(`UPDATE adidas_accounts SET proxy_url = CASE ${cases} END WHERE id IN (${ids})`);
         }
-        res.json({ success: true, assigned, totalProxies: proxies.length });
+        res.json({ success: true, assigned: unassigned.length, totalProxies: proxies.length });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -824,10 +962,32 @@ app.get('/api/proxy/status', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// 서버 환경 갱신 + Playwright 설치 확인
+app.post('/api/refresh-env', (req, res) => {
+    cachedPythonPath = null; // Python 경로 캐시 초기화
+    const pythonPath = getPythonPath();
+    if (!pythonPath) {
+        return res.json({ success: false, error: 'Python을 찾을 수 없습니다' });
+    }
+    // Playwright import 테스트
+    const { spawnSync } = require('child_process');
+    const testResult = spawnSync(pythonPath, ['-c', 'import playwright; print("OK")'], {
+        timeout: 10000,
+        encoding: 'utf-8',
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
+    });
+    const playwrightOk = testResult.status === 0 && (testResult.stdout || '').includes('OK');
+    addLog(`[환경갱신] Python: ${pythonPath}, Playwright: ${playwrightOk ? 'OK' : 'FAIL'}`);
+    res.json({ success: true, python: pythonPath, playwright: playwrightOk });
+});
+
 // ========== Appium 자동화 API ==========
 
 // 현재 사용 모드 - 정보조회와 쿠폰발급 모두 이 모드 사용 (기본값: Playwright 백그라운드+시크릿)
 let extractMode = 'playwright_incognito';
+
+// 프록시 사용 여부 (사용자별로 API 호출 시 전달됨)
+let useProxyFlag = false;
 
 // 계정 간 대기시간 (초) - IP 레이트 리밋 방지용
 let accountDelaySec = 10;
@@ -942,16 +1102,21 @@ app.post('/api/extract-mode', (req, res) => {
 
 // 일괄 정보 추출 (반드시 /api/extract/:id 앞에 위치해야 함!)
 app.post('/api/extract/bulk', async (req, res) => {
-    const { ids, actionBy } = req.body;
+    const { ids, actionBy, useProxy } = req.body;
 
     // 작업자 기록
-    console.log('[Extract] actionBy:', actionBy, 'ids count:', ids?.length);
+    console.log('[Extract] actionBy:', actionBy, 'useProxy:', useProxy, 'ids count:', ids?.length);
     if (actionBy && ids && ids.length > 0) {
         const ph = ids.map((_, i) => `$${i + 2}`).join(',');
         pool.query(`UPDATE adidas_accounts SET last_action_by = $1, last_action_type = '조회', last_action_at = NOW() WHERE id IN (${ph})`, [actionBy, ...ids])
             .then(r => console.log('[Extract] Action by updated:', r.rowCount, 'rows'))
             .catch(e => console.error('[Extract] Action by update failed:', e.message));
     }
+
+    // 프록시 사용 여부 저장
+    useProxyFlag = useProxy === true;
+    if (useProxyFlag) { loadProxyList(); proxyIndexCounter = 0; }
+    addLog(`[추출] 프록시 모드: ${useProxyFlag ? 'ON (' + (proxyListCache?.length || 0) + '개)' : 'OFF'}`);
 
     try {
         if (!ids || !Array.isArray(ids) || ids.length === 0) {
@@ -1037,7 +1202,7 @@ app.post('/api/extract/:id', async (req, res) => {
             pythonArgs = ['-u', scriptPath, '--mode', scriptMode, '--id', id.toString()];
             if (extractMode.includes('incognito')) pythonArgs.push('--incognito');
             if (extractMode.includes('headless')) pythonArgs.push('--headless');
-            if (account.proxy_url) pythonArgs.push('--proxy', account.proxy_url);
+            if (useProxyFlag) { const px = getProxyForAccount(); if (px) pythonArgs.push('--proxy', px); }
             pythonArgs.push('--', account.email, account.password);
         } else {
             pythonArgs = ['-u', scriptPath, account.email, account.password];
@@ -1227,6 +1392,7 @@ app.post('/api/extract/:id', async (req, res) => {
                         ]).catch(e => addLog(`[DB 오류] ${e.message}`));
                     }
                     addLog(`[추출] 성공 완료 - ${account.email}, extractMode=${extractMode}`);
+                    recordFetchHistory(id, 'extract', 'success', successStatus);
                     updateProgress(id, 'extract', 'success', successStatus);
                 }
             } else {
@@ -1273,6 +1439,7 @@ app.post('/api/extract/:id', async (req, res) => {
                 } else if (stdout.includes('[ERROR] PASSWORD_WRONG') || stdout.includes('잘못된 이메일/비밀번호')) {
                     errorMsg = `${modeLabel} 비밀번호 틀림 ${getNowTime()}`;
                     addLog(`[추출] 실패 - ${account.email}: ${errorMsg}`);
+                    recordFetchHistory(id, 'extract', 'error', errorMsg);
                     runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [errorMsg, id]).catch(e => addLog(`[DB 오류] ${e.message}`));
                     updateProgress(id, 'extract', 'password_wrong', errorMsg);
                     return;
@@ -1290,6 +1457,7 @@ app.post('/api/extract/:id', async (req, res) => {
                     errorMsg = `${modeLabel} 알 수 없는 오류 ${getNowTime()}`;
                 }
                 addLog(`[추출] 실패 - ${account.email}: ${errorMsg}`);
+                recordFetchHistory(id, 'extract', 'error', errorMsg);
                 runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [errorMsg, id]).catch(e => addLog(`[DB 오류] ${e.message}`));
                 updateProgress(id, 'extract', 'error', errorMsg);
             }
@@ -1317,6 +1485,8 @@ async function processAccountsSequentially(accounts) {
 
     const IP_BLOCK_WAIT = 60000; // IP 차단 시 60초 대기
     const IP_BLOCK_MAX_RETRIES = 3; // 최대 재시도 횟수
+    const CONSECUTIVE_ERROR_LIMIT = 3; // 연속 오류 N회 시 중단
+    let consecutiveErrors = 0;
 
     try {
         for (let i = 0; i < accounts.length; i++) {
@@ -1332,15 +1502,21 @@ async function processAccountsSequentially(accounts) {
 
             let result = await extractAccountInfo(account);
 
-            // 봇 차단 감지 시 즉시 중지
-            if (result && result.botBlocked) {
-                addLog(`[일괄추출] 봇 차단 감지 - 남은 계정 일괄 중지`);
-                for (let j = i + 1; j < accounts.length; j++) {
-                    const skipMsg = `봇 차단으로 중지됨 ${getNowTime()}`;
-                    updateProgress(accounts[j].id, 'extract', 'error', skipMsg);
-                    runQuery('UPDATE adidas_accounts SET web_fetch_status = $1, updated_at = NOW() WHERE id = $2', [skipMsg, accounts[j].id]).catch(() => {});
+            // 연속 오류 카운트 (봇 차단 포함)
+            const isError = (result && result.botBlocked) || (result && result.error) || !result;
+            if (isError) {
+                consecutiveErrors++;
+                if (consecutiveErrors >= CONSECUTIVE_ERROR_LIMIT) {
+                    addLog(`[일괄추출] ${CONSECUTIVE_ERROR_LIMIT}회 연속 오류 발생 - 남은 계정 일괄 중지`);
+                    for (let j = i + 1; j < accounts.length; j++) {
+                        const skipMsg = `연속 오류로 중지됨 ${getNowTime()}`;
+                        updateProgress(accounts[j].id, 'extract', 'error', skipMsg);
+                        runQuery('UPDATE adidas_accounts SET web_fetch_status = $1, updated_at = NOW() WHERE id = $2', [skipMsg, accounts[j].id]).catch(() => {});
+                    }
+                    break;
                 }
-                break;
+            } else {
+                consecutiveErrors = 0;
             }
 
             // IP 차단 시 대기 후 재시도
@@ -1627,6 +1803,7 @@ async function processBatchResult(result, modeLabel, statusColumn) {
         `, [name, phone, barcode, points, voucherData, successStatus, accountId, level]);
 
         addLog(`[배치추출] ${email} - 조회 완료 (이름: ${name}, 바코드: ${barcode}, 포인트: ${points})`);
+        recordFetchHistory(accountId, 'extract', 'success', successStatus);
         updateProgress(accountId, 'extract', 'success', successStatus);
     } else {
         // 실패
@@ -1652,6 +1829,7 @@ async function processBatchResult(result, modeLabel, statusColumn) {
         }
 
         addLog(`[배치추출] ${email} - ${errorMsg}`);
+        recordFetchHistory(accountId, 'extract', 'error', errorMsg);
         await runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [errorMsg, accountId]);
         updateProgress(accountId, 'extract', progressStatus, errorMsg);
     }
@@ -1692,7 +1870,7 @@ function extractAccountInfo(account) {
             pythonArgs = ['-u', scriptPath, '--mode', scriptMode, '--id', account.id.toString()];
             if (extractMode.includes('incognito')) pythonArgs.push('--incognito');
             if (extractMode.includes('headless')) pythonArgs.push('--headless');
-            if (account.proxy_url) pythonArgs.push('--proxy', account.proxy_url);
+            if (useProxyFlag) { const px = getProxyForAccount(); if (px) pythonArgs.push('--proxy', px); }
             pythonArgs.push('--', account.email, account.password);
         } else {
             pythonArgs = ['-u', scriptPath, account.email, account.password];
@@ -1776,6 +1954,7 @@ function extractAccountInfo(account) {
             if (isIpBlocked) {
                 const ipBlockMsg = `${modeLabel} IP 차단 (Access Denied) ${getNowTime()}`;
                 addLog(`[일괄추출] ${account.email} - IP 차단됨 (Access Denied)`);
+                recordFetchHistory(account.id, 'extract', 'error', ipBlockMsg);
                 runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [ipBlockMsg, account.id]).catch(e => addLog(`[DB 오류] ${e.message}`));
                 updateProgress(account.id, 'extract', 'error', ipBlockMsg);
                 resolve({ ipBlocked: true });
@@ -1857,6 +2036,7 @@ function extractAccountInfo(account) {
                         ]).catch(e => addLog(`[DB 오류] ${e.message}`));
                     }
                     addLog(`[일괄추출] ${account.email} - 조회 완료`);
+                    recordFetchHistory(account.id, 'extract', 'success', successStatus);
                     updateProgress(account.id, 'extract', 'success', successStatus);
                 }
             } else {
@@ -1900,7 +2080,7 @@ function extractAccountInfo(account) {
                 } else if (isPasswordError) {
                     errorMsg = `${modeLabel} 비밀번호 틀림 ${getNowTime()}`;
                     addLog(`[일괄추출] ${account.email} - 비밀번호 틀림`);
-                    // 비밀번호 오류는 별도 상태로 처리 (취합용)
+                    recordFetchHistory(account.id, 'extract', 'error', errorMsg);
                     runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [errorMsg, account.id]).catch(e => addLog(`[DB 오류] ${e.message}`));
                     updateProgress(account.id, 'extract', 'password_wrong', errorMsg);
                     resolve();
@@ -1911,6 +2091,7 @@ function extractAccountInfo(account) {
                     const botBlockMsg = botBlockMatch ? botBlockMatch[1].trim() : '';
                     errorMsg = botBlockMsg ? `${modeLabel} 차단 의심 : ${botBlockMsg} ${getNowTime()}` : `${modeLabel} 차단 의심 ${getNowTime()}`;
                     addLog(`[일괄추출] ${account.email} - 차단 의심${botBlockMsg ? ': ' + botBlockMsg : ''}`);
+                    recordFetchHistory(account.id, 'extract', 'error', errorMsg);
                     runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [errorMsg, account.id]).catch(e => addLog(`[DB 오류] ${e.message}`));
                     updateProgress(account.id, 'extract', 'error', errorMsg);
                     resolve({ botBlocked: true });
@@ -1925,6 +2106,7 @@ function extractAccountInfo(account) {
                     errorMsg = `${modeLabel} 알 수 없는 오류 ${getNowTime()}`;
                     addLog(`[일괄추출] ${account.email} - 알 수 없는 오류`);
                 }
+                recordFetchHistory(account.id, 'extract', 'error', errorMsg);
                 runQuery(`UPDATE adidas_accounts SET ${statusColumn} = $1, updated_at = NOW() WHERE id = $2`, [errorMsg, account.id]).catch(e => addLog(`[DB 오류] ${e.message}`));
                 updateProgress(account.id, 'extract', 'error', errorMsg);
             }
@@ -2109,7 +2291,9 @@ function getIssueCouponMobileScriptPath() {
 
 // 쿠폰 일괄 발급 (반드시 단건 발급보다 먼저 정의해야 함 - Express 라우팅 순서)
 app.post('/api/issue-coupon/bulk', async (req, res) => {
-    const { ids, coupon_type, coupon_types, mode, actionBy } = req.body;
+    const { ids, coupon_type, coupon_types, promo_quantities, mode, actionBy, useProxy } = req.body;
+    useProxyFlag = useProxy === true;
+    if (useProxyFlag) { loadProxyList(); proxyIndexCounter = 0; }
 
     // 작업자 기록
     if (actionBy && ids && ids.length > 0) {
@@ -2128,7 +2312,10 @@ app.post('/api/issue-coupon/bulk', async (req, res) => {
             targetCouponTypes = coupon_types;
         } else if (coupon_type) {
             targetCouponTypes = [coupon_type];
-        } else {
+        }
+        // 프로모션만 선택한 경우도 허용 (promo_quantities가 있으면 OK)
+        const hasPromo = promo_quantities && typeof promo_quantities === 'object' && Object.values(promo_quantities).some(v => v > 0);
+        if (targetCouponTypes.length === 0 && !hasPromo) {
             return res.status(400).json({ error: '쿠폰 타입을 선택해주세요' });
         }
 
@@ -2163,7 +2350,8 @@ app.post('/api/issue-coupon/bulk', async (req, res) => {
             '50000': '5만원권',
             '100000': '10만원권'
         };
-        const couponTypesStr = targetCouponTypes.map(ct => couponNames[ct] || `${ct}원`).join(', ');
+        const baseStr = targetCouponTypes.map(ct => couponNames[ct] || `${ct}원`).join(', ');
+        const couponTypesStr = baseStr + (hasPromo ? (baseStr ? ' + ' : '') + '프로모션 10만원' : '') || '쿠폰';
 
         const modeLabels = { web: '[웹]', web_incognito: '[웹(시크릿)]', mobile: '[모바일]', hybrid: '[웹+모바일]', playwright: '[Playwright]', playwright_incognito: '[Playwright(시크릿)]', playwright_headless: '[PW백그라운드]', playwright_headless_incognito: '[PW백그라운드(시크릿)]' };
         const modeLabel = modeLabels[issueMode] || '[웹]';
@@ -2174,12 +2362,27 @@ app.post('/api/issue-coupon/bulk', async (req, res) => {
         const useIncognito = issueMode.includes('incognito');
         const usePlaywright = issueMode.startsWith('playwright');
         const useHeadless = issueMode.includes('headless');
+
+        // 프로모션 계정별 수량이 있으면 계정별 coupon_types 맵 생성
+        let perAccountCouponTypes = null;
+        if (promo_quantities && typeof promo_quantities === 'object') {
+            perAccountCouponTypes = {};
+            accounts.forEach(acc => {
+                const promoQty = promo_quantities[acc.id] || 0;
+                const types = [...targetCouponTypes];
+                for (let i = 0; i < promoQty; i++) types.push('100000');
+                perAccountCouponTypes[acc.id] = types.join(',');
+            });
+            addLog(`[쿠폰발급] 계정별 프로모션 수량 적용: ${Object.entries(promo_quantities).filter(([,v]) => v > 0).length}개 계정`);
+        }
+
         if (issueMode === 'mobile') {
             processIssueCouponMobileSequentially(accounts, targetCouponTypes);
         } else if (issueMode === 'hybrid') {
-            processIssueCouponHybridSequentially(accounts, targetCouponTypes[0]); // 하이브리드는 아직 단일만 지원
+            processIssueCouponHybridSequentially(accounts, targetCouponTypes[0]);
         } else {
-            processIssueCouponSequentially(accounts, targetCouponTypes[0], useIncognito, usePlaywright, useHeadless); // 웹/Playwright 순차 처리
+            const combinedType = targetCouponTypes.join(',');
+            processIssueCouponSequentially(accounts, combinedType, useIncognito, usePlaywright, useHeadless, perAccountCouponTypes);
         }
     } catch (error) {
         addLog(`[쿠폰발급] 오류: ${error.message}`);
@@ -2244,7 +2447,7 @@ app.post('/api/issue-coupon/:id', async (req, res) => {
         const issueArgs = ['-u', scriptPath];
         if (issueMode.includes('incognito')) issueArgs.push('--incognito');
         if (issueMode.includes('headless')) issueArgs.push('--headless');
-        if (account.proxy_url) issueArgs.push('--proxy', account.proxy_url);
+        if (useProxyFlag) { const px = getProxyForAccount(); if (px) issueArgs.push('--proxy', px); }
         issueArgs.push('--', account.email, account.password, coupon_type);
         const pythonProcess = spawn(pythonPath, issueArgs, {
             env: {
@@ -2408,7 +2611,7 @@ app.post('/api/issue-coupon/:id', async (req, res) => {
     }
 });
 
-async function processIssueCouponSequentially(accounts, coupon_type, useIncognito = false, usePlaywright = false, useHeadless = false) {
+async function processIssueCouponSequentially(accounts, coupon_type, useIncognito = false, usePlaywright = false, useHeadless = false, perAccountCouponTypes = null) {
     // 배치 프로세스 시작 등록 (순차 처리는 process 없이 등록)
     const accountIds = accounts.map(a => a.id);
     const batchLabel = usePlaywright ? 'Playwright' : '웹';
@@ -2416,6 +2619,8 @@ async function processIssueCouponSequentially(accounts, coupon_type, useIncognit
 
     const IP_BLOCK_WAIT = 60000; // IP 차단 시 60초 대기
     const IP_BLOCK_MAX_RETRIES = 3; // 최대 재시도 횟수
+    const CONSECUTIVE_ERROR_LIMIT = 3; // 연속 오류 N회 시 중단
+    let consecutiveErrors = 0;
 
     try {
         for (let i = 0; i < accounts.length; i++) {
@@ -2429,18 +2634,26 @@ async function processIssueCouponSequentially(accounts, coupon_type, useIncognit
                 break;
             }
 
-            let result = await issueCouponForAccount(account, coupon_type, false, useIncognito, usePlaywright, useHeadless);
+            // 계정별 coupon_types가 있으면 해당 계정의 타입 사용
+            const accountCouponType = (perAccountCouponTypes && perAccountCouponTypes[account.id]) || coupon_type;
+            let result = await issueCouponForAccount(account, accountCouponType, false, useIncognito, usePlaywright, useHeadless);
 
-            // 봇 차단 감지 시 즉시 중지 (브라우저 더 이상 띄우지 않음)
+            // 연속 오류 카운트 (봇 차단 포함)
             const isBotBlocked = result && result.error && result.error.startsWith('BOT_BLOCKED');
-            if (isBotBlocked) {
-                addLog(`[일괄발급] 봇 차단 감지 - 남은 계정 일괄 중지`);
-                for (let j = i + 1; j < accounts.length; j++) {
-                    const skipMsg = `봇 차단으로 중지됨 ${getNowTime()}`;
-                    updateProgress(accounts[j].id, 'issue', 'error', skipMsg);
-                    runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [skipMsg, accounts[j].id]).catch(() => {});
+            const isError = isBotBlocked || (result && result.error) || !result;
+            if (isError) {
+                consecutiveErrors++;
+                if (consecutiveErrors >= CONSECUTIVE_ERROR_LIMIT) {
+                    addLog(`[일괄발급] ${CONSECUTIVE_ERROR_LIMIT}회 연속 오류 발생 - 남은 계정 일괄 중지`);
+                    for (let j = i + 1; j < accounts.length; j++) {
+                        const skipMsg = `연속 오류로 중지됨 ${getNowTime()}`;
+                        updateProgress(accounts[j].id, 'issue', 'error', skipMsg);
+                        runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [skipMsg, accounts[j].id]).catch(() => {});
+                    }
+                    break;
                 }
-                break;
+            } else {
+                consecutiveErrors = 0;
             }
 
             // IP 차단 시 대기 후 재시도
@@ -2765,7 +2978,7 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false, useIn
         const issueArgs = ['-u', scriptPath];
         if (useIncognito) issueArgs.push('--incognito');
         if (useHeadless) issueArgs.push('--headless');
-        if (account.proxy_url) issueArgs.push('--proxy', account.proxy_url);
+        if (useProxyFlag) { const px = getProxyForAccount(); if (px) issueArgs.push('--proxy', px); }
         issueArgs.push('--', account.email, account.password, coupon_type);
         const pythonProcess = spawn(pythonPath, issueArgs, {
             env: {
@@ -2782,7 +2995,7 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false, useIn
             stdout += data.toString('utf-8');
         });
 
-        pythonProcess.on('close', (code) => {
+        pythonProcess.on('close', async (code) => {
             // 성공 판정: "상품권 교환 확정하기" 버튼 클릭 후 "완료" 확인
             const confirmButtonSuccess = stdout.includes('상품권 교환 확정하기') &&
                                          (stdout.includes('완료') || stdout.includes('성공'));
@@ -2831,13 +3044,39 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false, useIn
             if (isSuccess) {
                 const newPoints = result.remaining_points || 0;
                 const vouchers = result.vouchers ? JSON.stringify(mergeVouchers(result.vouchers, account.owned_vouchers)) : null;
-                const successMsg = `${webLabel} ${coupon_type}원 발급 완료 ${getNowTime()}`;
+
+                // all_results 분석: 타입별 성공/실패 상세 메시지
+                const couponNames = { '10000': '1만원권', '30000': '3만원권', '50000': '5만원권', '100000': '10만원권' };
+                const allResults = result.all_results || [];
+                let successMsg;
+                if (allResults.length > 1) {
+                    // 같은 타입끼리 그룹핑
+                    const groups = {};
+                    allResults.forEach(r => {
+                        if (!groups[r.coupon_type]) groups[r.coupon_type] = { ok: 0, fail: 0 };
+                        if (r.success) groups[r.coupon_type].ok++; else groups[r.coupon_type].fail++;
+                    });
+                    // 동일 타입 여러장이면 프로모션으로 간주
+                    const parts = Object.entries(groups).map(([ct, g]) => {
+                        const ctName = couponNames[ct] || `${ct}원`;
+                        const isPromo = g.ok + g.fail > 1 && ct === '100000';
+                        const prefix = isPromo ? '프로모션 ' : '';
+                        if (g.fail === 0) return `${prefix}${ctName} ${g.ok}장 발급`;
+                        if (g.ok === 0) return `${prefix}${ctName} ${g.fail}장 실패`;
+                        return `${prefix}${ctName} ${g.ok}장 발급/${g.fail}장 실패`;
+                    });
+                    successMsg = `${webLabel} ${parts.join(', ')} ${getNowTime()}`;
+                } else {
+                    const ctName = result.coupon_name || coupon_type;
+                    successMsg = `${webLabel} ${ctName} 발급 완료 ${getNowTime()}`;
+                }
+
                 const name = result.name || null;
                 const phone = result.phone || null;
                 const barcode = result.barcode || null;
                 const level = result.level || null;
                 // web_issue_status 사용, 쿠폰 목록 + 계정 정보 업데이트
-                runQuery(`
+                await runQuery(`
                     UPDATE adidas_accounts
                     SET current_points = $1,
                         owned_vouchers = COALESCE($2, owned_vouchers),
@@ -2849,7 +3088,20 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false, useIn
                         updated_at = NOW()
                     WHERE id = $4
                 `, [newPoints, vouchers, successMsg, account.id, name, phone, barcode, level]).catch(e => addLog(`[DB오류] ${e.message}`));
-                addLog(`[쿠폰발급] id=${account.id} ✓ ${coupon_type}원 발급완료 (${newPoints}P)`);
+
+                // 상세 로그
+                if (allResults.length > 0) {
+                    allResults.forEach(r => {
+                        const ctName = couponNames[r.coupon_type] || r.coupon_type;
+                        if (r.success) addLog(`[쿠폰발급] id=${account.id} ✓ ${ctName} 발급완료`);
+                        else addLog(`[쿠폰발급] id=${account.id} ✗ ${ctName} 실패: ${r.error || 'unknown'}`);
+                    });
+                    addLog(`[쿠폰발급] id=${account.id} 잔여 ${newPoints}P, 쿠폰 ${result.vouchers?.length || 0}개`);
+                } else {
+                    addLog(`[쿠폰발급] id=${account.id} ✓ ${coupon_type}원 발급완료 (${newPoints}P)`);
+                }
+
+                recordFetchHistory(account.id, 'issue', 'success', successMsg);
                 if (!isHybridMode) {
                     updateProgress(account.id, 'issue', 'success', successMsg);
                 }
@@ -2904,7 +3156,7 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false, useIn
                     const resultPhone = result.phone || null;
                     const resultBarcode = result.barcode || null;
                     const resultLevel = result.level || null;
-                    runQuery(`
+                    await runQuery(`
                         UPDATE adidas_accounts
                         SET current_points = $1,
                             owned_vouchers = COALESCE($2, owned_vouchers),
@@ -2919,9 +3171,10 @@ function issueCouponForAccount(account, coupon_type, isHybridMode = false, useIn
                     const statusIcon = progressStatus === 'warning' ? '!' : '✗';
                     addLog(`[쿠폰발급] id=${account.id} ${statusIcon} ${displayError} (${newPoints}P)`);
                 } else {
-                    runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [errorMsg, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
+                    await runQuery('UPDATE adidas_accounts SET web_issue_status = $1, updated_at = NOW() WHERE id = $2', [errorMsg, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
                     addLog(`[쿠폰발급] id=${account.id} ✗ ${displayError}`);
                 }
+                recordFetchHistory(account.id, 'issue', 'error', errorMsg);
                 if (!isHybridMode) {
                     updateProgress(account.id, 'issue', progressStatus, errorMsg);
                 }
@@ -3285,15 +3538,9 @@ app.post('/api/progress/init', (req, res) => {
         return res.status(400).json({ error: 'ids 배열이 필요합니다' });
     }
 
-    // 이미 진행 중이거나 완료된 상태는 덮어쓰지 않음
-    // (배치 작업이 먼저 시작되어 이미 처리된 경우 보호)
+    // 요청된 ID를 모두 waiting으로 초기화 (재처리 시 이전 상태 제거)
     ids.forEach(id => {
-        const existing = getProgress(id);
-        if (!existing || existing.type !== type) {
-            // 기존 상태가 없거나 다른 타입이면 초기화
-            updateProgress(id, type, 'waiting', '대기 중');
-        }
-        // 이미 해당 타입의 상태가 있으면 유지 (덮어쓰지 않음)
+        updateProgress(id, type, 'waiting', '대기 중');
     });
 
     res.json({ success: true, count: ids.length });
@@ -3496,7 +3743,8 @@ app.get('/api/logs/file', (req, res) => {
 
 // ========== Google Sheets 연동 ==========
 
-const { google } = require('googleapis');
+let google;
+try { google = require('googleapis').google; } catch (e) { google = null; }
 const GSHEETS_CONFIG_PATH = path.join(__dirname, 'google_sheets_config.json');
 
 function loadGSheetsConfig() {

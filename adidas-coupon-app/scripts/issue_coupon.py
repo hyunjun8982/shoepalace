@@ -210,6 +210,9 @@ def web_login_and_issue_coupon(email: str, password: str, coupon_type: str, inco
         print("설치: pip install undetected-chromedriver selenium")
         return {"success": False, "error": "LIBRARY_MISSING"}
 
+    # 쉼표 구분 다중 타입 지원: 첫 번째 타입만 사용 (Selenium은 단일 처리)
+    coupon_type = coupon_type.split(',')[0].strip()
+
     if coupon_type not in COUPON_TYPES:
         print(f"잘못된 쿠폰 타입: {coupon_type}")
         print(f"가능한 타입: {', '.join(COUPON_TYPES.keys())}")

@@ -8,7 +8,7 @@ const API_BASE = 'http://localhost:8003/api';
 const DEV_MODE = false;
 
 // 앱 버전
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '2.4.0';
 
 // 바코드 로컬 생성 유틸리티
 function generateBarcodeDataURL(code, opts = {}) {
@@ -58,10 +58,23 @@ function refreshBarcode(el, code) {
 // 현재 로그인 사용자
 let currentUser = JSON.parse(localStorage.getItem('couponAppUser') || 'null');
 
+// 사용자별 프록시 사용 설정
+function getUserProxySetting() {
+    if (!currentUser) return false;
+    return localStorage.getItem(`proxyEnabled_${currentUser.username}`) === 'true';
+}
+function setUserProxySetting(enabled) {
+    if (!currentUser) return;
+    localStorage.setItem(`proxyEnabled_${currentUser.username}`, enabled ? 'true' : 'false');
+}
+
 // 상태 관리
+let proxyListCache = []; // 프록시 목록 캐시
+
 const state = {
     accounts: [],
     selectedIds: new Set(),
+    _lastSelectedId: null, // Shift+클릭 범위 선택용
     searchText: '',
     currentPage: 1,
     pageSize: 20,
@@ -69,6 +82,10 @@ const state = {
     modal: null,
     editingAccount: null,
     extractMode: 'playwright_incognito', // 기본값: Playwright(시크릿)
+    headerDateFilter: null, // 현재 열린 헤더 날짜 필터 ('created', 'couponFetched', 'fetchDate')
+    headerCategoryFilter: null, // 현재 열린 쿠폰 카테고리 필터 ('amount', 'percent')
+    headerStatusFilter: false, // 현재 열린 현황 필터
+    headerMemoFilter: false, // 현재 열린 메모 필터
     accountDelay: 10, // 계정 간 대기시간 (초)
     // 필터링
     openFilterPopover: null, // 현재 열린 필터 팝오버 이름 (null이면 모두 닫힘)
@@ -79,10 +96,17 @@ const state = {
         couponTypes: [], // ['10만원 상품권', '5만원 상품권', ...] - 복수 선택 가능
         hasCoupon: [], // [true], [false], [true, false] - 복수 선택 가능
         excludeSoldCoupon: false, // 사용완료 쿠폰 제외
+        excludeExpiredCoupon: false, // 기간만료 쿠폰 제외
         status: [true], // [true], [false], [true, false] - 기본값: 활성만
         workStatuses: [], // ['completed', 'error', ...] - 복수 선택 가능
         expiringCoupon: false, // 만료 예정 쿠폰 보유 계정만
         has100kCoupon: false, // 10만원 쿠폰 보유 계정만 (통계 카드용)
+        canIssue100k: false, // 10만원권 발급 가능 계정 (이력 있고 30일 경과)
+        noIssue100k: false, // 10만원권 미발급 계정
+        canIssueBirthday: false, // 생일 쿠폰 발급 가능 계정
+        has50kCoupon: false, // 5만원권 보유
+        has15pCoupon: false, // 15% 할인권 보유
+        has20pCoupon: false, // 20% 할인권 보유
         dateBefore: '', // 조회일시 이전 (YYYY-MM-DD)
         dateAfter: '', // 조회일시 이후 (YYYY-MM-DD)
         emailTypes: [], // ['official', 'catchall'] - 복수 선택 가능
@@ -93,6 +117,9 @@ const state = {
         couponFetchedBefore: '', // 쿠폰 발급일 이전 (YYYY-MM-DD)
         barcodeList: '', // 바코드 리스트 필터 (줄바꿈 구분)
         emailList: '', // 이메일 리스트 필터 (줄바꿈 구분)
+        categorySubtypes: { amount: [], percent: [] }, // 카테고리별 쿠폰종류 필터
+        categorySoldTo: { amount: [], percent: [] }, // 카테고리별 메모(판매처) 필터
+        memoValues: [], // 메모 컬럼 필터 값
     },
     // 정렬
     sort: {
@@ -116,6 +143,8 @@ const state = {
     bulkIssueAllActive: false,
     // 발급할 쿠폰 타입 선택 순서 (배열: 선택 순서대로 발급)
     selectedIssueCouponTypes: [],
+    issueCouponQuantity: { '100000': 1 }, // 쿠폰 타입별 발급 수량
+    bulkPromoQuantity: {}, // 일괄 발급 시 계정별 프로모션 수량 { accountId: qty }
     // 설치 패널 표시 여부
     showInstallPanel: false,
     // 배치 작업 상태 (백그라운드 진행 표시용)
@@ -526,8 +555,14 @@ function sortVouchers(vouchers) {
 }
 
 function renderCouponCards(acc, vouchers) {
+    // 쿠폰 렌더링 필터
+    let filtered = vouchers;
+    if (state.filters.excludeSoldCoupon) filtered = filtered.filter(v => !v.sold && !v.deleted_unused);
+    if (state.filters.excludeExpiredCoupon) filtered = filtered.filter(v => !isExpired(v.expiry));
+    if (state.filters.expiringCoupon) filtered = filtered.filter(v => !v.sold && !v.deleted_unused && !isExpired(v.expiry) && isExpiringWithinWeek(v.expiry));
+    if (filtered.length === 0) return '<span style="color:#ccc;">-</span>';
     // 원본 인덱스를 포함하여 정렬
-    const vouchersWithIndex = vouchers.map((v, idx) => ({ ...v, _originalIndex: idx }));
+    const vouchersWithIndex = filtered.map((v, idx) => ({ ...v, _originalIndex: idx }));
     const sortedVouchers = sortVouchers(vouchersWithIndex);
     const hasMultiple = sortedVouchers.length > 1;
     const firstVoucher = sortedVouchers[0];
@@ -540,7 +575,7 @@ function renderCouponCards(acc, vouchers) {
         const couponCode = v.code || '';
         const isExpiringSoon = isExpiringWithinWeek(v.expiry);
         const isCouponExpired = isExpired(v.expiry);
-        // 발급일자: fetched_at 있으면 사용, 없으면 만료일 한달 전 (연도 제외 MM/DD)
+        // 발급일자: fetched_at 있으면 사용, 없으면 만료일 2달 전 (연도 제외 MM/DD)
         let issuedText = '';
         if (v.fetched_at) {
             // [YY-MM-DD HH:MM] → MM/DD
@@ -548,7 +583,7 @@ function renderCouponCards(acc, vouchers) {
             issuedText = m ? m[1] + '/' + m[2] : '';
         } else if (v.expiry && v.expiry !== 'N/A') {
             const ed = new Date(v.expiry);
-            ed.setMonth(ed.getMonth() - 1);
+            ed.setMonth(ed.getMonth() - 2);
             issuedText = String(ed.getMonth()+1).padStart(2,'0') + '/' + String(ed.getDate()).padStart(2,'0');
         }
         let cardClass = 'coupon-card';
@@ -571,8 +606,7 @@ function renderCouponCards(acc, vouchers) {
         if (v.deleted_unused && v.deleted_at) {
             rightContent = '<div class="coupon-card-expiry">' + v.deleted_at.replace(/[\[\]]/g, '') + '</div>';
         } else {
-            rightContent = (issuedText ? '<div class="coupon-card-issued">' + issuedText + '</div>' : '') +
-                (expiryText ? '<div class="coupon-card-expiry">~' + expiryText + '</div>' : '<div class="coupon-card-expiry">-</div>');
+            rightContent = expiryText ? '<div class="coupon-card-expiry">~' + expiryText + '</div>' : '<div class="coupon-card-expiry">-</div>';
         }
 
         return '<div class="' + cardClass + '" ' +
@@ -719,7 +753,15 @@ function pickLatestStatus(webFetchStatus, webIssueStatus) {
         return { parsed: { text: '-', datetime: '', statusType: 'none' }, raw: '' };
     }
 
-    // 진행중은 항상 우선, 그 외에는 발급 > 조회 순
+    // 완료 상태가 있으면 완료 우선 (다른 쪽이 진행중이어도 완료로 표시)
+    const fetchDone = fetchParsed.statusType !== 'none' && fetchParsed.statusType !== 'processing' && fetchParsed.statusType !== 'waiting';
+    const issueDone = issueParsed.statusType !== 'none' && issueParsed.statusType !== 'processing' && issueParsed.statusType !== 'waiting';
+    if (fetchDone || issueDone) {
+        // 둘 다 완료면 최신 것 (발급 우선)
+        if (issueDone) return { parsed: issueParsed, raw: webIssueStatus };
+        return { parsed: fetchParsed, raw: webFetchStatus };
+    }
+    // 진행중 표시
     if (fetchParsed.statusType === 'processing') return { parsed: fetchParsed, raw: webFetchStatus };
     if (issueParsed.statusType === 'processing') return { parsed: issueParsed, raw: webIssueStatus };
     if (issueParsed.statusType !== 'none') return { parsed: issueParsed, raw: webIssueStatus };
@@ -755,15 +797,17 @@ function renderStatusCell(webFetchStatus, webIssueStatus) {
 }
 
 // 조회일시 컬럼 렌더링
-function renderDatetimeCell(webFetchStatus, webIssueStatus) {
-    const { parsed } = pickLatestStatus(webFetchStatus, webIssueStatus);
-    if (!parsed.datetime) return '<span style="color:#999;">-</span>';
-    // "26-03-26 18:21" → 날짜와 시간을 줄바꿈
+function renderDatetimeCell(acc) {
+    const { parsed } = pickLatestStatus(acc.web_fetch_status, acc.web_issue_status || acc.issue_status);
+    const weekCount = acc.fetch_count_week || 0;
+    const countColor = weekCount >= 5 ? '#ef4444' : weekCount >= 3 ? '#f59e0b' : '#3b82f6';
+    const countTag = weekCount > 0 ? `<span style="font-size:9px;font-weight:700;color:${countColor};">(${weekCount}회)</span>` : '';
+    if (!parsed.datetime) return `<div style="text-align:center;cursor:pointer;" onclick="event.stopPropagation();showFetchHistory('${acc.id}')">${countTag || '<span style="color:#999;">-</span>'}</div>`;
     const parts = parsed.datetime.split(' ');
     if (parts.length === 2) {
-        return `<div style="font-size:11px;font-weight:500;color:#333;text-align:center;line-height:1.4;">${parts[0]}<br>${parts[1]}</div>`;
+        return `<div style="font-size:11px;font-weight:500;color:#333;text-align:center;line-height:1.4;cursor:pointer;" onclick="event.stopPropagation();showFetchHistory('${acc.id}')">${parts[0]}<br>${parts[1]} ${countTag}</div>`;
     }
-    return `<span style="font-size:11px;font-weight:500;color:#333;">${parsed.datetime}</span>`;
+    return `<div style="font-size:11px;font-weight:500;color:#333;cursor:pointer;text-align:center;" onclick="event.stopPropagation();showFetchHistory('${acc.id}')">${parsed.datetime}<br>${countTag}</div>`;
 }
 
 
@@ -801,6 +845,11 @@ async function loadAccounts() {
 
     try {
         state.accounts = await api('/accounts');
+        // 프록시 목록도 로드
+        try {
+            const listRes = await fetch(`${API_BASE}/proxy/list`).then(r => r.json());
+            proxyListCache = listRes.proxies || [];
+        } catch {}
     } catch (error) {
         notifyError('계정 목록 로드 실패: ' + error.message);
     }
@@ -1211,7 +1260,7 @@ async function bulkExtract(skipConfirm = false) {
     try {
         await api('/extract/bulk', {
             method: 'POST',
-            body: { ids, actionBy: currentUser?.fullName }
+            body: { ids, actionBy: currentUser?.fullName, useProxy: getUserProxySetting() }
         });
     } catch (error) {
         notifyError('일괄 조회 실패: ' + error.message);
@@ -1224,8 +1273,10 @@ function showIssueCouponModal() {
         notifyWarning('조회할 계정을 선택하세요');
         return;
     }
-    state.selectedIssueCouponTypes = []; // 선택 초기화
+    state.selectedIssueCouponTypes = [];
     state.bulkIssueAllActive = false;
+    state.issueCouponQuantity = { '100000': 1, '100000_promo': 0 };
+    initBulkPromoQuantity(false);
     state.modal = 'issue-coupon';
     render();
 }
@@ -1234,7 +1285,25 @@ function showIssueCouponModal() {
 function showSingleIssueCouponModal(accountId, email) {
     state.singleIssueCouponAccountId = accountId;
     state.singleIssueCouponEmail = email;
-    state.selectedIssueCouponTypes = []; // 선택 초기화
+    state.selectedIssueCouponTypes = [];
+
+    // 프로모션 잔여수량 계산하여 기본값 설정
+    let promoDefault = 0;
+    const today = new Date().toLocaleDateString('sv-SE');
+    if (today >= '2026-04-10' && today <= '2026-04-26') {
+        const acc = state.accounts.find(a => a.id === accountId);
+        if (acc) {
+            const vouchers = parseVouchers(acc.owned_vouchers);
+            const promoUsed = vouchers.filter(v => {
+                if (v.sold || v.deleted_unused) return false;
+                const info = getCouponDisplayInfo(v.description);
+                if (!info.name.includes('100000')) return false;
+                return (v.expiry || v.expiryDate || '').includes('2026-04-26');
+            }).length;
+            promoDefault = Math.max(0, 3 - promoUsed);
+        }
+    }
+    state.issueCouponQuantity = { '100000': 1, '100000_promo': promoDefault };
     state.modal = 'single-issue-coupon';
     render();
 }
@@ -1250,6 +1319,78 @@ function toggleIssueCouponType(couponType) {
         state.selectedIssueCouponTypes.push(couponType);
     }
     render();
+}
+
+function getAccountPromoRemaining(acc) {
+    const vouchers = parseVouchers(acc.owned_vouchers);
+    const used = vouchers.filter(v => {
+        if (v.sold || v.deleted_unused) return false;
+        const info = getCouponDisplayInfo(v.description);
+        if (!info.name.includes('100000')) return false;
+        return (v.expiry || v.expiryDate || '').includes('2026-04-26');
+    }).length;
+    return Math.max(0, 3 - used);
+}
+
+function initBulkPromoQuantity(isAllActive) {
+    const today = new Date().toLocaleDateString('sv-SE');
+    const isPromo = today >= '2026-04-10' && today <= '2026-04-26';
+    state.bulkPromoQuantity = {};
+    if (!isPromo) return;
+    const accounts = isAllActive
+        ? state.accounts.filter(a => a.is_active)
+        : Array.from(state.selectedIds).map(id => state.accounts.find(a => a.id === id)).filter(Boolean);
+    accounts.forEach(acc => {
+        state.bulkPromoQuantity[acc.id] = getAccountPromoRemaining(acc);
+    });
+}
+
+function setBulkPromoQty(accId, qty) {
+    const acc = state.accounts.find(a => a.id === accId);
+    const max = acc ? getAccountPromoRemaining(acc) : 3;
+    state.bulkPromoQuantity[accId] = Math.max(0, Math.min(max, parseInt(qty) || 0));
+    render();
+}
+
+function setIssueCouponQuantity(couponType, qty) {
+    let maxQty = 10;
+    if (couponType === '100000_promo') {
+        maxQty = 3; // 프로모션 최대
+        // 일괄: 선택된 계정 중 최대 잔여량, 단일: 해당 계정 잔여량
+        const targetAccounts = state.modal === 'issue-coupon'
+            ? (state.bulkIssueAllActive
+                ? state.accounts.filter(a => a.is_active)
+                : Array.from(state.selectedIds).map(id => state.accounts.find(a => a.id === id)).filter(Boolean))
+            : [state.accounts.find(a => a.id === state.singleIssueCouponAccountId)].filter(Boolean);
+
+        let maxRemaining = 0;
+        targetAccounts.forEach(acc => {
+            if (!acc) return;
+            const vouchers = parseVouchers(acc.owned_vouchers);
+            const used = vouchers.filter(v => {
+                if (v.sold || v.deleted_unused) return false;
+                const info = getCouponDisplayInfo(v.description);
+                if (!info.name.includes('100000')) return false;
+                return (v.expiry || v.expiryDate || '').includes('2026-04-26');
+            }).length;
+            maxRemaining = Math.max(maxRemaining, 3 - used);
+        });
+        maxQty = Math.max(0, maxRemaining);
+    }
+    const n = Math.max(0, Math.min(maxQty, parseInt(qty) || 0));
+    state.issueCouponQuantity[couponType] = n;
+    render();
+}
+
+// 쿠폰 타입 배열 생성 (수량 반영, 프로모션 타입은 실제 타입으로 변환)
+function buildCouponTypesWithQuantity(selectedTypes) {
+    const result = [];
+    selectedTypes.forEach(ct => {
+        const qty = state.issueCouponQuantity[ct] || 1;
+        const actualType = ct.replace('_promo', ''); // '100000_promo' → '100000'
+        for (let i = 0; i < qty; i++) result.push(actualType);
+    });
+    return result;
 }
 
 // 조회 및 발급 시작 (일괄)
@@ -1277,7 +1418,7 @@ async function startIssueCoupon() {
         state.selectedIds.clear();
 
         try {
-            await api('/extract/bulk', { method: 'POST', body: { ids, actionBy: currentUser?.fullName } });
+            await api('/extract/bulk', { method: 'POST', body: { ids, actionBy: currentUser?.fullName, useProxy: getUserProxySetting() } });
         } catch (error) {
             notifyError('일괄 조회 실패: ' + error.message);
         }
@@ -1310,7 +1451,7 @@ async function startIssueCouponForAllActive() {
         openMonitor('extract', '정보 일괄 조회', activeAccounts);
 
         try {
-            await api('/extract/bulk', { method: 'POST', body: { ids, actionBy: currentUser?.fullName } });
+            await api('/extract/bulk', { method: 'POST', body: { ids, actionBy: currentUser?.fullName, useProxy: getUserProxySetting() } });
         } catch (error) {
             notifyError('일괄 조회 실패: ' + error.message);
         }
@@ -1326,13 +1467,19 @@ async function issueCoupon(couponTypes) {
 
     closeModal();
 
-    // 배열로 정규화
-    const couponTypesArray = Array.isArray(couponTypes) ? couponTypes : [couponTypes];
+    const rawTypes = Array.isArray(couponTypes) ? couponTypes : [couponTypes];
+    const hasPromo = rawTypes.includes('100000_promo');
+
+    // 프로모션 포함 시 계정별 수량 맵 생성
+    const perAccountPromoQty = hasPromo ? { ...state.bulkPromoQuantity } : null;
+
+    // 기본(프로모션 제외) 쿠폰 타입
+    const baseTypes = rawTypes.filter(t => t !== '100000_promo');
     const couponNames = { '10000': '1만원권', '30000': '3만원권', '50000': '5만원권', '100000': '10만원권' };
-    const couponTypesStr = couponTypesArray.map(ct => couponNames[ct] || `${ct}원`).join(', ');
+    const baseStr = baseTypes.map(ct => couponNames[ct] || `${ct}원`).join(', ');
+    const promoStr = hasPromo ? ' + 프로모션 10만원' : '';
+    const couponTypesStr = (baseStr || '') + promoStr || '조회만';
 
-
-    // 중복 실행 방지 - 이미 배치 작업이 진행 중인지 확인
     await checkBatchStatus();
     if (state.batchStatus.active) {
         notifyWarning(`이미 "${state.batchStatus.title}" 작업이 진행 중입니다. 완료 후 다시 시도하세요.`);
@@ -1354,7 +1501,14 @@ async function issueCoupon(couponTypes) {
     try {
         await api('/issue-coupon/bulk', {
             method: 'POST',
-            body: { ids, coupon_types: couponTypesArray, mode: state.extractMode, actionBy: currentUser?.fullName }
+            body: {
+                ids,
+                coupon_types: baseTypes,
+                promo_quantities: perAccountPromoQty,
+                mode: state.extractMode,
+                actionBy: currentUser?.fullName,
+                useProxy: getUserProxySetting()
+            }
         });
     } catch (error) {
         notifyError('쿠폰 발급 실패: ' + error.message);
@@ -1396,11 +1550,25 @@ async function issueCouponForAccount(accountId, couponTypes) {
 
     closeModal();
 
-    // 배열로 정규화
-    const couponTypesArray = Array.isArray(couponTypes) ? couponTypes : [couponTypes];
-    const couponNames = { '10000': '1만원권', '30000': '3만원권', '50000': '5만원권', '100000': '10만원권' };
-    const couponTypesStr = couponTypesArray.map(ct => couponNames[ct] || `${ct}원`).join(', ');
+    const rawTypes = Array.isArray(couponTypes) ? couponTypes : [couponTypes];
+    const hasPromo = rawTypes.includes('100000_promo');
+    const baseTypes = rawTypes.filter(t => t !== '100000_promo');
+    const baseTypesExpanded = buildCouponTypesWithQuantity(baseTypes);
 
+    // 프로모션 수량
+    let perAccountPromoQty = null;
+    if (hasPromo) {
+        const promoQty = state.issueCouponQuantity['100000_promo'] || 0;
+        if (promoQty > 0) {
+            perAccountPromoQty = { [accountId]: promoQty };
+        }
+    }
+
+    const couponNames = { '10000': '1만원권', '30000': '3만원권', '50000': '5만원권', '100000': '10만원권' };
+    const baseStr = baseTypesExpanded.map(ct => couponNames[ct] || `${ct}원`).join(', ');
+    const promoQty = perAccountPromoQty ? perAccountPromoQty[accountId] : 0;
+    const promoStr = promoQty > 0 ? `프로모션 10만원×${promoQty}` : '';
+    const couponTypesStr = [baseStr, promoStr].filter(Boolean).join(' + ') || '쿠폰';
 
     const modeLabel = ({ web: 'Selenium', web_incognito: 'Selenium(시크릿)', playwright: 'PW', playwright_incognito: 'PW(시크릿)', playwright_headless: 'PW(BG)', playwright_headless_incognito: 'PW(BG+시크릿)' }[state.extractMode] || '웹');
     const confirmed = await showConfirm({
@@ -1414,10 +1582,15 @@ async function issueCouponForAccount(accountId, couponTypes) {
     openMonitor('issue', `[${modeLabel}] 쿠폰 발급 (${couponTypesStr})`, [account]);
 
     try {
-        // 단일 계정도 bulk 엔드포인트 사용 (다중 쿠폰 지원)
         await api('/issue-coupon/bulk', {
             method: 'POST',
-            body: { ids: [accountId], coupon_types: couponTypesArray, mode: state.extractMode }
+            body: {
+                ids: [accountId],
+                coupon_types: baseTypesExpanded,
+                promo_quantities: perAccountPromoQty,
+                mode: state.extractMode,
+                useProxy: getUserProxySetting()
+            }
         });
     } catch (error) {
         notifyError('쿠폰 발급 실패: ' + error.message);
@@ -1437,9 +1610,10 @@ async function bulkUpsertAccounts(accounts) {
 
 async function updateVoucherSale(accountId, voucherIndex, sold, soldTo) {
     try {
+        const voucherCode = state.voucherData?.voucher?.code || '';
         await api(`/accounts/${accountId}/voucher-sale`, {
             method: 'POST',
-            body: { voucher_index: voucherIndex, sold, sold_to: soldTo }
+            body: { voucher_index: voucherIndex, sold, sold_to: soldTo, voucher_code: voucherCode }
         });
         notifySuccess(sold ? '사용완료로 표시되었습니다' : '사용 취소되었습니다');
         closeModal();
@@ -1582,22 +1756,57 @@ function getFilteredAndSortedAccounts() {
         });
     }
 
-    // 쿠폰 종류 필터 (복수 선택) - getCouponDisplayInfo()의 name을 기준으로 필터링
+    // 쿠폰 종류 필터 (복수 선택) - 사용완료/기간만료 제외와 연동
     if (state.filters.couponTypes.length > 0) {
         result = result.filter(acc => {
             const vouchers = parseVouchers(acc.owned_vouchers);
             return vouchers.some(v => {
+                if (state.filters.excludeSoldCoupon && (v.sold || v.deleted_unused)) return false;
+                if (state.filters.excludeExpiredCoupon && isExpired(v.expiry)) return false;
                 const couponInfo = getCouponDisplayInfo(v.description);
                 return state.filters.couponTypes.includes(couponInfo.name);
             });
         });
     }
 
+    // 쿠폰 카테고리 컬럼 필터 (종류 + 메모)
+    COUPON_CATEGORIES.forEach(cat => {
+        const subtypeFilter = state.filters.categorySubtypes[cat.key] || [];
+        const soldToFilter = state.filters.categorySoldTo[cat.key] || [];
+        if (subtypeFilter.length === 0 && soldToFilter.length === 0) return;
+
+        result = result.filter(acc => {
+            const vouchers = parseVouchers(acc.owned_vouchers);
+            let catVouchers = vouchers.filter(v => {
+                const info = getCouponDisplayInfo(v.description);
+                return cat.match(info.name);
+            });
+            if (state.filters.excludeSoldCoupon) catVouchers = catVouchers.filter(v => !v.sold && !v.deleted_unused);
+            if (state.filters.excludeExpiredCoupon) catVouchers = catVouchers.filter(v => !isExpired(v.expiry));
+
+            const matchesSubtype = subtypeFilter.length === 0 || catVouchers.some(v => {
+                const info = getCouponDisplayInfo(v.description);
+                return subtypeFilter.includes(info.name);
+            });
+            const matchesSoldTo = soldToFilter.length === 0 || catVouchers.some(v => soldToFilter.includes(v.sold_to));
+            return matchesSubtype && matchesSoldTo;
+        });
+    });
+
     // 통합 현황 필터 - 복수 선택
     if (state.filters.workStatuses.length > 0) {
         result = result.filter(acc => {
             const status = getAccountWorkStatus(acc);
             return state.filters.workStatuses.includes(status);
+        });
+    }
+
+    // 메모 필터
+    if (state.filters.memoValues.length > 0) {
+        result = result.filter(acc => {
+            const memo = (acc.memo || '').trim();
+            if (state.filters.memoValues.includes('__empty__') && !memo) return true;
+            return state.filters.memoValues.includes(memo);
         });
     }
 
@@ -1611,26 +1820,117 @@ function getFilteredAndSortedAccounts() {
         });
     }
 
-    // 만료 예정 쿠폰 필터
+    // 만료 예정 쿠폰 필터 (사용완료/만료 제외)
     if (state.filters.expiringCoupon) {
         result = result.filter(acc => {
             const vouchers = parseVouchers(acc.owned_vouchers);
-            return vouchers.some(v => isExpiringWithinWeek(v.expiry) && !isExpired(v.expiry));
+            return vouchers.some(v => !v.sold && !v.deleted_unused && !isExpired(v.expiry) && isExpiringWithinWeek(v.expiry));
         });
     }
 
     // 10만원 쿠폰 보유 필터 (통계 카드 클릭용)
     if (state.filters.has100kCoupon) {
+        const beforeCount = result.length;
+        result = result.filter(acc => {
+            const vouchers = parseVouchers(acc.owned_vouchers);
+            const has = vouchers.some(v => {
+                if (v.sold || v.deleted_unused) return false;
+                if (!v.expiry || v.expiry === 'N/A' || isExpired(v.expiry)) return false;
+                const desc = (v.description || '').toLowerCase();
+                return desc.includes('100k') || desc.includes('100000') || desc.includes('10만') || desc.includes('100,000') || (v.code || '').startsWith('REKR100');
+            });
+            return has;
+        });
+        console.log(`[has100kCoupon 필터] ${beforeCount} → ${result.length} (${beforeCount - result.length}개 제거)`);
+    }
+
+    // 10만원권 발급 가능 계정 필터 (이력 있고 30일 경과)
+    if (state.filters.canIssue100k) {
+        const now = new Date();
+        result = result.filter(acc => {
+            if (!acc.is_active) return false;
+            const vouchers = parseVouchers(acc.owned_vouchers);
+            const v100kList = vouchers.filter(v => {
+                const desc = ((v.description || '') + ' ' + (v.name || '')).toLowerCase();
+                return desc.includes('100k') || desc.includes('100000') || desc.includes('10만') || desc.includes('100,000') || (v.code || '').startsWith('REKR100');
+            });
+            if (v100kList.length === 0) return false; // 이력 없으면 제외
+            let latestIssued = null;
+            v100kList.forEach(v => {
+                let d = null;
+                if (v.fetched_at) {
+                    const m = v.fetched_at.match(/(\d{2})-(\d{2})-(\d{2})/);
+                    if (m) d = new Date(2000+parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]));
+                }
+                if (!d && (v.expiry || v.expiryDate)) {
+                    const exp = v.expiry || v.expiryDate;
+                    if (exp !== 'N/A') { d = new Date(exp); d.setMonth(d.getMonth() - 2); }
+                }
+                if (d && (!latestIssued || d > latestIssued)) latestIssued = d;
+            });
+            if (!latestIssued) return false;
+            return (now - latestIssued) / (1000 * 60 * 60 * 24) >= 30;
+        });
+    }
+
+    // 10만원권 미발급 계정 필터
+    if (state.filters.noIssue100k) {
+        result = result.filter(acc => {
+            if (!acc.is_active) return false;
+            const vouchers = parseVouchers(acc.owned_vouchers);
+            return !vouchers.some(v => {
+                const desc = ((v.description || '') + ' ' + (v.name || '')).toLowerCase();
+                return desc.includes('100k') || desc.includes('100000') || desc.includes('10만') || desc.includes('100,000') || (v.code || '').startsWith('REKR100');
+            });
+        });
+    }
+
+    // 5만원권 보유 필터
+    if (state.filters.has50kCoupon) {
         result = result.filter(acc => {
             const vouchers = parseVouchers(acc.owned_vouchers);
             return vouchers.some(v => {
-                const desc = (v.description || '').toLowerCase();
-                const is100k = desc.includes('100k') || desc.includes('100000') || desc.includes('10만') || desc.includes('100,000');
-                const hasValidExpiry = v.expiry && v.expiry !== 'N/A' && v.expiry.trim() !== '';
-                const notExpired = hasValidExpiry && !isExpired(v.expiry);
-                const notSold = !v.sold && !v.deleted_unused;
-                return is100k && hasValidExpiry && notExpired && notSold;
+                if (v.sold || v.deleted_unused || !v.expiry || v.expiry === 'N/A' || isExpired(v.expiry)) return false;
+                const info = getCouponDisplayInfo(v.description);
+                return info.name === '50000원 상품권';
             });
+        });
+    }
+
+    // 15% 할인권 보유 필터
+    if (state.filters.has15pCoupon) {
+        result = result.filter(acc => {
+            const vouchers = parseVouchers(acc.owned_vouchers);
+            return vouchers.some(v => {
+                if (v.sold || v.deleted_unused || !v.expiry || v.expiry === 'N/A' || isExpired(v.expiry)) return false;
+                const info = getCouponDisplayInfo(v.description);
+                return info.name === '15% 할인';
+            });
+        });
+    }
+
+    // 20% 할인권 보유 필터
+    if (state.filters.has20pCoupon) {
+        result = result.filter(acc => {
+            const vouchers = parseVouchers(acc.owned_vouchers);
+            return vouchers.some(v => {
+                if (v.sold || v.deleted_unused || !v.expiry || v.expiry === 'N/A' || isExpired(v.expiry)) return false;
+                const info = getCouponDisplayInfo(v.description);
+                return info.name === '20% 할인';
+            });
+        });
+    }
+
+    // 생일 쿠폰 발급 가능 계정 필터 (생일 6일 전)
+    if (state.filters.canIssueBirthday) {
+        const now = new Date();
+        result = result.filter(acc => {
+            if (!acc.is_active || !acc.birthday) return false;
+            const parts = acc.birthday.split('-');
+            if (parts.length < 3) return false;
+            const bDate = new Date(now.getFullYear(), parseInt(parts[1]) - 1, parseInt(parts[2]));
+            const diff = (bDate - now) / (1000 * 60 * 60 * 24);
+            return diff >= -6 && diff <= 6;
         });
     }
 
@@ -1674,7 +1974,7 @@ function getFilteredAndSortedAccounts() {
         }
         if (v.expiry && v.expiry !== 'N/A') {
             const ed = new Date(v.expiry);
-            ed.setMonth(ed.getMonth() - 1);
+            ed.setMonth(ed.getMonth() - 2);
             return ed;
         }
         return null;
@@ -1745,7 +2045,50 @@ function getFilteredAndSortedAccounts() {
                     valA = parseVouchers(a.owned_vouchers).length;
                     valB = parseVouchers(b.owned_vouchers).length;
                     break;
-                default: return 0;
+                case 'created':
+                    valA = a.created_at ? new Date(a.created_at).getTime() : 0;
+                    valB = b.created_at ? new Date(b.created_at).getTime() : 0;
+                    break;
+                case 'fetchDate':
+                    // 조회일시: web_fetch_status에서 날짜 추출
+                    const extractDate = (s) => {
+                        if (!s) return 0;
+                        const m = s.match(/\[(\d{2})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})\]/);
+                        if (m) return new Date(2000+parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]), parseInt(m[4]), parseInt(m[5])).getTime();
+                        return 0;
+                    };
+                    valA = Math.max(extractDate(a.web_fetch_status), extractDate(a.web_issue_status || a.issue_status));
+                    valB = Math.max(extractDate(b.web_fetch_status), extractDate(b.web_issue_status || b.issue_status));
+                    break;
+                default:
+                    // 쿠폰 발급일 정렬 (issued_amount, issued_percent)
+                    if (state.sort.column.startsWith('issued_')) {
+                        const catKey = state.sort.column.replace('issued_', '');
+                        const cat = COUPON_CATEGORIES.find(c => c.key === catKey);
+                        const getLatestIssued = (acc) => {
+                            const vouchers = parseVouchers(acc.owned_vouchers);
+                            let latest = 0;
+                            vouchers.forEach(v => {
+                                if (v.sold || v.deleted_unused) return;
+                                const info = getCouponDisplayInfo(v.description);
+                                if (cat && !cat.match(info.name)) return;
+                                let d = 0;
+                                if (v.fetched_at) {
+                                    const m = v.fetched_at.match(/(\d{2})-(\d{2})-(\d{2})/);
+                                    if (m) d = new Date(2000+parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3])).getTime();
+                                } else if (v.expiry && v.expiry !== 'N/A') {
+                                    const ed = new Date(v.expiry); ed.setMonth(ed.getMonth() - 2);
+                                    d = ed.getTime();
+                                }
+                                if (d > latest) latest = d;
+                            });
+                            return latest;
+                        };
+                        valA = getLatestIssued(a);
+                        valB = getLatestIssued(b);
+                        break;
+                    }
+                    return 0;
             }
             if (typeof valA === 'string') {
                 const cmp = valA.localeCompare(valB);
@@ -1781,12 +2124,12 @@ function render() {
     const totalCount = state.accounts.length;
     const activeCount = state.accounts.filter(a => a.is_active).length;
 
-    // 만료 예정 쿠폰 장수 (전체 계정, 7일 이내)
+    // 만료 예정 쿠폰 장수 (전체 계정, 7일 이내, 사용완료/만료 제외)
     let expiringCouponCount = 0;
     state.accounts.forEach(a => {
         const vouchers = parseVouchers(a.owned_vouchers);
         vouchers.forEach(v => {
-            if (isExpiringWithinWeek(v.expiry) && !isExpired(v.expiry)) expiringCouponCount++;
+            if (!v.sold && !v.deleted_unused && !isExpired(v.expiry) && isExpiringWithinWeek(v.expiry)) expiringCouponCount++;
         });
     });
 
@@ -1795,12 +2138,68 @@ function render() {
     state.accounts.forEach(a => {
         const vouchers = parseVouchers(a.owned_vouchers);
         vouchers.forEach(v => {
-            const desc = (v.description || '').toLowerCase();
-            const is100k = desc.includes('100k') || desc.includes('100000') || desc.includes('10만') || desc.includes('100,000');
-            const hasValidExpiry = v.expiry && v.expiry !== 'N/A' && v.expiry.trim() !== '';
-            const notExpired = hasValidExpiry && !isExpired(v.expiry);
-            const notSold = !v.sold;
+            const desc = ((v.description || '') + ' ' + (v.name || '')).toLowerCase();
+            const is100k = desc.includes('100k') || desc.includes('100000') || desc.includes('10만') || desc.includes('100,000') || (v.code || '').startsWith('REKR100');
+            const notExpired = v.expiry && v.expiry !== 'N/A' && !isExpired(v.expiry);
+            const notSold = !v.sold && !v.deleted_unused;
             if (is100k && notExpired && notSold) has100kCouponCount++;
+        });
+    });
+
+    // 10만원권 발급 가능 계정 수 (이력 있고 30일 경과) / 미발급 계정 수
+    const now = new Date();
+    let canIssue100kCount = 0;
+    let noIssue100kCount = 0;
+    state.accounts.forEach(a => {
+        if (!a.is_active) return;
+        const vouchers = parseVouchers(a.owned_vouchers);
+        const v100kList = vouchers.filter(v => {
+            const desc = ((v.description || '') + ' ' + (v.name || '')).toLowerCase();
+            return desc.includes('100k') || desc.includes('100000') || desc.includes('10만') || desc.includes('100,000') || (v.code || '').startsWith('REKR100');
+        });
+        if (v100kList.length === 0) { noIssue100kCount++; return; }
+        let latestIssued = null;
+        v100kList.forEach(v => {
+            let d = null;
+            if (v.fetched_at) {
+                const m = v.fetched_at.match(/(\d{2})-(\d{2})-(\d{2})/);
+                if (m) d = new Date(2000+parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]));
+            }
+            if (!d && (v.expiry || v.expiryDate)) {
+                const exp = v.expiry || v.expiryDate;
+                if (exp !== 'N/A') { d = new Date(exp); d.setMonth(d.getMonth() - 2); }
+            }
+            if (d && (!latestIssued || d > latestIssued)) latestIssued = d;
+        });
+        if (latestIssued) {
+            const diff = (now - latestIssued) / (1000 * 60 * 60 * 24);
+            if (diff >= 30) canIssue100kCount++;
+        }
+    });
+
+    // 생일 쿠폰 발급 가능 계정 수 (생일 6일 전)
+    let canIssueBirthdayCount = 0;
+    state.accounts.forEach(a => {
+        if (!a.is_active || !a.birthday) return;
+        const parts = a.birthday.split('-');
+        if (parts.length < 3) return;
+        const bMonth = parseInt(parts[1]), bDay = parseInt(parts[2]);
+        // 올해 생일
+        const bDate = new Date(now.getFullYear(), bMonth - 1, bDay);
+        const diff = (bDate - now) / (1000 * 60 * 60 * 24);
+        if (diff >= -6 && diff <= 6) canIssueBirthdayCount++;
+    });
+
+    // 5만원/15%/20% 할인권 유효 쿠폰 장수
+    let has50kCount = 0, has15pCount = 0, has20pCount = 0;
+    state.accounts.forEach(a => {
+        const vouchers = parseVouchers(a.owned_vouchers);
+        vouchers.forEach(v => {
+            if (v.sold || v.deleted_unused || !v.expiry || v.expiry === 'N/A' || isExpired(v.expiry)) return;
+            const info = getCouponDisplayInfo(v.description);
+            if (info.name === '50000원 상품권') has50kCount++;
+            if (info.name === '15% 할인') has15pCount++;
+            if (info.name === '20% 할인') has20pCount++;
         });
     });
 
@@ -1896,67 +2295,70 @@ function render() {
         `;
         })() : ''}
 
-        <!-- 통계 카드 + 기능 카드 (좌우 50:50) -->
-        <div style="padding: 20px 24px 0;">
+        <!-- 통계 카드 + 기능 카드 -->
+        <div style="padding: 16px 24px 0;">
             <div class="stats-action-container">
                 <div class="stats-container">
-                    <div class="stat-card">
-                        <div class="stat-card-left"><h4>계정</h4></div>
-                        <div class="stat-card-right">
-                            <div class="value">${activeCount} / ${totalCount}개</div>
-                            <div class="stat-subtitle">활성 / 전체</div>
-                        </div>
+                    <div class="stat-card stat-info">
+                        <div class="stat-group-tag">현황</div>
+                        <h4>계정</h4>
+                        <div class="value">${activeCount}/${totalCount}</div>
                     </div>
-                    <div class="stat-card clickable ${state.filters.expiringCoupon ? 'active' : ''}" onclick="toggleExpiringCouponFilter()">
-                        <div class="stat-card-left"><h4>만료 예정 쿠폰</h4></div>
-                        <div class="stat-card-right">
-                            <div class="value">${expiringCouponCount}장</div>
-                            <div class="stat-subtitle">7일 이내 만료</div>
-                        </div>
+                    <div class="stat-card stat-warn clickable ${state.filters.expiringCoupon ? 'active' : ''}" onclick="toggleStatFilter('expiringCoupon')">
+                        <h4>만료예정</h4>
+                        <div class="value">${expiringCouponCount}장</div>
                     </div>
-                    <div class="stat-card clickable ${state.filters.has100kCoupon ? 'active' : ''}" onclick="toggle100kCouponFilter()">
-                        <div class="stat-card-left"><h4>10만원 상품권</h4></div>
-                        <div class="stat-card-right">
-                            <div class="value">${has100kCouponCount}장</div>
-                            <div class="stat-subtitle">유효 쿠폰</div>
-                        </div>
+                    <div class="stat-card stat-coupon clickable ${state.filters.has100kCoupon ? 'active' : ''}" onclick="toggleStatFilter('has100kCoupon')">
+                        <div class="stat-group-tag">쿠폰보유</div>
+                        <h4>10만원권</h4>
+                        <div class="value">${has100kCouponCount}장</div>
+                    </div>
+                    <div class="stat-card stat-coupon clickable ${state.filters.has50kCoupon ? 'active' : ''}" onclick="toggleStatFilter('has50kCoupon')">
+                        <h4>5만원권</h4>
+                        <div class="value">${has50kCount}장</div>
+                    </div>
+                    <div class="stat-card stat-coupon clickable ${state.filters.has15pCoupon ? 'active' : ''}" onclick="toggleStatFilter('has15pCoupon')">
+                        <h4>15%할인</h4>
+                        <div class="value">${has15pCount}장</div>
+                    </div>
+                    <div class="stat-card stat-coupon clickable ${state.filters.has20pCoupon ? 'active' : ''}" onclick="toggleStatFilter('has20pCoupon')">
+                        <h4>20%할인</h4>
+                        <div class="value">${has20pCount}장</div>
+                    </div>
+                    <div class="stat-card stat-issue clickable ${state.filters.canIssue100k ? 'active' : ''}" onclick="toggleStatFilter('canIssue100k')">
+                        <div class="stat-group-tag">발급가능</div>
+                        <h4>10만재발급</h4>
+                        <div class="value">${canIssue100kCount}개</div>
+                    </div>
+                    <div class="stat-card stat-issue clickable ${state.filters.noIssue100k ? 'active' : ''}" onclick="toggleStatFilter('noIssue100k')">
+                        <h4>10만미발급</h4>
+                        <div class="value">${noIssue100kCount}개</div>
+                    </div>
+                    <div class="stat-card stat-birthday clickable ${state.filters.canIssueBirthday ? 'active' : ''}" onclick="toggleStatFilter('canIssueBirthday')">
+                        <h4>생일쿠폰</h4>
+                        <div class="value">${canIssueBirthdayCount}개</div>
                     </div>
                 </div>
                 <div class="main-action-buttons">
-                    <button class="btn btn-main-action ${state.selectedIds.size === 0 ? 'disabled' : ''}" onclick="showIssueCouponModal()">
-                        <span class="btn-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg></span>
-                        <div class="btn-content">
-                            <span class="btn-text">조회 및 발급</span>
-                            <span class="btn-desc">정보조회 + 쿠폰발급</span>
-                        </div>
+                    <button class="btn btn-main-action btn-main-primary ${state.selectedIds.size === 0 ? 'disabled' : ''}" onclick="showIssueCouponModal()">
+                        <h4>조회/발급</h4>
+                        <div class="value">정보조회+쿠폰</div>
                     </button>
                     <button class="btn btn-main-action ${state.selectedIds.size === 0 ? 'disabled' : ''}" onclick="bulkDownloadBarcodes()">
-                        <span class="btn-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
-                        <div class="btn-content">
-                            <span class="btn-text">바코드 다운로드</span>
-                            <span class="btn-desc">zip 압축 파일</span>
-                        </div>
+                        <h4>바코드</h4>
+                        <div class="value">다운로드</div>
                     </button>
                     <button class="btn btn-main-action ${state.selectedIds.size === 0 ? 'disabled' : ''}" onclick="extractEmailList()">
-                        <span class="btn-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
-                        <div class="btn-content">
-                            <span class="btn-text">아이디 추출</span>
-                            <span class="btn-desc">이메일 목록 복사</span>
-                        </div>
+                        <h4>아이디</h4>
+                        <div class="value">이메일 추출</div>
                     </button>
                     <button class="btn btn-main-action" onclick="showAccountRegisterMenu()">
-                        <span class="btn-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg></span>
-                        <div class="btn-content">
-                            <span class="btn-text">계정 등록</span>
-                            <span class="btn-desc">개별 / 일괄 등록</span>
-                        </div>
+                        <h4>계정 등록</h4>
+                        <div class="value">개별/일괄</div>
                     </button>
                     <button class="btn btn-main-action ${state.selectedIds.size === 0 ? 'disabled' : ''}" onclick="exportCouponListToExcel()">
-                        <span class="btn-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>
-                        <div class="btn-content">
-                            <span class="btn-text">엑셀 추출</span>
-                            <span class="btn-desc">쿠폰 목록 (온라인용)</span>
-                        </div>
+                        <h4>엑셀 추출</h4>
+                        <div class="value">쿠폰 목록</div>
                     </button>
                 </div>
             </div>
@@ -2000,7 +2402,12 @@ function render() {
                                             onchange="toggleSelectAll(this.checked)">
                                     </div>
                                 </th>
-                                <th class="resizable" style="width:62px;">등록일</th>
+                                <th class="resizable sortable th-with-actions ${state.sort.column === 'created' ? 'sorted' : ''}" style="width:70px;">
+                                    <span class="th-name" onmousedown="event.stopPropagation();toggleHeaderDateFilter('created')">등록일</span>
+                                    <span class="th-sort" onclick="toggleSort('created')">${renderSortIcon('created')}</span>
+                                    ${state.filters.createdAfter || state.filters.createdBefore ? '<span class="th-filter-dot"></span>' : ''}
+                                    ${renderHeaderDatePopover('created', 'createdAfter', 'createdBefore')}
+                                </th>
                                 <th class="resizable sortable ${state.sort.column === 'email' ? 'sorted' : ''}" style="width:160px;" onclick="toggleSort('email')">
                                     계정정보 ${renderSortIcon('email')}
                                 </th>
@@ -2011,11 +2418,38 @@ function render() {
                                     레벨/포인트 ${renderSortIcon('level')}
                                 </th>
                                 <th class="resizable" style="width:145px;">바코드</th>
-                                ${COUPON_CATEGORIES.map(c => `<th class="resizable col-coupon-cat">${c.label}</th>`).join('')}
-                                <th class="resizable col-coupon-cat">기타쿠폰</th>
-                                <th class="resizable" style="width:75px;">현황</th>
+                                ${COUPON_CATEGORIES.map(c => {
+                                    const hasCatFilter = (state.filters.categorySubtypes[c.key] || []).length > 0 || (state.filters.categorySoldTo[c.key] || []).length > 0;
+                                    return '<th class="resizable col-coupon-cat th-with-actions">' +
+                                        '<span class="th-name" onmousedown="event.stopPropagation();toggleHeaderCategoryFilter(\'' + c.key + '\')">' + c.label + '</span>' +
+                                        (hasCatFilter ? '<span class="th-filter-dot"></span>' : '') +
+                                        renderHeaderCategoryPopover(c.key) +
+                                    '</th>' +
+                                    '<th class="resizable sortable th-with-actions ' + (state.sort.column === 'issued_' + c.key ? 'sorted' : '') + '" style="width:55px;">' +
+                                        '<span class="th-name" onmousedown="event.stopPropagation();toggleHeaderDateFilter(\'couponFetched\')">발급일</span>' +
+                                        '<span class="th-sort" onclick="toggleSort(\'issued_' + c.key + '\')">' + renderSortIcon('issued_' + c.key) + '</span>' +
+                                        (state.filters.couponFetchedAfter || state.filters.couponFetchedBefore ? '<span class="th-filter-dot"></span>' : '') +
+                                        renderHeaderDatePopover('couponFetched', 'couponFetchedAfter', 'couponFetchedBefore') +
+                                    '</th>';
+                                }).join('')}
+                                <th class="resizable col-coupon-etc">기타쿠폰</th>
+                                <th class="resizable th-with-actions" style="width:100px;">
+                                    <span class="th-name" onmousedown="event.stopPropagation();toggleHeaderMemoFilter()">메모</span>
+                                    ${state.filters.memoValues.length > 0 ? '<span class="th-filter-dot"></span>' : ''}
+                                    ${renderHeaderMemoPopover()}
+                                </th>
+                                <th class="resizable th-with-actions" style="width:75px;">
+                                    <span class="th-name" onmousedown="event.stopPropagation();toggleHeaderStatusFilter()">현황</span>
+                                    ${state.filters.workStatuses.length > 0 ? '<span class="th-filter-dot"></span>' : ''}
+                                    ${renderHeaderStatusPopover()}
+                                </th>
                                 <th class="resizable" style="width:55px;">작업자</th>
-                                <th class="resizable" style="width:85px;">조회일시</th>
+                                <th class="resizable sortable th-with-actions ${state.sort.column === 'fetchDate' ? 'sorted' : ''}" style="width:85px;">
+                                    <span class="th-name" onmousedown="event.stopPropagation();toggleHeaderDateFilter('fetchDate')">조회일시</span>
+                                    <span class="th-sort" onclick="toggleSort('fetchDate')">${renderSortIcon('fetchDate')}</span>
+                                    ${state.filters.dateAfter || state.filters.dateBefore ? '<span class="th-filter-dot"></span>' : ''}
+                                    ${renderHeaderDatePopover('fetchDate', 'dateAfter', 'dateBefore')}
+                                </th>
                                 <th class="resizable" style="width:80px;">작업</th>
                             </tr>
                         </thead>
@@ -2075,6 +2509,7 @@ function render() {
                 if (dataURL) img.src = dataURL;
             }
         });
+        positionDatePopovers();
     });
 
 }
@@ -2082,10 +2517,17 @@ function render() {
 function renderAccountRow(acc, rowNum) {
     const isSelected = state.selectedIds.has(acc.id);
     const birthday = acc.birthday ? acc.birthday.split('-').slice(1).join('/') : '-';
-    const vouchers = parseVouchers(acc.owned_vouchers);
+    const allVouchers = parseVouchers(acc.owned_vouchers);
+    // 사용완료/기간만료 제외 필터 적용
+    let vouchers = allVouchers;
+    if (state.filters.excludeSoldCoupon) vouchers = vouchers.filter(v => !v.sold && !v.deleted_unused);
+    if (state.filters.excludeExpiredCoupon) vouchers = vouchers.filter(v => !isExpired(v.expiry));
+    if (state.filters.expiringCoupon) vouchers = vouchers.filter(v => !v.sold && !v.deleted_unused && !isExpired(v.expiry) && isExpiringWithinWeek(v.expiry));
     const barcode = acc.adikr_barcode || '';
 
     const rowBorderColor = acc.is_active ? '#52c41a' : '#ef4444';
+    const proxyOn = getUserProxySetting();
+    const accProxy = proxyOn && proxyListCache.length > 0 ? proxyListCache[(rowNum - 1) % proxyListCache.length] : null;
 
     // 등록일
     const createdDate = acc.created_at ? new Date(acc.created_at).toLocaleDateString('ko-KR', {year:'2-digit',month:'2-digit',day:'2-digit'}).replace(/\. /g,'/').replace('.','') : '-';
@@ -2094,17 +2536,18 @@ function renderAccountRow(acc, rowNum) {
     const cats = categorizeVouchers(vouchers);
 
     return `
-        <tr class="${isSelected ? 'row-selected' : ''}" style="border-left: 3px solid ${rowBorderColor};">
+        <tr class="${isSelected ? 'row-selected' : ''}" style="border-left: 3px solid ${rowBorderColor};" ${accProxy ? 'title="프록시: ' + accProxy + '"' : ''}>
             <td class="checkbox-cell">
-                <div class="checkbox-wrapper" onclick="toggleSelect('${acc.id}', !state.selectedIds.has('${acc.id}'))">
+                <div class="checkbox-wrapper" onclick="toggleSelect('${acc.id}', !state.selectedIds.has('${acc.id}'), event)">
                     <input type="checkbox" ${isSelected ? 'checked' : ''}
-                        onclick="event.stopPropagation(); toggleSelect('${acc.id}', this.checked);">
+                        onclick="event.stopPropagation(); toggleSelect('${acc.id}', this.checked, event);">
                 </div>
             </td>
             <td style="text-align:center;font-size:11px;color:#888;white-space:nowrap;">${createdDate}</td>
             <td>
                 <div style="cursor:pointer;color:#111;" onclick="copyText('${acc.email}')" title="클릭하여 복사">${acc.email}</div>
                 <div style="cursor:pointer;font-size:12px;color:#888;margin-top:2px;" onclick="copyText('${acc.password}')" title="클릭하여 복사">${acc.password}</div>
+                ${accProxy ? `<div style="font-size:9px;color:#3b82f6;margin-top:1px;font-family:monospace;">${accProxy}</div>` : ''}
             </td>
             <td>
                 <div style="display:flex;align-items:center;gap:6px;">
@@ -2131,8 +2574,24 @@ function renderAccountRow(acc, rowNum) {
                     </div>
                 ` : '<span style="color:#ccc;">-</span>'}
             </td>
-            ${COUPON_CATEGORIES.map(c => `<td class="cat-cell"><div class="coupon-list">${cats[c.key].length > 0 ? renderCouponCards(acc, cats[c.key]) : '<span style="color:#ccc;">-</span>'}</div></td>`).join('')}
-            <td class="cat-cell"><div class="coupon-list">${cats.etc.length > 0 ? renderCouponCards(acc, cats.etc) : '<span style="color:#ccc;">-</span>'}</div></td>
+            ${COUPON_CATEGORIES.map(c => {
+                const catVouchers = cats[c.key];
+                const issuedDates = catVouchers.filter(v => !v.sold && !v.deleted_unused).map(v => {
+                    if (v.fetched_at) {
+                        const m = v.fetched_at.match(/(\d{2})-(\d{2})-(\d{2})/);
+                        return m ? m[1] + '/' + m[2] + '/' + m[3] : '';
+                    }
+                    if (v.expiry && v.expiry !== 'N/A') {
+                        const ed = new Date(v.expiry); ed.setMonth(ed.getMonth() - 2);
+                        return String(ed.getMonth()+1).padStart(2,'0') + '/' + String(ed.getDate()).padStart(2,'0');
+                    }
+                    return '';
+                }).filter(Boolean);
+                const latestDate = issuedDates.length > 0 ? issuedDates[issuedDates.length - 1] : '';
+                return `<td class="cat-cell"><div class="coupon-list">${catVouchers.length > 0 ? renderCouponCards(acc, catVouchers) : '<span style="color:#ccc;">-</span>'}</div></td><td style="font-size:10px;color:#888;text-align:center;white-space:nowrap;">${latestDate || '-'}</td>`;
+            }).join('')}
+            <td class="cat-cell cat-cell-etc"><div class="coupon-list">${cats.etc.length > 0 ? renderCouponCards(acc, cats.etc) : '<span style="color:#ccc;">-</span>'}</div></td>
+            <td style="font-size:11px;color:#666;max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${(acc.memo || '').replace(/"/g, '&quot;')}">${acc.memo || '-'}</td>
             <td style="font-size:11px;">
                 ${renderStatusCell(acc.web_fetch_status, acc.web_issue_status || acc.issue_status)}
             </td>
@@ -2141,7 +2600,7 @@ function renderAccountRow(acc, rowNum) {
             </td>
             <td style="text-align:center;font-size:11px;color:#666;white-space:nowrap;">
                 ${(() => {
-                    const dt = renderDatetimeCell(acc.web_fetch_status, acc.web_issue_status || acc.issue_status);
+                    const dt = renderDatetimeCell(acc);
                     return dt;
                 })()}
             </td>
@@ -2240,7 +2699,7 @@ function renderMonitorPopup() {
                                     <div class="monitor-item-check">
                                         <input type="checkbox"
                                             ${state.monitor.selectedIds?.has(item.id) ? 'checked' : ''}
-                                            onchange="toggleMonitorSelect(${item.id})"
+                                            onchange="toggleMonitorSelect('${item.id}')"
                                         />
                                     </div>
                                 ` : `
@@ -2294,6 +2753,73 @@ function renderMonitorPopup() {
 }
 
 function renderModal() {
+    // 조회 이력 모달
+    if (state.modal && state.modal.type === 'fetchHistory') {
+        const { account, history, stats } = state.modal;
+        const historyRows = history.length > 0 ? history.map((h, idx) => {
+            const dt = new Date(h.fetched_at);
+            const dateStr = dt.toLocaleDateString('ko-KR', { year: '2-digit', month: '2-digit', day: '2-digit' }).replace(/\. /g, '/').replace('.', '');
+            const timeStr = dt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
+            const isOk = h.status === 'success';
+            const statusBadge = isOk
+                ? '<span style="display:inline-block;padding:1px 6px;border-radius:10px;font-size:10px;font-weight:600;background:#dcfce7;color:#16a34a;">성공</span>'
+                : '<span style="display:inline-block;padding:1px 6px;border-radius:10px;font-size:10px;font-weight:600;background:#fef2f2;color:#ef4444;">실패</span>';
+            const msg = (h.message || '').replace(/</g, '&lt;').replace(/\[.*?\]\s*/g, '').replace(/\d{2}-\d{2}-\d{2}\s\d{2}:\d{2}/g, '').trim();
+            const bgColor = idx % 2 === 0 ? '#fff' : '#fafbfc';
+            return `<tr style="background:${bgColor};border-bottom:1px solid #f1f5f9;">
+                <td style="padding:7px 10px;white-space:nowrap;font-size:11px;color:#475569;font-variant-numeric:tabular-nums;">${dateStr} ${timeStr}</td>
+                <td style="padding:7px 6px;text-align:center;">${statusBadge}</td>
+                <td style="padding:7px 10px;font-size:11px;color:#64748b;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${(h.message || '').replace(/"/g, '&quot;')}">${msg || '-'}</td>
+                <td style="padding:4px 6px;text-align:center;width:28px;">
+                    <span onclick="deleteFetchHistoryItem(${h.id},'${account.id}')" style="cursor:pointer;font-size:13px;color:#cbd5e1;transition:color 0.1s;" onmouseover="this.style.color='#ef4444'" onmouseout="this.style.color='#cbd5e1'" title="삭제">🗑</span>
+                </td>
+            </tr>`;
+        }).join('') : '<tr><td colspan="4" style="text-align:center;padding:32px;color:#cbd5e1;font-size:12px;">조회 이력이 없습니다</td></tr>';
+
+        return `
+            <div class="modal-overlay" onmousedown="this._mdTarget=event.target" onmouseup="if(event.target===this&&this._mdTarget===this)closeModal()">
+                <div class="modal" style="max-width:500px;border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.25);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;" onclick="event.stopPropagation()">
+                    <div style="background:linear-gradient(135deg,#1e293b 0%,#334155 100%);padding:18px 20px;color:#fff;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <div style="font-size:14px;font-weight:700;letter-spacing:-0.3px;">조회 이력</div>
+                                <div style="font-size:11px;color:#94a3b8;margin-top:3px;">${account.email}</div>
+                            </div>
+                            <button onclick="closeModal()" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;padding:0 4px;line-height:1;">&times;</button>
+                        </div>
+                        <div style="display:flex;gap:10px;margin-top:14px;">
+                            <div style="flex:1;text-align:center;padding:10px 0;background:rgba(255,255,255,0.08);border-radius:8px;backdrop-filter:blur(4px);">
+                                <div style="font-size:22px;font-weight:800;color:#4ade80;">${stats.week}<span style="font-size:11px;font-weight:500;color:#86efac;">회</span></div>
+                                <div style="font-size:9px;color:#94a3b8;margin-top:2px;letter-spacing:1px;">1주</div>
+                            </div>
+                            <div style="flex:1;text-align:center;padding:10px 0;background:rgba(255,255,255,0.08);border-radius:8px;">
+                                <div style="font-size:22px;font-weight:800;color:#60a5fa;">${stats.month}<span style="font-size:11px;font-weight:500;color:#93c5fd;">회</span></div>
+                                <div style="font-size:9px;color:#94a3b8;margin-top:2px;letter-spacing:1px;">1달</div>
+                            </div>
+                            <div style="flex:1;text-align:center;padding:10px 0;background:rgba(255,255,255,0.08);border-radius:8px;">
+                                <div style="font-size:22px;font-weight:800;color:#e2e8f0;">${stats.total}<span style="font-size:11px;font-weight:500;color:#cbd5e1;">회</span></div>
+                                <div style="font-size:9px;color:#94a3b8;margin-top:2px;letter-spacing:1px;">전체</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="padding:0;max-height:340px;overflow-y:auto;background:#fff;">
+                        <table style="width:100%;border-collapse:collapse;">
+                            <thead style="position:sticky;top:0;z-index:1;">
+                                <tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0;">
+                                    <th style="padding:8px 10px;text-align:left;font-size:10px;color:#64748b;font-weight:700;letter-spacing:0.5px;">일시</th>
+                                    <th style="padding:8px 6px;text-align:center;font-size:10px;color:#64748b;font-weight:700;width:44px;">결과</th>
+                                    <th style="padding:8px 10px;text-align:left;font-size:10px;color:#64748b;font-weight:700;">상태</th>
+                                    <th style="width:28px;"></th>
+                                </tr>
+                            </thead>
+                            <tbody>${historyRows}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
     if (state.modal === 'registerMenu') {
         return `
             <div class="modal-overlay" onmousedown="this._mdTarget=event.target" onmouseup="if(event.target===this&&this._mdTarget===this)closeModal()">
@@ -2362,6 +2888,12 @@ function renderModal() {
                                 <label>메모</label>
                                 <textarea name="memo" rows="2">${acc.memo || ''}</textarea>
                             </div>
+                            ${acc.proxy_url ? `
+                            <div class="form-group">
+                                <label>프록시</label>
+                                <input type="text" value="${acc.proxy_url}" readonly style="background:#f5f5f5;color:#666;font-family:monospace;font-size:12px;">
+                            </div>
+                            ` : ''}
                             <div class="form-group toggle-group">
                                 <span class="toggle-label-text">활성화</span>
                                 <label class="toggle-switch">
@@ -2714,9 +3246,10 @@ function renderModal() {
 
     if (state.modal === 'issue-coupon') {
         const isAllActive = state.bulkIssueAllActive;
-        const targetCount = isAllActive
-            ? state.accounts.filter(a => a.is_active).length
-            : state.selectedIds.size;
+        const targetAccounts = isAllActive
+            ? state.accounts.filter(a => a.is_active)
+            : Array.from(state.selectedIds).map(id => state.accounts.find(a => a.id === id)).filter(Boolean);
+        const targetCount = targetAccounts.length;
         const issueFunc = isAllActive ? 'startIssueCouponForAllActive' : 'startIssueCoupon';
 
         const selected = state.selectedIssueCouponTypes || [];
@@ -2724,55 +3257,143 @@ function renderModal() {
         const isSelected = (type) => selected.includes(type);
         const couponNames = { '10000': '1만원', '30000': '3만원', '50000': '5만원', '100000': '10만원' };
 
-        const orderText = selected.length > 0
-            ? selected.map((t, i) => `${couponNames[t]}`).join(' → ')
-            : '';
+        // 프로모션 판단
+        const PROMO_EXPIRY_B = '2026-04-26';
+        const PROMO_POINTS_B = 600;
+        const PROMO_MAX_B = 3;
+        const NORMAL_POINTS_B = 6000;
+        const todayB = new Date().toLocaleDateString('sv-SE');
+        const isPromoActiveB = todayB >= '2026-04-10' && todayB <= '2026-04-26';
+
+        // 선택 계정별 프로모션 보유/잔여 분포 계산
+        let bulkPromoMin = PROMO_MAX_B;
+        let bulkPromoMax = 0;
+        const promoDistribution = {}; // { 잔여수: 계정수 }
+        if (isPromoActiveB) {
+            targetAccounts.forEach(acc => {
+                const vouchers = parseVouchers(acc.owned_vouchers);
+                const used = vouchers.filter(v => {
+                    if (v.sold || v.deleted_unused) return false;
+                    const info = getCouponDisplayInfo(v.description);
+                    if (!info.name.includes('100000')) return false;
+                    return (v.expiry || v.expiryDate || '').includes(PROMO_EXPIRY_B);
+                }).length;
+                const remaining = Math.max(0, PROMO_MAX_B - used);
+                bulkPromoMin = Math.min(bulkPromoMin, remaining);
+                bulkPromoMax = Math.max(bulkPromoMax, remaining);
+                promoDistribution[remaining] = (promoDistribution[remaining] || 0) + 1;
+            });
+        }
+        const curBulkPromoQty = state.issueCouponQuantity['100000_promo'] || bulkPromoMin;
+        // 선택 수량 초과 계정 수 계산
+        const overLimitCount = isPromoActiveB && curBulkPromoQty > 0
+            ? targetAccounts.filter(acc => {
+                const vouchers = parseVouchers(acc.owned_vouchers);
+                const used = vouchers.filter(v => {
+                    if (v.sold || v.deleted_unused) return false;
+                    const info = getCouponDisplayInfo(v.description);
+                    if (!info.name.includes('100000')) return false;
+                    return (v.expiry || v.expiryDate || '').includes(PROMO_EXPIRY_B);
+                }).length;
+                return (PROMO_MAX_B - used) < curBulkPromoQty;
+            }).length : 0;
+
+        const totalPoints = selected.reduce((sum, t) => {
+            const qty = state.issueCouponQuantity[t] || 1;
+            if (t === '100000_promo') return sum + qty * PROMO_POINTS_B;
+            if (t === '100000') return sum + qty * NORMAL_POINTS_B;
+            const pts = { '10000': 1500, '30000': 3000, '50000': 4000 };
+            return sum + qty * (pts[t] || 0);
+        }, 0);
 
         return `
             <div class="modal-overlay" onmousedown="this._mdTarget=event.target" onmouseup="if(event.target===this&&this._mdTarget===this)closeModal()">
-                <div class="modal" style="width:480px;" onclick="event.stopPropagation()">
-                    <div class="modal-header">
-                        <h3>조회 및 발급</h3>
-                        <button class="modal-close" onmousedown="this._mdTarget=event.target" onmouseup="if(event.target===this&&this._mdTarget===this)closeModal()">×</button>
+                <div class="modal" style="max-width:460px;border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.25);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:0;" onclick="event.stopPropagation()">
+                    <div style="background:linear-gradient(135deg,#1e293b 0%,#334155 100%);padding:16px 20px;color:#fff;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <div style="font-size:14px;font-weight:700;">일괄 조회 및 발급</div>
+                                <div style="font-size:11px;color:#94a3b8;margin-top:2px;">${targetCount}개 계정 선택됨</div>
+                            </div>
+                            <button onclick="closeModal()" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;padding:0 4px;line-height:1;">&times;</button>
+                        </div>
                     </div>
-                    <div class="modal-body">
-                        <p style="font-size:14px;color:#334155;margin-bottom:6px;">선택된 <strong>${targetCount}개</strong> 계정을 조회합니다.</p>
-                        <p style="font-size:13px;color:#94a3b8;margin-bottom:20px;">쿠폰 발급 시 순서대로 선택하세요.</p>
 
-                        <div class="coupon-issue-grid">
-                            <div class="coupon-issue-card ${isSelected('10000') ? 'selected' : ''}" onclick="toggleIssueCouponType('10000')">
-                                ${getOrder('10000') ? `<div class="coupon-order-badge">${getOrder('10000')}</div>` : ''}
-                                <div class="coupon-issue-value">1만원</div>
-                                <div class="coupon-issue-points">1,500P</div>
-                            </div>
-                            <div class="coupon-issue-card ${isSelected('30000') ? 'selected' : ''}" onclick="toggleIssueCouponType('30000')">
-                                ${getOrder('30000') ? `<div class="coupon-order-badge">${getOrder('30000')}</div>` : ''}
-                                <div class="coupon-issue-value">3만원</div>
-                                <div class="coupon-issue-points">3,000P</div>
-                            </div>
-                            <div class="coupon-issue-card ${isSelected('50000') ? 'selected' : ''}" onclick="toggleIssueCouponType('50000')">
-                                ${getOrder('50000') ? `<div class="coupon-order-badge">${getOrder('50000')}</div>` : ''}
-                                <div class="coupon-issue-value">5만원</div>
-                                <div class="coupon-issue-points">4,000P</div>
-                            </div>
-                            <div class="coupon-issue-card ${isSelected('100000') ? 'selected' : ''}" onclick="toggleIssueCouponType('100000')">
-                                ${getOrder('100000') ? `<div class="coupon-order-badge">${getOrder('100000')}</div>` : ''}
-                                <div class="coupon-issue-value">10만원</div>
-                                <div class="coupon-issue-points">6,000P</div>
-                            </div>
+                    <div style="padding:16px 20px;">
+                        <div style="font-size:10px;color:#64748b;font-weight:600;margin-bottom:8px;letter-spacing:0.5px;">쿠폰 선택 (순서대로)</div>
+                        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;">
+                            ${[
+                                { type: '10000', name: '1만원', points: '1,500P' },
+                                { type: '30000', name: '3만원', points: '3,000P' },
+                                { type: '50000', name: '5만원', points: '4,000P' },
+                                { type: '100000', name: '10만원', points: '6,000P' },
+                            ].map(c => `
+                                <div onclick="toggleIssueCouponType('${c.type}')" style="position:relative;text-align:center;padding:10px 4px;border-radius:8px;cursor:pointer;transition:all 0.15s;border:2px solid ${isSelected(c.type) ? '#2563eb' : '#e2e8f0'};background:${isSelected(c.type) ? '#eff6ff' : '#fff'};">
+                                    ${getOrder(c.type) ? `<div style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:#2563eb;color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;">${getOrder(c.type)}</div>` : ''}
+                                    <div style="font-size:14px;font-weight:700;color:#1e293b;">${c.name}</div>
+                                    <div style="font-size:10px;color:#64748b;margin-top:2px;">${c.points}</div>
+                                </div>
+                            `).join('')}
                         </div>
 
+                        ${isPromoActiveB ? `
+                            <div style="margin-top:10px;padding:8px 10px;background:#fef9c3;border-radius:6px;border:1px solid #fbbf24;">
+                                <div style="display:flex;align-items:center;gap:6px;">
+                                    <span style="font-size:11px;">🔥</span>
+                                    <span style="font-size:11px;font-weight:700;color:#92400e;">프로모션 10만원</span>
+                                    <span style="font-size:9px;color:#a16207;">${PROMO_POINTS_B}P · ~4/26</span>
+                                    <div onclick="toggleIssueCouponType('100000_promo')" style="margin-left:auto;padding:3px 10px;border-radius:4px;cursor:pointer;border:1.5px solid ${isSelected('100000_promo') ? '#d97706' : '#e5e7eb'};background:${isSelected('100000_promo') ? '#fef3c7' : '#fff'};font-size:10px;font-weight:600;color:${isSelected('100000_promo') ? '#92400e' : '#9ca3af'};">
+                                        ${getOrder('100000_promo') ? `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:#d97706;color:#fff;font-size:8px;text-align:center;line-height:14px;margin-right:3px;">${getOrder('100000_promo')}</span>` : ''}${isSelected('100000_promo') ? '선택됨' : '선택'}
+                                    </div>
+                                </div>
+                                ${isSelected('100000_promo') ? `
+                                    <div style="margin-top:6px;max-height:150px;overflow-y:auto;border:1px solid #fde68a;border-radius:4px;background:#fffef5;">
+                                        <table style="width:100%;border-collapse:collapse;font-size:10px;">
+                                            <thead><tr style="background:#fef3c7;position:sticky;top:0;">
+                                                <th style="padding:3px 6px;text-align:left;color:#92400e;font-weight:600;">계정</th>
+                                                <th style="padding:3px 4px;text-align:center;color:#92400e;font-weight:600;width:40px;">최대</th>
+                                                <th style="padding:3px 6px;text-align:center;color:#92400e;font-weight:600;width:80px;">수량</th>
+                                            </tr></thead>
+                                            <tbody>${targetAccounts.map((acc, i) => {
+                                                const maxR = getAccountPromoRemaining(acc);
+                                                const curQ = state.bulkPromoQuantity[acc.id] ?? maxR;
+                                                return `<tr style="border-top:1px solid #fef3c7;${maxR === 0 ? 'opacity:0.4;' : ''}">
+                                                    <td style="padding:2px 6px;color:#78350f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px;">${acc.email}</td>
+                                                    <td style="padding:2px 4px;text-align:center;color:#a16207;">${maxR}</td>
+                                                    <td style="padding:2px 6px;text-align:center;" onclick="event.stopPropagation()">
+                                                        ${maxR > 0 ? `<div style="display:flex;align-items:center;justify-content:center;gap:2px;">
+                                                            <button onclick="setBulkPromoQty('${acc.id}',${curQ - 1})" style="width:18px;height:18px;border:1px solid #d97706;border-radius:3px;background:#fffbeb;cursor:pointer;font-size:10px;color:#92400e;padding:0;">-</button>
+                                                            <span style="font-weight:700;color:#92400e;min-width:12px;">${curQ}</span>
+                                                            <button onclick="setBulkPromoQty('${acc.id}',${curQ + 1})" style="width:18px;height:18px;border:1px solid #d97706;border-radius:3px;background:#fffbeb;cursor:pointer;font-size:10px;color:#92400e;padding:0;">+</button>
+                                                        </div>` : '<span style="color:#dc2626;">소진</span>'}
+                                                    </td>
+                                                </tr>`;
+                                            }).join('')}</tbody>
+                                        </table>
+                                    </div>
+                                ` : ''}
+                            </div>
+                        ` : ''}
+
                         ${selected.length > 0 ? `
-                            <div class="coupon-order-summary">
-                                <span class="order-label">발급 순서</span>
-                                <span class="order-value">${orderText}</span>
+                            <div style="margin-top:12px;padding:8px 12px;background:#f8fafc;border-radius:6px;display:flex;align-items:center;justify-content:space-between;">
+                                <div>
+                                    <span style="font-size:10px;color:#64748b;">발급 순서: </span>
+                                    <span style="font-size:11px;font-weight:600;color:#1e293b;">${selected.map(t => {
+                                        const qty = state.issueCouponQuantity[t] || 1;
+                                        const name = t === '100000_promo' ? '10만원(프로모션)' : (couponNames[t] || t);
+                                        return qty > 1 ? `${name}×${qty}` : name;
+                                    }).join(' → ')}</span>
+                                </div>
+                                <span style="font-size:11px;font-weight:700;color:#2563eb;">${totalPoints.toLocaleString()}P/계정</span>
                             </div>
                         ` : ''}
                     </div>
-                    <div class="modal-footer">
-                        <button class="btn btn-default" onmousedown="this._mdTarget=event.target" onmouseup="if(event.target===this&&this._mdTarget===this)closeModal()">취소</button>
-                        <button class="btn btn-primary" onclick="${issueFunc}()">
-                            ${selected.length > 0 ? `조회 + 발급 시작` : '조회 시작'}
+
+                    <div style="padding:12px 20px;background:#f8fafc;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:8px;">
+                        <button onclick="closeModal()" style="padding:7px 16px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer;font-size:12px;color:#475569;font-weight:500;">취소</button>
+                        <button onclick="${issueFunc}()" style="padding:7px 16px;border:none;border-radius:6px;background:linear-gradient(135deg,#1e293b,#334155);cursor:pointer;font-size:12px;color:#fff;font-weight:600;">
+                            ${selected.length > 0 ? '조회 + 발급 시작' : '조회 시작'}
                         </button>
                     </div>
                 </div>
@@ -2786,55 +3407,124 @@ function renderModal() {
         const isSelected = (type) => selected.includes(type);
         const couponNames = { '10000': '1만원', '30000': '3만원', '50000': '5만원', '100000': '10만원' };
 
+        // 10만원 프로모션 판단 (4/10~4/26: 600P, 최대 3장)
+        const PROMO_EXPIRY = '2026-04-26';
+        const PROMO_POINTS = 600;
+        const PROMO_MAX = 3;
+        const NORMAL_POINTS = 6000;
+        const today = new Date().toLocaleDateString('sv-SE'); // 'YYYY-MM-DD' 로컬 시간 기준
+        const isPromoActive = today >= '2026-04-10' && today <= '2026-04-26';
+
+        let promoUsed = 0;
+        let promoInfo = '';
+        const accForModal = state.accounts.find(a => a.id === state.singleIssueCouponAccountId);
+        if (accForModal) {
+            const vouchers = parseVouchers(accForModal.owned_vouchers);
+            promoUsed = vouchers.filter(v => {
+                if (v.sold || v.deleted_unused) return false;
+                const info = getCouponDisplayInfo(v.description);
+                if (!info.name.includes('100000')) return false;
+                const exp = v.expiry || v.expiryDate || '';
+                return exp.includes(PROMO_EXPIRY);
+            }).length;
+        }
+        const promoRemaining = Math.max(0, PROMO_MAX - promoUsed);
+        const cur100kPromoQty = state.issueCouponQuantity['100000_promo'] || promoRemaining;
+        const cur100kQty = state.issueCouponQuantity['100000'] || 1;
+
+        if (isPromoActive) {
+            promoInfo = `<div style="margin-top:10px;padding:10px 12px;background:linear-gradient(135deg,#fef3c7,#fde68a);border-radius:8px;border:1px solid #fbbf24;">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                    <span style="font-size:14px;">🔥</span>
+                    <span style="font-size:12px;font-weight:700;color:#92400e;">프로모션 진행중</span>
+                    <span style="font-size:10px;color:#a16207;">~4/26</span>
+                </div>
+                <div style="font-size:11px;color:#78350f;">10만원권 <strong>${PROMO_POINTS}P</strong> (정가 ${NORMAL_POINTS}P) · 최대 ${PROMO_MAX}장</div>
+                <div style="font-size:11px;color:#92400e;margin-top:2px;">보유 ${promoUsed}장 · <strong style="color:#dc2626;">잔여 ${promoRemaining}장</strong> 발급 가능</div>
+            </div>`;
+        }
+
         const orderText = selected.length > 0
             ? selected.map((t, i) => `${couponNames[t]}`).join(' → ')
             : '';
 
+        const totalPoints = selected.reduce((sum, t) => {
+            const qty = state.issueCouponQuantity[t] || 1;
+            if (t === '100000_promo') return sum + qty * PROMO_POINTS;
+            if (t === '100000') return sum + qty * NORMAL_POINTS;
+            const pts = { '10000': 1500, '30000': 3000, '50000': 4000 };
+            return sum + qty * (pts[t] || 0);
+        }, 0);
+
         return `
             <div class="modal-overlay" onmousedown="this._mdTarget=event.target" onmouseup="if(event.target===this&&this._mdTarget===this)closeModal()">
-                <div class="modal" style="width:480px;" onclick="event.stopPropagation()">
-                    <div class="modal-header">
-                        <h3>조회 및 발급</h3>
-                        <button class="modal-close" onmousedown="this._mdTarget=event.target" onmouseup="if(event.target===this&&this._mdTarget===this)closeModal()">×</button>
+                <div class="modal" style="max-width:460px;border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.25);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:0;" onclick="event.stopPropagation()">
+                    <div style="background:linear-gradient(135deg,#1e293b 0%,#334155 100%);padding:16px 20px;color:#fff;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <div style="font-size:14px;font-weight:700;">조회 및 발급</div>
+                                <div style="font-size:11px;color:#94a3b8;margin-top:2px;">${state.singleIssueCouponEmail || ''}</div>
+                            </div>
+                            <button onclick="closeModal()" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;padding:0 4px;line-height:1;">&times;</button>
+                        </div>
                     </div>
-                    <div class="modal-body">
-                        <p style="font-size:14px;color:#334155;margin-bottom:6px;"><strong>${state.singleIssueCouponEmail || ''}</strong> 계정을 조회합니다.</p>
-                        <p style="font-size:13px;color:#94a3b8;margin-bottom:20px;">쿠폰 발급 시 순서대로 선택하세요.</p>
 
-                        <div class="coupon-issue-grid">
-                            <div class="coupon-issue-card ${isSelected('10000') ? 'selected' : ''}" onclick="toggleIssueCouponType('10000')">
-                                ${getOrder('10000') ? `<div class="coupon-order-badge">${getOrder('10000')}</div>` : ''}
-                                <div class="coupon-issue-value">1만원</div>
-                                <div class="coupon-issue-points">1,500P</div>
-                            </div>
-                            <div class="coupon-issue-card ${isSelected('30000') ? 'selected' : ''}" onclick="toggleIssueCouponType('30000')">
-                                ${getOrder('30000') ? `<div class="coupon-order-badge">${getOrder('30000')}</div>` : ''}
-                                <div class="coupon-issue-value">3만원</div>
-                                <div class="coupon-issue-points">3,000P</div>
-                            </div>
-                            <div class="coupon-issue-card ${isSelected('50000') ? 'selected' : ''}" onclick="toggleIssueCouponType('50000')">
-                                ${getOrder('50000') ? `<div class="coupon-order-badge">${getOrder('50000')}</div>` : ''}
-                                <div class="coupon-issue-value">5만원</div>
-                                <div class="coupon-issue-points">4,000P</div>
-                            </div>
-                            <div class="coupon-issue-card ${isSelected('100000') ? 'selected' : ''}" onclick="toggleIssueCouponType('100000')">
-                                ${getOrder('100000') ? `<div class="coupon-order-badge">${getOrder('100000')}</div>` : ''}
-                                <div class="coupon-issue-value">10만원</div>
-                                <div class="coupon-issue-points">6,000P</div>
-                            </div>
+                    <div style="padding:16px 20px;">
+                        <div style="font-size:10px;color:#64748b;font-weight:600;margin-bottom:8px;letter-spacing:0.5px;">쿠폰 선택 (순서대로)</div>
+                        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;">
+                            ${[
+                                { type: '10000', name: '1만원', points: '1,500P' },
+                                { type: '30000', name: '3만원', points: '3,000P' },
+                                { type: '50000', name: '5만원', points: '4,000P' },
+                                { type: '100000', name: '10만원', points: '6,000P' },
+                            ].map(c => `
+                                <div onclick="toggleIssueCouponType('${c.type}')" style="position:relative;text-align:center;padding:10px 4px;border-radius:8px;cursor:pointer;transition:all 0.15s;border:2px solid ${isSelected(c.type) ? '#2563eb' : '#e2e8f0'};background:${isSelected(c.type) ? '#eff6ff' : '#fff'};">
+                                    ${getOrder(c.type) ? `<div style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:#2563eb;color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;">${getOrder(c.type)}</div>` : ''}
+                                    <div style="font-size:14px;font-weight:700;color:#1e293b;">${c.name}</div>
+                                    <div style="font-size:10px;color:#64748b;margin-top:2px;">${c.points}</div>
+                                </div>
+                            `).join('')}
                         </div>
 
+
+                        ${isPromoActive ? `
+                            <div style="margin-top:10px;padding:6px 10px;background:#fef9c3;border-radius:6px;border:1px solid #fbbf24;display:flex;align-items:center;gap:6px;">
+                                <span style="font-size:11px;">🔥</span>
+                                <span style="font-size:11px;font-weight:700;color:#92400e;">프로모션 10만원</span>
+                                <span style="font-size:9px;color:#a16207;">${PROMO_POINTS}P · ~4/26</span>
+                                ${promoRemaining > 0 ? `
+                                    <div style="display:flex;align-items:center;gap:4px;margin-left:auto;" onclick="event.stopPropagation()">
+                                        <button onclick="event.stopPropagation();setIssueCouponQuantity('100000_promo', ${cur100kPromoQty - 1})" style="width:20px;height:20px;border:1px solid #d97706;border-radius:4px;background:#fffbeb;cursor:pointer;font-size:11px;color:#92400e;padding:0;">-</button>
+                                        <span style="font-size:12px;font-weight:700;color:#92400e;min-width:14px;text-align:center;">${cur100kPromoQty}</span>
+                                        <button onclick="event.stopPropagation();setIssueCouponQuantity('100000_promo', ${cur100kPromoQty + 1})" style="width:20px;height:20px;border:1px solid #d97706;border-radius:4px;background:#fffbeb;cursor:pointer;font-size:11px;color:#92400e;padding:0;">+</button>
+                                        <span style="font-size:9px;color:#92400e;">장</span>
+                                        <div onclick="toggleIssueCouponType('100000_promo')" style="position:relative;padding:3px 10px;border-radius:4px;cursor:pointer;border:1.5px solid ${isSelected('100000_promo') ? '#d97706' : '#e5e7eb'};background:${isSelected('100000_promo') ? '#fef3c7' : '#fff'};font-size:10px;font-weight:600;color:${isSelected('100000_promo') ? '#92400e' : '#9ca3af'};">
+                                            ${getOrder('100000_promo') ? `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:#d97706;color:#fff;font-size:8px;text-align:center;line-height:14px;margin-right:3px;">${getOrder('100000_promo')}</span>` : ''}${isSelected('100000_promo') ? '선택됨' : '선택'}
+                                        </div>
+                                    </div>
+                                ` : '<span style="font-size:10px;color:#dc2626;font-weight:600;margin-left:auto;">한도 소진</span>'}
+                            </div>
+                        ` : ''}
+
                         ${selected.length > 0 ? `
-                            <div class="coupon-order-summary">
-                                <span class="order-label">발급 순서</span>
-                                <span class="order-value">${orderText}</span>
+                            <div style="margin-top:12px;padding:8px 12px;background:#f8fafc;border-radius:6px;display:flex;align-items:center;justify-content:space-between;">
+                                <div>
+                                    <span style="font-size:10px;color:#64748b;">발급 순서: </span>
+                                    <span style="font-size:11px;font-weight:600;color:#1e293b;">${selected.map(t => {
+                                        const qty = state.issueCouponQuantity[t] || 1;
+                                        const name = t === '100000_promo' ? '10만원(프로모션)' : (couponNames[t] || t);
+                                        return qty > 1 ? `${name}×${qty}` : name;
+                                    }).join(' → ')}</span>
+                                </div>
+                                <span style="font-size:11px;font-weight:700;color:#2563eb;">${totalPoints.toLocaleString()}P</span>
                             </div>
                         ` : ''}
                     </div>
-                    <div class="modal-footer">
-                        <button class="btn btn-default" onmousedown="this._mdTarget=event.target" onmouseup="if(event.target===this&&this._mdTarget===this)closeModal()">취소</button>
-                        <button class="btn btn-primary" onclick="startIssueCouponForAccount()">
-                            ${selected.length > 0 ? `조회 + 발급 시작` : '조회 시작'}
+
+                    <div style="padding:12px 20px;background:#f8fafc;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:8px;">
+                        <button onclick="closeModal()" style="padding:7px 16px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer;font-size:12px;color:#475569;font-weight:500;">취소</button>
+                        <button onclick="startIssueCouponForAccount()" style="padding:7px 16px;border:none;border-radius:6px;background:linear-gradient(135deg,#1e293b,#334155);cursor:pointer;font-size:12px;color:#fff;font-weight:600;">
+                            ${selected.length > 0 ? '조회 + 발급 시작' : '조회 시작'}
                         </button>
                     </div>
                 </div>
@@ -2969,38 +3659,62 @@ teayoouun1@naver.com
     if (state.modal && state.modal.type === 'proxy') {
         const ps = state.modal.proxyStatus || {};
         const proxyText = state.modal.proxyText || '';
+        const proxyGroups = ps.proxyGroups || [];
+        const isEditing = state.modal.proxyEditing || false;
+        const proxyCount = proxyText.split('\n').filter(l => l.trim()).length;
+
+        let contentHtml;
+        if (isEditing) {
+            // 편집 모드: textarea
+            contentHtml = `
+                <div style="margin-bottom:12px;">
+                    <textarea id="proxyListTextarea" rows="14" style="width:100%;font-family:monospace;font-size:11px;border:1px solid #d1d5db;border-radius:6px;padding:10px;resize:vertical;color:#333;line-height:1.6;" placeholder="IP:PORT (줄바꿈 구분)" oninput="if(state.modal)state.modal.proxyText=this.value">${proxyText}</textarea>
+                    <div style="font-size:11px;color:#999;margin-top:4px;">${proxyCount}개 프록시</div>
+                </div>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn btn-primary" onclick="saveProxyList()">저장</button>
+                    <button class="btn btn-default" onclick="state.modal.proxyEditing=false;render()">취소</button>
+                </div>`;
+        } else {
+            // 프록시 목록 표시
+            const lines = proxyText.split('\n').filter(l => l.trim());
+            const rows = lines.map((l, i) => `<tr><td style="padding:3px 8px;font-size:11px;color:#888;">${i+1}</td><td style="font-family:monospace;font-size:11px;padding:3px 8px;">${l.trim()}</td></tr>`).join('');
+            contentHtml = `
+                <div style="max-height:320px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px;margin-bottom:12px;">
+                    <table style="width:100%;border-collapse:collapse;">
+                        <thead><tr style="background:#f9fafb;position:sticky;top:0;">
+                            <th style="text-align:left;padding:4px 8px;font-size:10px;color:#999;border-bottom:1px solid #e5e7eb;width:30px;">#</th>
+                            <th style="text-align:left;padding:4px 8px;font-size:10px;color:#999;border-bottom:1px solid #e5e7eb;">IP:PORT</th>
+                        </tr></thead>
+                        <tbody>${rows || '<tr><td colspan="2" style="text-align:center;padding:20px;color:#999;">프록시 없음</td></tr>'}</tbody>
+                    </table>
+                </div>
+                <button class="btn btn-default" onclick="state.modal.proxyEditing=true;render()">목록 수정</button>`;
+        }
+
         return `
             <div class="modal-overlay" onmousedown="this._mdTarget=event.target" onmouseup="if(event.target===this&&this._mdTarget===this)closeModal()">
-                <div class="modal" style="width:600px;" onclick="event.stopPropagation()">
+                <div class="modal" style="width:500px;" onclick="event.stopPropagation()">
                     <div class="modal-header">
                         <h3>프록시 관리</h3>
                         <button class="modal-close" onmousedown="this._mdTarget=event.target" onmouseup="if(event.target===this&&this._mdTarget===this)closeModal()">×</button>
                     </div>
                     <div class="modal-body">
-                        <div style="display:flex;gap:12px;margin-bottom:16px;">
-                            <div style="flex:1;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:12px;text-align:center;">
-                                <div style="font-size:24px;font-weight:700;color:#0369a1;">${ps.total || 0}</div>
-                                <div style="font-size:11px;color:#64748b;">전체 계정</div>
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding:10px 14px;background:${getUserProxySetting() ? '#eff6ff' : '#f9fafb'};border:1px solid ${getUserProxySetting() ? '#bfdbfe' : '#e5e7eb'};border-radius:8px;">
+                            <div>
+                                <div style="font-size:13px;font-weight:600;color:#333;">프록시 ${getUserProxySetting() ? 'ON' : 'OFF'} <span style="font-weight:400;color:#888;">(${currentUser?.fullName || ''})</span></div>
+                                <div style="font-size:11px;color:#888;">ON 시 조회/발급에 프록시 적용</div>
                             </div>
-                            <div style="flex:1;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px;text-align:center;">
-                                <div style="font-size:24px;font-weight:700;color:#15803d;">${ps.assigned || 0}</div>
-                                <div style="font-size:11px;color:#64748b;">프록시 배정</div>
-                            </div>
-                            <div style="flex:1;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px;text-align:center;">
-                                <div style="font-size:24px;font-weight:700;color:#dc2626;">${ps.unassigned || 0}</div>
-                                <div style="font-size:11px;color:#64748b;">미배정</div>
-                            </div>
+                            <label style="position:relative;display:inline-block;width:44px;height:24px;cursor:pointer;">
+                                <input type="checkbox" ${getUserProxySetting() ? 'checked' : ''} onchange="toggleUserProxy();openProxyModal()" style="opacity:0;width:0;height:0;">
+                                <span style="position:absolute;inset:0;background:${getUserProxySetting() ? '#3b82f6' : '#ccc'};border-radius:12px;transition:0.2s;"></span>
+                                <span style="position:absolute;top:2px;left:${getUserProxySetting() ? '22px' : '2px'};width:20px;height:20px;background:#fff;border-radius:50%;transition:0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></span>
+                            </label>
                         </div>
-                        <div style="margin-bottom:12px;">
-                            <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px;">프록시 목록 (IP:PORT, 줄바꿈 구분)</label>
-                            <textarea id="proxyListTextarea" rows="10" style="width:100%;font-family:monospace;font-size:12px;border:1px solid #d1d5db;border-radius:6px;padding:8px;resize:vertical;">${proxyText}</textarea>
-                            <div style="font-size:11px;color:#64748b;margin-top:4px;">총 ${proxyText.split('\\n').filter(l => l.trim()).length}개 프록시</div>
+                        <div style="margin-bottom:14px;font-size:13px;color:#555;">
+                            프록시 <strong>${proxyCount}</strong>개 등록됨
                         </div>
-                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                            <button class="btn btn-primary" onclick="saveProxyList()">목록 저장</button>
-                            <button class="btn btn-default" style="background:#15803d;color:#fff;" onclick="autoAssignProxy()">자동 배정 (미배정 계정)</button>
-                            <button class="btn btn-default" style="background:#dc2626;color:#fff;" onclick="clearAllProxy()">전체 해제</button>
-                        </div>
+                        ${contentHtml}
                     </div>
                     <div class="modal-footer">
                         <button class="btn btn-default" onmousedown="this._mdTarget=event.target" onmouseup="if(event.target===this&&this._mdTarget===this)closeModal()">닫기</button>
@@ -3074,7 +3788,14 @@ function hasActiveFilters() {
         state.filters.workStatuses.length > 0 ||
         state.filters.expiringCoupon ||
         state.filters.has100kCoupon ||
+        state.filters.canIssue100k ||
+        state.filters.noIssue100k ||
+        state.filters.canIssueBirthday ||
+        state.filters.has50kCoupon ||
+        state.filters.has15pCoupon ||
+        state.filters.has20pCoupon ||
         state.filters.excludeSoldCoupon ||
+        state.filters.excludeExpiredCoupon ||
         state.filters.dateAfter !== '' ||
         state.filters.dateBefore !== '' ||
         state.filters.createdAfter !== '' ||
@@ -3092,9 +3813,16 @@ function getActiveFilterCount() {
     count += state.filters.levels.length;
     if (state.filters.minPoints !== '' || state.filters.maxPoints !== '') count++;
     if (state.filters.excludeSoldCoupon) count++;
+    if (state.filters.excludeExpiredCoupon) count++;
     count += state.filters.workStatuses.length;
     if (state.filters.expiringCoupon) count++;
     if (state.filters.has100kCoupon) count++;
+    if (state.filters.canIssue100k) count++;
+    if (state.filters.noIssue100k) count++;
+    if (state.filters.canIssueBirthday) count++;
+    if (state.filters.has50kCoupon) count++;
+    if (state.filters.has15pCoupon) count++;
+    if (state.filters.has20pCoupon) count++;
     if (state.filters.dateAfter !== '') count++;
     if (state.filters.dateBefore !== '') count++;
     count += state.filters.birthdayMonths.length;
@@ -3295,10 +4023,13 @@ function renderFilterBar() {
 
             <!-- 쿠폰 -->
             <div style="position:relative; display:inline-block;">
-                ${chip('couponType', '쿠폰', couponTypeCount + (state.filters.excludeSoldCoupon ? 1 : 0))}
+                ${chip('couponType', '쿠폰', couponTypeCount + (state.filters.excludeSoldCoupon ? 1 : 0) + (state.filters.excludeExpiredCoupon ? 1 : 0))}
                 <div class="filter-popover ${op === 'couponType' ? 'show' : ''}" style="min-width:220px;">
                     <button class="fp-option ${state.filters.excludeSoldCoupon ? 'active' : ''}" onclick="event.stopPropagation(); toggleExcludeSoldCoupon()">
                         <span class="fp-check">${state.filters.excludeSoldCoupon ? '&#10003;' : ''}</span> 사용완료 제외
+                    </button>
+                    <button class="fp-option ${state.filters.excludeExpiredCoupon ? 'active' : ''}" onclick="event.stopPropagation(); toggleExcludeExpiredCoupon()">
+                        <span class="fp-check">${state.filters.excludeExpiredCoupon ? '&#10003;' : ''}</span> 기간만료 제외
                     </button>
                     ${availableCouponTypes.length > 0 ? `
                     <div style="border-top:1px solid #f1f5f9;margin:4px 0;"></div>
@@ -3384,6 +4115,12 @@ function renderFilterBar() {
                     <button class="filter-reset-btn" onclick="clearAllFilters()">초기화</button>
                 </div>
             ` : ''}
+
+            ${getUserProxySetting() ? `
+                <div style="margin-left:auto;display:flex;align-items:center;gap:4px;background:#3b82f6;color:#fff;padding:4px 10px;border-radius:12px;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer;" onclick="openProxyModal()" title="클릭하여 프록시 관리">
+                    <span style="font-size:8px;">●</span> 프록시 ON
+                </div>
+            ` : ''}
         </div>
     `;
 }
@@ -3395,7 +4132,7 @@ function clearSingleFilter(name) {
         case 'email': state.filters.emailTypes = []; break;
         case 'level': state.filters.levels = []; break;
         case 'work': state.filters.workStatuses = []; state.filters.dateAfter = ''; state.filters.dateBefore = ''; break;
-        case 'couponType': state.filters.couponTypes = []; state.filters.excludeSoldCoupon = false; break;
+        case 'couponType': state.filters.couponTypes = []; state.filters.excludeSoldCoupon = false; state.filters.excludeExpiredCoupon = false; break;
         case 'points': state.filters.minPoints = ''; state.filters.maxPoints = ''; break;
         case 'birthday': state.filters.birthdayMonths = []; break;
         case 'created': state.filters.createdAfter = ''; state.filters.createdBefore = ''; break;
@@ -3429,17 +4166,25 @@ function toggleExcludeSoldCoupon() {
     render();
 }
 
+function toggleExcludeExpiredCoupon() {
+    state.filters.excludeExpiredCoupon = !state.filters.excludeExpiredCoupon;
+    state.currentPage = 1;
+    render();
+}
+
 // 목록 필터 모달
 // ========== 프록시 관리 ==========
+function toggleUserProxy() {
+    const current = getUserProxySetting();
+    setUserProxySetting(!current);
+    notifySuccess(`프록시 ${!current ? 'ON' : 'OFF'} (${currentUser?.fullName || currentUser?.username || ''})`);
+}
+
 async function openProxyModal() {
     try {
-        const [statusRes, listRes] = await Promise.all([
-            fetch(`${API_BASE}/proxy/status`).then(r => r.json()),
-            fetch(`${API_BASE}/proxy/list`).then(r => r.json())
-        ]);
+        const listRes = await fetch(`${API_BASE}/proxy/list`).then(r => r.json());
         state.modal = {
             type: 'proxy',
-            proxyStatus: statusRes,
             proxyText: (listRes.proxies || []).join('\n')
         };
         render();
@@ -3448,58 +4193,82 @@ async function openProxyModal() {
     }
 }
 
+function setProxyLoading(loading) {
+    const existing = document.getElementById('proxy-loading-overlay');
+    if (loading && !existing) {
+        const overlay = document.createElement('div');
+        overlay.id = 'proxy-loading-overlay';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.4);z-index:10000;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+        overlay.onclick = () => { overlay.remove(); };
+        overlay.innerHTML = '<div style="background:#fff;border-radius:12px;padding:24px 32px;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.2);"><div style="width:32px;height:32px;border:3px solid #e5e7eb;border-top-color:#333;border-radius:50%;animation:spin 0.6s linear infinite;margin:0 auto;"></div><div style="margin-top:10px;font-size:13px;color:#555;">처리 중... (클릭하여 닫기)</div></div>';
+        document.body.appendChild(overlay);
+    } else if (!loading && existing) {
+        existing.remove();
+    }
+}
+
 async function saveProxyList() {
     const textarea = document.getElementById('proxyListTextarea');
     if (!textarea) return;
+    const text = textarea.value;
+    setProxyLoading(true);
     try {
         const res = await fetch(`${API_BASE}/proxy/save`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ proxies: textarea.value })
+            body: JSON.stringify({ proxies: text })
         });
         const data = await res.json();
         if (data.success) {
             notifySuccess(`프록시 ${data.count}개 저장 완료`);
-            openProxyModal(); // 새로고침
         } else {
             notifyError('저장 실패: ' + data.error);
         }
     } catch (e) {
         notifyError('저장 실패: ' + e.message);
+    } finally {
+        setProxyLoading(false);
     }
+    await openProxyModal();
 }
 
 async function autoAssignProxy() {
+    setProxyLoading(true);
     try {
         const res = await fetch(`${API_BASE}/proxy/assign`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
         const data = await res.json();
         if (data.success) {
             notifySuccess(`${data.assigned}개 계정에 프록시 배정 완료`);
-            openProxyModal();
             loadAccounts();
         } else {
             notifyError('배정 실패: ' + (data.error || data.message));
         }
     } catch (e) {
         notifyError('배정 실패: ' + e.message);
+    } finally {
+        setProxyLoading(false);
     }
+    await openProxyModal();
 }
 
 async function clearAllProxy() {
     if (!confirm('모든 계정의 프록시 배정을 해제하시겠습니까?')) return;
+    setProxyLoading(true);
     try {
         const res = await fetch(`${API_BASE}/proxy/clear`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
         const data = await res.json();
         if (data.success) {
             notifySuccess(`${data.cleared}개 계정 프록시 해제 완료`);
-            openProxyModal();
             loadAccounts();
         } else {
             notifyError('해제 실패: ' + data.error);
         }
     } catch (e) {
         notifyError('해제 실패: ' + e.message);
+    } finally {
+        setProxyLoading(false);
     }
+    await openProxyModal();
 }
 
 function openListFilterModal() {
@@ -3679,12 +4448,19 @@ function clearAllFilters() {
         couponTypes: [],
         hasCoupon: [],
         excludeSoldCoupon: false,
+        excludeExpiredCoupon: false,
         status: [],
         emailTypes: [],
         levels: [],
         workStatuses: [],
         expiringCoupon: false,
         has100kCoupon: false,
+        canIssue100k: false,
+        noIssue100k: false,
+        canIssueBirthday: false,
+        has50kCoupon: false,
+        has15pCoupon: false,
+        has20pCoupon: false,
         dateAfter: '',
         dateBefore: '',
         createdAfter: '',
@@ -3693,31 +4469,35 @@ function clearAllFilters() {
         couponFetchedBefore: '',
         barcodeList: '',
         emailList: '',
+        categorySubtypes: { amount: [], percent: [] },
+        categorySoldTo: { amount: [], percent: [] },
+        memoValues: [],
     };
+    state.headerCategoryFilter = null;
+    state.headerStatusFilter = false;
+    state.headerMemoFilter = false;
     state.currentPage = 1;
     render();
 }
 
 // 만료 예정 쿠폰 필터 토글
-function toggleExpiringCouponFilter() {
-    state.filters.expiringCoupon = !state.filters.expiringCoupon;
-    if (state.filters.expiringCoupon) {
-        state.filters.has100kCoupon = false;
-    }
+const STAT_FILTER_KEYS = ['expiringCoupon', 'has100kCoupon', 'has50kCoupon', 'has15pCoupon', 'has20pCoupon', 'canIssue100k', 'noIssue100k', 'canIssueBirthday'];
+function toggleStatFilter(key) {
+    const newVal = !state.filters[key];
+    // 다른 카드 필터 모두 해제
+    STAT_FILTER_KEYS.forEach(k => { state.filters[k] = false; });
+    state.filters[key] = newVal;
     state.currentPage = 1;
     render();
 }
-
-// 10만원 쿠폰 보유 필터 토글
-function toggle100kCouponFilter() {
-    state.filters.has100kCoupon = !state.filters.has100kCoupon;
-    if (state.filters.has100kCoupon) {
-        state.filters.expiringCoupon = false;
-    }
-    state.currentPage = 1;
-    render();
-}
-
+function toggleExpiringCouponFilter() { toggleStatFilter('expiringCoupon'); }
+function toggle100kCouponFilter() { toggleStatFilter('has100kCoupon'); }
+function toggleCanIssue100kFilter() { toggleStatFilter('canIssue100k'); }
+function toggleNoIssue100kFilter() { toggleStatFilter('noIssue100k'); }
+function toggleCanIssueBirthdayFilter() { toggleStatFilter('canIssueBirthday'); }
+function toggleHas50kFilter() { toggleStatFilter('has50kCoupon'); }
+function toggleHas15pFilter() { toggleStatFilter('has15pCoupon'); }
+function toggleHas20pFilter() { toggleStatFilter('has20pCoupon'); }
 
 // 전체 활성 계정 정보 조회
 async function bulkExtractAll(skipConfirm = false) {
@@ -3743,7 +4523,7 @@ async function bulkExtractAll(skipConfirm = false) {
 
     const ids = activeAccounts.map(a => a.id);
     try {
-        const result = await api('/extract/bulk', { method: 'POST', body: { ids, actionBy: currentUser?.fullName } });
+        const result = await api('/extract/bulk', { method: 'POST', body: { ids, actionBy: currentUser?.fullName, useProxy: getUserProxySetting() } });
         alert(result.message);
         // 모니터링 팝업 열기
         await openMonitor('extract', '정보 조회 현황', activeAccounts);
@@ -3762,7 +4542,9 @@ function showBulkIssueCouponModal() {
 
     // 전체 활성 계정을 선택 상태로 설정하고 기존 모달 활용
     state.bulkIssueAllActive = true;
-    state.selectedIssueCouponTypes = []; // 선택 초기화
+    state.selectedIssueCouponTypes = [];
+    state.issueCouponQuantity = { '100000': 1, '100000_promo': 0 };
+    initBulkPromoQuantity(true);
     state.modal = 'issue-coupon';
     render();
 }
@@ -3771,12 +4553,15 @@ function showBulkIssueCouponModal() {
 async function issueCouponForAllActive(couponTypes) {
     closeModal();
 
-    // 배열로 정규화
-    const couponTypesArray = Array.isArray(couponTypes) ? couponTypes : [couponTypes];
+    const rawTypes = Array.isArray(couponTypes) ? couponTypes : [couponTypes];
+    const hasPromo = rawTypes.includes('100000_promo');
+    const perAccountPromoQty = hasPromo ? { ...state.bulkPromoQuantity } : null;
+    const baseTypes = rawTypes.filter(t => t !== '100000_promo');
     const couponNames = { '10000': '1만원권', '30000': '3만원권', '50000': '5만원권', '100000': '10만원권' };
-    const couponTypesStr = couponTypesArray.map(ct => couponNames[ct] || `${ct}원`).join(', ');
+    const baseStr = baseTypes.map(ct => couponNames[ct] || `${ct}원`).join(', ');
+    const promoStr = hasPromo ? ' + 프로모션 10만원' : '';
+    const couponTypesStr = (baseStr || '') + promoStr || '조회만';
 
-    // 중복 실행 방지 - 이미 배치 작업이 진행 중인지 확인
     await checkBatchStatus();
     if (state.batchStatus.active) {
         notifyWarning(`이미 "${state.batchStatus.title}" 작업이 진행 중입니다. 완료 후 다시 시도하세요.`);
@@ -3794,11 +4579,257 @@ async function issueCouponForAllActive(couponTypes) {
     try {
         await api('/issue-coupon/bulk', {
             method: 'POST',
-            body: { ids, coupon_types: couponTypesArray, mode: state.extractMode, actionBy: currentUser?.fullName }
+            body: { ids, coupon_types: baseTypes, promo_quantities: perAccountPromoQty, mode: state.extractMode, actionBy: currentUser?.fullName, useProxy: getUserProxySetting() }
         });
     } catch (error) {
         notifyError('쿠폰 발급 실패: ' + error.message);
     }
+}
+
+// === 쿠폰 카테고리 컬럼 엑셀식 필터 ===
+
+function getAvailableCategorySubtypes(categoryKey) {
+    const cat = COUPON_CATEGORIES.find(c => c.key === categoryKey);
+    if (!cat) return [];
+    const types = new Map();
+    state.accounts.forEach(acc => {
+        const vouchers = parseVouchers(acc.owned_vouchers);
+        vouchers.forEach(v => {
+            if (state.filters.excludeSoldCoupon && (v.sold || v.deleted_unused)) return;
+            if (state.filters.excludeExpiredCoupon && isExpired(v.expiry)) return;
+            const info = getCouponDisplayInfo(v.description);
+            if (!cat.match(info.name)) return;
+            if (!types.has(info.name)) types.set(info.name, { sortValue: info.sortValue, count: 0 });
+            types.get(info.name).count++;
+        });
+    });
+    return [...types.entries()].map(([name, d]) => ({ name, sortValue: d.sortValue, count: d.count }))
+        .sort((a, b) => b.sortValue - a.sortValue);
+}
+
+function getAvailableCategorySoldTo(categoryKey) {
+    const cat = COUPON_CATEGORIES.find(c => c.key === categoryKey);
+    if (!cat) return [];
+    const memos = new Map();
+    state.accounts.forEach(acc => {
+        const vouchers = parseVouchers(acc.owned_vouchers);
+        vouchers.forEach(v => {
+            if (state.filters.excludeSoldCoupon && (v.sold || v.deleted_unused)) return;
+            if (state.filters.excludeExpiredCoupon && isExpired(v.expiry)) return;
+            const info = getCouponDisplayInfo(v.description);
+            if (!cat.match(info.name)) return;
+            const memo = (v.sold_to || '').trim();
+            if (!memo) return;
+            memos.set(memo, (memos.get(memo) || 0) + 1);
+        });
+    });
+    return [...memos.entries()].map(([value, count]) => ({ value, count }))
+        .sort((a, b) => a.value.localeCompare(b.value, 'ko'));
+}
+
+function renderHeaderCategoryPopover(categoryKey) {
+    if (state.headerCategoryFilter !== categoryKey) return '';
+    const subtypes = getAvailableCategorySubtypes(categoryKey);
+    const soldToList = getAvailableCategorySoldTo(categoryKey);
+    const activeSubtypes = state.filters.categorySubtypes[categoryKey] || [];
+    const activeSoldTo = state.filters.categorySoldTo[categoryKey] || [];
+
+    let html = '<div class="th-category-popover" data-popover="cat_' + categoryKey + '" onclick="event.stopPropagation()">';
+
+    // 쿠폰 종류 섹션
+    html += '<div class="cat-filter-section-title">쿠폰 종류</div>';
+    if (subtypes.length === 0) {
+        html += '<div class="cat-filter-empty">항목 없음</div>';
+    } else {
+        subtypes.forEach(s => {
+            const esc = s.name.replace(/'/g, "\\'");
+            const checked = activeSubtypes.includes(s.name);
+            html += '<div class="cat-filter-item' + (checked ? ' checked' : '') + '" onclick="event.stopPropagation();toggleCategorySubtype(\'' + categoryKey + '\',\'' + esc + '\')">' +
+                '<span class="cat-filter-check">' + (checked ? '☑' : '☐') + '</span>' +
+                '<span class="cat-filter-name">' + s.name + '</span>' +
+                '<span class="cat-filter-count">' + s.count + '개</span>' +
+            '</div>';
+        });
+    }
+
+    // 구분선
+    html += '<div class="cat-filter-divider"></div>';
+
+    // 메모(판매처) 섹션
+    html += '<div class="cat-filter-section-title">메모</div>';
+    if (soldToList.length === 0) {
+        html += '<div class="cat-filter-empty">항목 없음</div>';
+    } else {
+        html += '<div class="cat-filter-scroll">';
+        soldToList.forEach(s => {
+            const esc = s.value.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            const checked = activeSoldTo.includes(s.value);
+            html += '<div class="cat-filter-item' + (checked ? ' checked' : '') + '" onclick="event.stopPropagation();toggleCategorySoldTo(\'' + categoryKey + '\',\'' + esc + '\')">' +
+                '<span class="cat-filter-check">' + (checked ? '☑' : '☐') + '</span>' +
+                '<span class="cat-filter-name">' + s.value + '</span>' +
+                '<span class="cat-filter-count">' + s.count + '개</span>' +
+            '</div>';
+        });
+        html += '</div>';
+    }
+
+    // 초기화 버튼
+    html += '<div class="cat-filter-divider"></div>';
+    html += '<button class="cat-filter-reset" onclick="clearCategoryFilter(\'' + categoryKey + '\')">필터 초기화</button>';
+    html += '</div>';
+    return html;
+}
+
+function toggleHeaderCategoryFilter(categoryKey) {
+    state.headerCategoryFilter = state.headerCategoryFilter === categoryKey ? null : categoryKey;
+    state.headerDateFilter = null;
+    state.headerStatusFilter = false;
+    state.headerMemoFilter = false;
+    render();
+}
+
+function toggleHeaderStatusFilter() {
+    state.headerStatusFilter = !state.headerStatusFilter;
+    state.headerDateFilter = null;
+    state.headerCategoryFilter = null;
+    state.headerMemoFilter = false;
+    render();
+}
+
+function toggleHeaderMemoFilter() {
+    state.headerMemoFilter = !state.headerMemoFilter;
+    state.headerDateFilter = null;
+    state.headerCategoryFilter = null;
+    state.headerStatusFilter = false;
+    render();
+}
+
+function getAvailableMemoValues() {
+    const memos = new Map();
+    state.accounts.forEach(acc => {
+        const memo = (acc.memo || '').trim();
+        if (memo) memos.set(memo, (memos.get(memo) || 0) + 1);
+    });
+    const noMemoCount = state.accounts.filter(a => !a.memo || !a.memo.trim()).length;
+    const result = [...memos.entries()].map(([value, count]) => ({ value, count }))
+        .sort((a, b) => b.count - a.count);
+    if (noMemoCount > 0) result.push({ value: '__empty__', count: noMemoCount });
+    return result;
+}
+
+function toggleMemoFilter(value) {
+    const arr = state.filters.memoValues;
+    const idx = arr.indexOf(value);
+    if (idx >= 0) arr.splice(idx, 1); else arr.push(value);
+    state.currentPage = 1;
+    render();
+}
+
+function renderHeaderMemoPopover() {
+    if (!state.headerMemoFilter) return '';
+    const memos = getAvailableMemoValues();
+    const active = state.filters.memoValues;
+
+    let html = '<div class="th-category-popover" data-popover="memo" onclick="event.stopPropagation()">';
+    html += '<div class="cat-filter-section-title">메모 필터</div>';
+    if (memos.length === 0) {
+        html += '<div class="cat-filter-empty">항목 없음</div>';
+    } else {
+        html += '<div class="cat-filter-scroll">';
+        memos.forEach(m => {
+            const checked = active.includes(m.value);
+            const label = m.value === '__empty__' ? '(메모 없음)' : m.value;
+            const esc = m.value.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            html += `<div class="cat-filter-item${checked ? ' checked' : ''}" onclick="event.stopPropagation();toggleMemoFilter('${esc}')">
+                <span class="cat-filter-check">${checked ? '☑' : '☐'}</span>
+                <span class="cat-filter-name">${label}</span>
+                <span class="cat-filter-count">${m.count}개</span>
+            </div>`;
+        });
+        html += '</div>';
+    }
+    html += '<div class="cat-filter-divider"></div>';
+    html += `<button class="cat-filter-reset" onclick="state.filters.memoValues=[];state.headerMemoFilter=false;state.currentPage=1;render()">초기화</button>`;
+    html += '</div>';
+    return html;
+}
+
+function renderHeaderStatusPopover() {
+    if (!state.headerStatusFilter) return '';
+    const statuses = getAvailableWorkStatuses();
+    const active = state.filters.workStatuses;
+    const statusColors = {
+        completed: '#16a34a', error: '#ef4444', password_wrong: '#f97316',
+        point_lack: '#eab308', processing: '#3b82f6', pending: '#9ca3af'
+    };
+
+    let html = '<div class="th-category-popover" data-popover="status" onclick="event.stopPropagation()">';
+    html += '<div class="cat-filter-section-title">현황 필터</div>';
+    statuses.forEach(s => {
+        const checked = active.includes(s.key);
+        const color = statusColors[s.key] || '#6b7280';
+        html += `<div class="cat-filter-item${checked ? ' checked' : ''}" onclick="event.stopPropagation();toggleFilter('workStatuses','${s.key}')">
+            <span class="cat-filter-check">${checked ? '☑' : '☐'}</span>
+            <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${color};flex-shrink:0;"></span>
+            <span class="cat-filter-name">${s.label}</span>
+            <span class="cat-filter-count">${s.count}개</span>
+        </div>`;
+    });
+    html += '<div class="cat-filter-divider"></div>';
+    html += `<button class="cat-filter-reset" onclick="state.filters.workStatuses=[];state.headerStatusFilter=false;state.currentPage=1;render()">초기화</button>`;
+    html += '</div>';
+    return html;
+}
+
+function toggleCategorySubtype(categoryKey, typeName) {
+    const arr = state.filters.categorySubtypes[categoryKey];
+    const idx = arr.indexOf(typeName);
+    if (idx >= 0) arr.splice(idx, 1); else arr.push(typeName);
+    state.currentPage = 1;
+    render();
+}
+
+function toggleCategorySoldTo(categoryKey, value) {
+    const arr = state.filters.categorySoldTo[categoryKey];
+    const idx = arr.indexOf(value);
+    if (idx >= 0) arr.splice(idx, 1); else arr.push(value);
+    state.currentPage = 1;
+    render();
+}
+
+function clearCategoryFilter(categoryKey) {
+    state.filters.categorySubtypes[categoryKey] = [];
+    state.filters.categorySoldTo[categoryKey] = [];
+    state.headerCategoryFilter = null;
+    state.currentPage = 1;
+    render();
+}
+
+function renderHeaderDatePopover(name, fromKey, toKey) {
+    if (state.headerDateFilter !== name) return '';
+    return '<div class="th-date-popover" data-popover="' + name + '" onclick="event.stopPropagation()">' +
+        '<label>FROM</label><input type="date" value="' + (state.filters[fromKey] || '') + '" onchange="setFilterValue(\'' + fromKey + '\',this.value)">' +
+        '<label>TO</label><input type="date" value="' + (state.filters[toKey] || '') + '" onchange="setFilterValue(\'' + toKey + '\',this.value)">' +
+        '<button class="btn btn-small" onclick="state.filters.' + fromKey + '=\'\';state.filters.' + toKey + '=\'\';state.headerDateFilter=null;render()">초기화</button>' +
+        '</div>';
+}
+
+function positionDatePopovers() {
+    document.querySelectorAll('.th-date-popover, .th-category-popover').forEach(pop => {
+        const th = pop.closest('th');
+        if (!th) return;
+        const rect = th.getBoundingClientRect();
+        pop.style.top = (rect.bottom + 4) + 'px';
+        pop.style.left = rect.left + 'px';
+    });
+}
+
+function toggleHeaderDateFilter(name) {
+    state.headerDateFilter = state.headerDateFilter === name ? null : name;
+    state.headerCategoryFilter = null;
+    state.headerStatusFilter = false;
+    state.headerMemoFilter = false;
+    render();
 }
 
 function toggleSort(column) {
@@ -3916,12 +4947,35 @@ function changePageSize(value) {
     }
 }
 
-function toggleSelect(id, checked) {
+function toggleSelect(id, checked, event) {
+    const filteredAccounts = getFilteredAndSortedAccounts();
+    const effectivePageSize = state.pageSize === 'all' ? filteredAccounts.length : state.pageSize;
+    const start = (state.currentPage - 1) * effectivePageSize;
+    const pageAccounts = state.pageSize === 'all' ? filteredAccounts : filteredAccounts.slice(start, start + effectivePageSize);
+    const idList = pageAccounts.map(a => a.id);
+
+    // Shift+클릭: 마지막 선택부터 현재까지 범위 선택
+    if (event && event.shiftKey && state._lastSelectedId) {
+        const lastIdx = idList.indexOf(state._lastSelectedId);
+        const curIdx = idList.indexOf(id);
+        if (lastIdx >= 0 && curIdx >= 0) {
+            const fromIdx = Math.min(lastIdx, curIdx);
+            const toIdx = Math.max(lastIdx, curIdx);
+            for (let i = fromIdx; i <= toIdx; i++) {
+                state.selectedIds.add(idList[i]);
+            }
+            state._lastSelectedId = id;
+            renderPreservingScroll();
+            return;
+        }
+    }
+
     if (checked) {
         state.selectedIds.add(id);
     } else {
         state.selectedIds.delete(id);
     }
+    state._lastSelectedId = checked ? id : null;
     renderPreservingScroll();
 }
 
@@ -4044,28 +5098,30 @@ async function processBulkSold() {
             continue;
         }
 
-        // 해당 쿠폰 찾기 (인덱스 필요)
+        // 해당 쿠폰 찾기
         const vouchers = parseVouchers(account.owned_vouchers);
+        let targetVoucher = null;
         let targetIndex = -1;
         for (let i = 0; i < vouchers.length; i++) {
             const v = vouchers[i];
             const info = getCouponDisplayInfo(v.description);
             if (info.name === couponType && !v.sold) {
+                targetVoucher = v;
                 targetIndex = i;
                 break;
             }
         }
 
-        if (targetIndex === -1) {
+        if (!targetVoucher) {
             results.noCoupon.push(email);
             continue;
         }
 
-        // 판매 완료 처리 API 호출
+        // 판매 완료 처리 API 호출 (코드로 매칭)
         try {
             await api(`/accounts/${account.id}/voucher-sale`, {
                 method: 'POST',
-                body: { voucher_index: targetIndex, sold: true, sold_to: '' }
+                body: { voucher_index: targetIndex, sold: true, sold_to: '', voucher_code: targetVoucher.code }
             });
             results.success.push(email);
         } catch (error) {
@@ -4151,6 +5207,28 @@ function copyCouponCode(code) {
         console.error('복사 실패:', err);
         notifyError('복사 실패');
     });
+}
+
+// 조회 이력 모달
+async function showFetchHistory(accountId) {
+    const acc = state.accounts.find(a => a.id == accountId);
+    if (!acc) return;
+    try {
+        const res = await api(`/accounts/${accountId}/fetch-history`);
+        state.modal = { type: 'fetchHistory', account: acc, history: res.history || [], stats: res.stats || { total: 0, month: 0, week: 0 } };
+        render();
+    } catch (e) {
+        notifyError('이력 조회 실패: ' + e.message);
+    }
+}
+
+async function deleteFetchHistoryItem(historyId, accountId) {
+    try {
+        await api(`/fetch-history/${historyId}`, { method: 'DELETE' });
+        showFetchHistory(accountId);
+    } catch (e) {
+        notifyError('이력 삭제 실패: ' + e.message);
+    }
 }
 
 function showBarcodeModal(barcode, name, email, phone) {
@@ -4299,9 +5377,10 @@ function saveVoucherSale(accountId, voucherIndex, sold) {
 async function saveVoucherMemo(accountId, voucherIndex) {
     const soldTo = document.getElementById('voucherSoldTo').value;
     try {
+        const voucherCode = state.voucherData?.voucher?.code || '';
         await api(`/accounts/${accountId}/voucher-memo`, {
             method: 'POST',
-            body: { voucher_index: voucherIndex, sold_to: soldTo }
+            body: { voucher_index: voucherIndex, sold_to: soldTo, voucher_code: voucherCode }
         });
         // 모달에 표시된 voucher 객체도 업데이트
         if (state.voucherData) {
@@ -4552,9 +5631,20 @@ async function runInstaller(type) {
                         }
                         if (type === 'playwright' && status.web.playwrightReady) {
                             installStatus.playwright = true;
+                            state._libraryMissingNotified = false;
                             clearInterval(checkInterval);
+                            // 서버 환경도 갱신
+                            try {
+                                const envResult = await api('/refresh-env', { method: 'POST' });
+                                if (envResult.playwright) {
+                                    notifySuccess('Playwright 설치 완료! 바로 사용 가능합니다.');
+                                } else {
+                                    notifySuccess('Playwright 설치 완료! (앱 재시작 시 적용)');
+                                }
+                            } catch (e) {
+                                notifySuccess('Playwright 설치 완료!');
+                            }
                             render();
-                            notifySuccess('Playwright 설치가 완료되었습니다!');
                         }
                     } catch (e) {
                         console.error('설치 상태 확인 오류:', e);
@@ -4585,16 +5675,43 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 필터 팝오버 외부 클릭 시 닫기
     document.addEventListener('click', (e) => {
-        if (!state.openFilterPopover) return;
-        const trigger = e.target.closest('.filter-trigger');
-        const popover = e.target.closest('.filter-popover');
-        if (!trigger && !popover) {
-            closeFilterPopover();
+        // 필터 팝오버 닫기
+        if (state.openFilterPopover) {
+            const trigger = e.target.closest('.filter-trigger');
+            const popover = e.target.closest('.filter-popover');
+            if (!trigger && !popover) {
+                closeFilterPopover();
+            }
+        }
+        // 헤더 날짜 필터 닫기
+        if (state.headerDateFilter) {
+            if (!e.target || !e.target.closest) return;
+            const thName = e.target.closest('.th-name');
+            const thPopover = e.target.closest('.th-date-popover');
+            const thAction = e.target.closest('.th-with-actions');
+            if (!thName && !thPopover && !thAction) {
+                state.headerDateFilter = null;
+                render();
+            }
+        }
+        // 헤더 카테고리/현황/메모 필터 닫기
+        if (state.headerCategoryFilter || state.headerStatusFilter || state.headerMemoFilter) {
+            if (!e.target || !e.target.closest) return;
+            const thName = e.target.closest('.th-name');
+            const catPopover = e.target.closest('.th-category-popover');
+            const thAction = e.target.closest('.th-with-actions');
+            if (!thName && !catPopover && !thAction) {
+                state.headerCategoryFilter = null;
+                state.headerStatusFilter = false;
+                state.headerMemoFilter = false;
+                render();
+            }
         }
     });
 
     // 쿠폰 목록 호버 확장
     document.addEventListener('mouseenter', (e) => {
+        if (!e.target || !e.target.closest) return;
         const wrapper = e.target.closest('.coupon-wrapper');
         if (!wrapper) return;
         wrapper.classList.add('hover-active');

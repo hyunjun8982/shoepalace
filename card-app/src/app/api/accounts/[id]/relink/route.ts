@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { getUser, unauthorized } from '@/lib/auth';
-import { queryOne } from '@/lib/db';
+import { queryOne, ensureCodefCertColumns } from '@/lib/db';
 import { registerAccount } from '@/lib/codef';
 import { decryptPassword } from '@/lib/crypto';
 
@@ -11,6 +11,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   try {
     const { id } = params;
+    await ensureCodefCertColumns();
 
     const acc = await queryOne(
       `SELECT organization, client_type, login_id, account_no, card_no, owner_name, login_type, encrypted_password

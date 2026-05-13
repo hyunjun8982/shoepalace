@@ -1,11 +1,14 @@
 import { NextRequest } from 'next/server';
-import { queryAll } from '@/lib/db';
+import { queryAll, ensureCodefCertColumns } from '@/lib/db';
 import { getUser, unauthorized } from '@/lib/auth';
 import { ORGANIZATION_MAP, BANK_ORGANIZATION_MAP } from '@/types';
 
 export async function GET(req: NextRequest) {
   const user = await getUser(req);
   if (!user) return unauthorized();
+
+  // 필요한 컬럼(encrypted_password 등) 자동 생성
+  await ensureCodefCertColumns();
 
   const isAdmin = user.role === 'super_admin';
   const accounts = isAdmin

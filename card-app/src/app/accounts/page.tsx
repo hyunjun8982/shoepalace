@@ -1076,6 +1076,7 @@ function AddAccountModal({
   const [accountNo, setAccountNo] = useState('');
   const [cardNo, setCardNo] = useState('');
   const [cardPassword, setCardPassword] = useState('');
+  const [savePassword, setSavePassword] = useState(false);
   const [showCertSelector, setShowCertSelector] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -1105,9 +1106,10 @@ function AddAccountModal({
     e.preventDefault();
     setError(''); setResult(''); setSubmitting(true);
     try {
-      const body: Record<string, string> = {
+      const body: Record<string, any> = {
         organization, login_id: loginId, password,
         client_type: clientType, business_type: type === 'bank' ? 'BK' : 'CD',
+        save_password: savePassword,
       };
       if (type === 'bank' && accountNo) body.account_no = accountNo;
       if (type === 'card' && cardNo) body.card_no = cardNo;
@@ -1247,6 +1249,20 @@ function AddAccountModal({
                 </div>
               </>
             )}
+            <label className="flex items-start gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={savePassword}
+                onChange={e => setSavePassword(e.target.checked)}
+                className="mt-0.5 w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              />
+              <span className="text-xs text-gray-600 leading-tight">
+                비밀번호 저장 (재연동 시 1클릭으로 가능)
+                <span className="block text-[10px] text-gray-400 mt-0.5">
+                  서버에 암호화되어 저장됩니다
+                </span>
+              </span>
+            </label>
             {error && <div className="rounded-lg p-3 bg-red-50 text-red-600 text-xs">{error}</div>}
             {result && <div className="rounded-lg p-3 bg-green-50 text-green-600 text-xs">{result}</div>}
             <button type="submit" disabled={submitting || !organization || !loginId || !password}
@@ -1321,6 +1337,7 @@ function ReconnectModal({
 }) {
   const [password, setPassword] = useState('');
   const [cardPassword, setCardPassword] = useState('');
+  const [savePassword, setSavePassword] = useState(!!account.has_saved_password);
   const [showCertSelector, setShowCertSelector] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -1329,17 +1346,32 @@ function ReconnectModal({
   const isBank = account.type === 'bank';
   const isHyundai = account.organization === '0302';
   const isCertLogin = account.login_type === '0';
+  const hasSavedPassword = !!account.has_saved_password;
   const orgName = isBank
     ? (BANK_ORGANIZATION_MAP[account.organization] || account.organization)
     : (ORGANIZATION_MAP[account.organization] || account.organization);
+
+  // 저장된 비밀번호로 1클릭 재연동 (현대카드처럼 카드비번이 추가로 필요하면 비활성화)
+  const quickRelink = async () => {
+    setError(''); setResult(''); setSubmitting(true);
+    try {
+      const res = await apiFetch(`/api/accounts/${account.id}/relink`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setResult('재연동 완료');
+      setTimeout(onSuccess, 1000);
+    } catch (err: any) { setError(err.message); }
+    finally { setSubmitting(false); }
+  };
 
   const submitIdPw = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(''); setResult(''); setSubmitting(true);
     try {
-      const body: Record<string, string> = {
+      const body: Record<string, any> = {
         organization: account.organization, login_id: account.login_id, password,
         client_type: account.client_type || 'P', business_type: isBank ? 'BK' : 'CD',
+        save_password: savePassword,
       };
       if (isBank && account.account_no) body.account_no = account.account_no;
       if (!isBank && account.card_no) body.card_no = account.card_no;
@@ -1434,30 +1466,72 @@ function ReconnectModal({
             </button>
           </div>
         ) : (
-          <form onSubmit={submitIdPw} className="space-y-3">
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">
-                {isBank ? '인터넷뱅킹' : '카드사 로그인'} 비밀번호
-              </label>
-              <input type="password" value={password} onChange={e => setPassword(e.target.value)} required autoFocus
-                placeholder={isBank ? '인터넷뱅킹 비밀번호' : '카드사 로그인 비밀번호'}
-                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg" />
-            </div>
-            {isHyundai && (
-              <div>
-                <label className="text-xs text-gray-500 mb-1 block">카드 비밀번호</label>
-                <input type="password" value={cardPassword} onChange={e => setCardPassword(e.target.value)} required
-                  placeholder="카드 비밀번호 앞 2자리" className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg" />
+          <div className="space-y-3">
+            {/* 저장된 비밀번호 1클릭 재연동 (현대카드처럼 카드비번 필수가 아니면 사용 가능) */}
+            {hasSavedPassword && !isHyundai && (
+              <>
+                <button
+                  onClick={quickRelink}
+                  disabled={submitting}
+                  className="w-full py-3 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-700 disabled:opacity-50 transition flex items-center justify-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  {submitting ? '재연동 중...' : '저장된 비밀번호로 재연동'}
+                </button>
+                <div className="flex items-center gap-2 my-1">
+                  <div className="flex-1 h-px bg-gray-200" />
+                  <span className="text-[10px] text-gray-400">또는 비밀번호 다시 입력</span>
+                  <div className="flex-1 h-px bg-gray-200" />
+                </div>
+              </>
+            )}
+            {hasSavedPassword && isHyundai && (
+              <div className="rounded-lg p-2.5 bg-amber-50 text-amber-700 text-[11px]">
+                현대카드는 카드 비밀번호도 필요해서 1클릭 재연동을 사용할 수 없습니다. 아래에 비밀번호를 다시 입력해주세요.
               </div>
             )}
-            <p className="text-[11px] text-gray-400 text-center">비밀번호는 암호화 전송되며 서버에 저장되지 않습니다.</p>
-            {error && <div className="rounded-lg p-3 bg-red-50 text-red-600 text-xs">{error}</div>}
-            {result && <div className="rounded-lg p-3 bg-green-50 text-green-600 text-xs">{result}</div>}
-            <button type="submit" disabled={submitting || !password || (isHyundai && !cardPassword)}
-              className="w-full py-3 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 disabled:opacity-50 transition">
-              {submitting ? '연동 중...' : '재연동'}
-            </button>
-          </form>
+
+            <form onSubmit={submitIdPw} className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">
+                  {isBank ? '인터넷뱅킹' : '카드사 로그인'} 비밀번호
+                </label>
+                <input type="password" value={password} onChange={e => setPassword(e.target.value)} required autoFocus
+                  placeholder={isBank ? '인터넷뱅킹 비밀번호' : '카드사 로그인 비밀번호'}
+                  className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg" />
+              </div>
+              {isHyundai && (
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">카드 비밀번호</label>
+                  <input type="password" value={cardPassword} onChange={e => setCardPassword(e.target.value)} required
+                    placeholder="카드 비밀번호 앞 2자리" className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg" />
+                </div>
+              )}
+              <label className="flex items-start gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={savePassword}
+                  onChange={e => setSavePassword(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                />
+                <span className="text-xs text-gray-600 leading-tight">
+                  비밀번호 저장 (다음 재연동 시 1클릭으로 가능)
+                  <span className="block text-[10px] text-gray-400 mt-0.5">
+                    서버에 암호화되어 저장됩니다
+                  </span>
+                </span>
+              </label>
+              {error && <div className="rounded-lg p-3 bg-red-50 text-red-600 text-xs">{error}</div>}
+              {result && <div className="rounded-lg p-3 bg-green-50 text-green-600 text-xs">{result}</div>}
+              <button type="submit" disabled={submitting || !password || (isHyundai && !cardPassword)}
+                className="w-full py-3 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 disabled:opacity-50 transition">
+                {submitting ? '연동 중...' : '재연동'}
+              </button>
+            </form>
+          </div>
         )}
       </div>
 

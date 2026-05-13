@@ -57,7 +57,7 @@ export default function ProfilePage() {
 
   // 회원 관리
   const [users, setUsers] = useState<UserItem[]>([]);
-  const [tab, setTab] = useState<'profile' | 'groups' | 'users' | 'homepages'>('profile');
+  const [tab, setTab] = useState<'profile' | 'groups' | 'users' | 'homepages' | 'codef'>('profile');
 
   // 홈페이지 관리
   const [homepages, setHomepages] = useState<any[]>([]);
@@ -66,6 +66,16 @@ export default function ProfilePage() {
   const [hpClientType, setHpClientType] = useState<'P' | 'B'>('P');
   const [hpUrl, setHpUrl] = useState('');
   const [hpMsg, setHpMsg] = useState('');
+
+  // CODEF 설정
+  const [codefSettings, setCodefSettings] = useState({
+    client_id: '',
+    client_secret: '',
+    public_key: '',
+    use_demo: 'true',
+  });
+  const [codefSaving, setCodefSaving] = useState(false);
+  const [codefMsg, setCodefMsg] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
     apiFetch('/api/auth/profile')
@@ -89,7 +99,39 @@ export default function ProfilePage() {
     if (isSuperAdmin && tab === 'homepages') {
       loadHomepages();
     }
+    if (isSuperAdmin && tab === 'codef') {
+      loadCodefSettings();
+    }
   }, [tab]);
+
+  const loadCodefSettings = () => {
+    apiFetch('/api/settings')
+      .then(r => r.json())
+      .then(data => {
+        if (!data.error) {
+          setCodefSettings(prev => ({ ...prev, ...data }));
+        }
+      })
+      .catch(() => {});
+  };
+
+  const handleCodefSave = async () => {
+    setCodefSaving(true);
+    setCodefMsg(null);
+    try {
+      const res = await apiFetch('/api/settings', {
+        method: 'PUT',
+        body: JSON.stringify(codefSettings),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setCodefMsg({ message: data.message || '저장되었습니다', type: 'success' });
+    } catch (err: any) {
+      setCodefMsg({ message: err.message, type: 'error' });
+    } finally {
+      setCodefSaving(false);
+    }
+  };
 
   const loadGroups = () => {
     apiFetch('/api/groups')
@@ -287,6 +329,12 @@ export default function ProfilePage() {
               className={`flex-1 py-2 text-xs rounded-lg font-medium transition ${tab === 'homepages' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400'}`}
             >
               링크
+            </button>
+            <button
+              onClick={() => setTab('codef')}
+              className={`flex-1 py-2 text-xs rounded-lg font-medium transition ${tab === 'codef' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400'}`}
+            >
+              CODEF
             </button>
           </>
         )}
@@ -609,6 +657,90 @@ export default function ProfilePage() {
                   );
                 })}
               </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* CODEF 설정 */}
+      {tab === 'codef' && isSuperAdmin && (
+        <div className="space-y-3">
+          <div className="bg-white rounded-xl p-4 shadow-sm space-y-3">
+            <p className="text-sm font-semibold text-gray-700">CODEF API 설정</p>
+
+            <div>
+              <label className="text-xs text-gray-500 mb-1 block">Client ID</label>
+              <input
+                type="text"
+                value={codefSettings.client_id}
+                onChange={e => setCodefSettings(s => ({ ...s, client_id: e.target.value }))}
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg font-mono"
+                placeholder="CODEF Client ID"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-500 mb-1 block">Client Secret</label>
+              <input
+                type="password"
+                value={codefSettings.client_secret}
+                onChange={e => setCodefSettings(s => ({ ...s, client_secret: e.target.value }))}
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg font-mono"
+                placeholder="CODEF Client Secret"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-500 mb-1 block">Public Key (RSA)</label>
+              <textarea
+                value={codefSettings.public_key}
+                onChange={e => setCodefSettings(s => ({ ...s, public_key: e.target.value }))}
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg font-mono resize-none"
+                rows={4}
+                placeholder="MIIBIjANBgkq..."
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-500 mb-1 block">모드</label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setCodefSettings(s => ({ ...s, use_demo: 'true' }))}
+                  className={`flex-1 py-2 text-sm rounded-lg border transition
+                    ${codefSettings.use_demo === 'true'
+                      ? 'border-primary-500 bg-primary-50 text-primary-700 font-semibold'
+                      : 'border-gray-200 text-gray-500'}`}
+                >
+                  데모
+                </button>
+                <button
+                  onClick={() => setCodefSettings(s => ({ ...s, use_demo: 'false' }))}
+                  className={`flex-1 py-2 text-sm rounded-lg border transition
+                    ${codefSettings.use_demo === 'false'
+                      ? 'border-primary-500 bg-primary-50 text-primary-700 font-semibold'
+                      : 'border-gray-200 text-gray-500'}`}
+                >
+                  운영
+                </button>
+              </div>
+              <p className="text-xs text-gray-400 mt-1">
+                모드 변경 시 기존 연결 계정(connectedId)이 초기화됩니다
+              </p>
+            </div>
+
+            <button
+              onClick={handleCodefSave}
+              disabled={codefSaving}
+              className="w-full py-2.5 rounded-xl bg-primary-600 text-white text-sm font-semibold
+                hover:bg-primary-700 active:bg-primary-800 disabled:opacity-50 transition"
+            >
+              {codefSaving ? '저장 중...' : '설정 저장'}
+            </button>
+          </div>
+
+          {codefMsg && (
+            <div className={`rounded-xl p-3 text-sm ${codefMsg.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+              {codefMsg.message}
             </div>
           )}
         </div>

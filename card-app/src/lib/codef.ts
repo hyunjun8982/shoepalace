@@ -1,5 +1,6 @@
 import { queryOne, queryAll, query } from './db';
 import forge from 'node-forge';
+import { encryptPassword } from './crypto';
 
 // 캐시된 토큰
 let cachedToken: { token: string; expiresAt: number } | null = null;
@@ -321,9 +322,10 @@ export async function registerAccount(
     derFile?: string;         // 인증서 DER base64 (클라이언트에서 직접 전달)
     keyFile?: string;         // 인증서 KEY base64 (클라이언트에서 직접 전달)
     certName?: string;        // 인증서 이름 (표시용)
+    savePassword?: boolean;   // 로그인 비밀번호를 DB에 암호화 저장 (loginType '1'만 적용)
   } = {}
 ): Promise<{ connectedId: string; action: string }> {
-  const { cardNo, cardPassword, clientType = 'P', businessType = 'CD', accountNo, ownerName, cardAppUserId, loginType = '1', certId, certPassword, derFile: directDerFile, keyFile: directKeyFile, certName } = opts;
+  const { cardNo, cardPassword, clientType = 'P', businessType = 'CD', accountNo, ownerName, cardAppUserId, loginType = '1', certId, certPassword, derFile: directDerFile, keyFile: directKeyFile, certName, savePassword } = opts;
   const settings = await getAllSettings();
   const publicKey = settings.public_key;
   if (!publicKey) throw new Error('CODEF 공개키가 설정되지 않았습니다');
@@ -379,6 +381,7 @@ export async function registerAccount(
   // codef_accounts 컬럼 확보 (SELECT 전에 실행)
   await query(`ALTER TABLE codef_accounts ADD COLUMN IF NOT EXISTS login_type VARCHAR(1) DEFAULT '1'`);
   await query(`ALTER TABLE codef_accounts ADD COLUMN IF NOT EXISTS cert_id UUID`);
+  await query(`ALTER TABLE codef_accounts ADD COLUMN IF NOT EXISTS encrypted_password TEXT`);
 
   // 기존 connected_id 조회 - loginType별로 분리 (인증서/아이디 혼용 방지)
   const existing = await queryOne(
@@ -449,22 +452,33 @@ export async function registerAccount(
   }
   console.log(`[CODEF] connectedId resolved: "${newConnectedId}", from data:`, JSON.stringify(result.data));
 
+  // 비밀번호 저장 처리 (loginType '1' & savePassword=true인 경우만 암호화 저장, false면 NULL로 초기화)
+  let encryptedPwd: string | null = null;
+  if (loginType === '1' && savePassword && password) {
+    encryptedPwd = encryptPassword(password);
+  }
+
   // DB에 저장 (card_app_user_id 기준)
   const existingAcc = await queryOne(
-    'SELECT id FROM codef_accounts WHERE card_app_user_id = $1 AND organization = $2 AND client_type = $3 LIMIT 1',
+    'SELECT id, encrypted_password FROM codef_accounts WHERE card_app_user_id = $1 AND organization = $2 AND client_type = $3 LIMIT 1',
     [cardAppUserId, organization, clientType]
   );
 
+  // savePassword 명시 안 됐을 때(undefined) 기존 값 유지, 명시되면 새 값 또는 NULL로 갱신
+  const pwdToSave = savePassword === undefined
+    ? (existingAcc?.encrypted_password ?? null)
+    : encryptedPwd;
+
   if (existingAcc) {
     await query(
-      `UPDATE codef_accounts SET login_id = $1, connected_id = $2, is_connected = true, owner_name = $3, account_no = $4, card_no = $5, login_type = $6, cert_id = $7, connected_at = NOW(), updated_at = NOW() WHERE id = $8`,
-      [loginId, newConnectedId, ownerName || '', accountNo || '', cardNo || '', loginType, certId || null, existingAcc.id]
+      `UPDATE codef_accounts SET login_id = $1, connected_id = $2, is_connected = true, owner_name = $3, account_no = $4, card_no = $5, login_type = $6, cert_id = $7, encrypted_password = $8, connected_at = NOW(), updated_at = NOW() WHERE id = $9`,
+      [loginId, newConnectedId, ownerName || '', accountNo || '', cardNo || '', loginType, certId || null, pwdToSave, existingAcc.id]
     );
   } else {
     await query(
-      `INSERT INTO codef_accounts (card_app_user_id, organization, client_type, login_id, connected_id, is_connected, owner_name, account_no, card_no, login_type, cert_id, connected_at)
-       VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, $9, $10, NOW())`,
-      [cardAppUserId, organization, clientType, loginId, newConnectedId, ownerName || '', accountNo || '', cardNo || '', loginType, certId || null]
+      `INSERT INTO codef_accounts (card_app_user_id, organization, client_type, login_id, connected_id, is_connected, owner_name, account_no, card_no, login_type, cert_id, encrypted_password, connected_at)
+       VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, $9, $10, $11, NOW())`,
+      [cardAppUserId, organization, clientType, loginId, newConnectedId, ownerName || '', accountNo || '', cardNo || '', loginType, certId || null, pwdToSave]
     );
   }
 

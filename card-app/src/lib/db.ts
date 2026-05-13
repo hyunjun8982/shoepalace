@@ -112,6 +112,7 @@ export async function ensureCertificatesTable() {
 export async function ensureCodefCertColumns() {
   await pool.query(`ALTER TABLE codef_accounts ADD COLUMN IF NOT EXISTS login_type VARCHAR(1) DEFAULT '1'`);
   await pool.query(`ALTER TABLE codef_accounts ADD COLUMN IF NOT EXISTS cert_id UUID REFERENCES user_certificates(id) ON DELETE SET NULL`);
+  await pool.query(`ALTER TABLE codef_accounts ADD COLUMN IF NOT EXISTS encrypted_password TEXT`);
 }
 
 export default pool;

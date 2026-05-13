@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { organization, login_id, password, card_no, card_password, client_type, business_type, account_no, owner_name, cert_id, cert_password, der_file, key_file, cert_name } = body;
+    const { organization, login_id, password, card_no, card_password, client_type, business_type, account_no, owner_name, cert_id, cert_password, der_file, key_file, cert_name, save_password } = body;
 
     const isCertLogin = !!(cert_id || (der_file && key_file));
 
@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
       derFile: der_file,
       keyFile: key_file,
       certName: cert_name,
+      savePassword: save_password,
     });
 
     return Response.json({

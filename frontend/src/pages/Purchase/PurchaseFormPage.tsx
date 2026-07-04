@@ -27,6 +27,9 @@ import { purchaseService } from '../../services/purchase';
 import { productService } from '../../services/product';
 import { uploadService } from '../../services/upload';
 import { userService } from '../../services/user';
+import { barcodeService, BarcodeSearchResult } from '../../services/barcode';
+import { BarcodeInput } from '../../components/BarcodeInput';
+import { UnregisteredBarcodeModal } from '../../components/UnregisteredBarcodeModal';
 import { PaymentType, PurchaseItem } from '../../types/purchase';
 import { Product } from '../../types/product';
 import { User } from '../../types';
@@ -71,6 +74,15 @@ const PurchaseFormPage: React.FC = () => {
   const [mobileUploadedUrls, setMobileUploadedUrls] = useState<string[]>([]);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  // 바코드 스캔 관련 refs
+  const barcodeBufferRef = useRef('');
+  const barcodeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // 바코드 검색 관련 상태
+  const [barcodeSearchResult, setBarcodeSearchResult] = useState<BarcodeSearchResult | null>(null);
+  const [unregisteredBarcodeModalVisible, setUnregisteredBarcodeModalVisible] = useState(false);
+  const [scannedBarcode, setScannedBarcode] = useState<string>('');
+
   // 상품 목록 로드 및 거래번호 생성
   useEffect(() => {
     loadProducts();
@@ -86,6 +98,51 @@ const PurchaseFormPage: React.FC = () => {
       }
     }
   }, [id, currentUser]);
+
+  // 전역 바코드 스캔 리스너 (어디서든 바코드 스캔 감지)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // 입력 필드에 포커스되어 있으면 무시 (사용자 직접 입력)
+      const target = e.target as HTMLElement;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
+        return;
+      }
+
+      // 수정자 키 무시
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) {
+        return;
+      }
+
+      // Enter 키: 버퍼 제출
+      if (e.key === 'Enter' && barcodeBufferRef.current) {
+        e.preventDefault();
+        handleBarcodeSearchGlobal(barcodeBufferRef.current.trim());
+        barcodeBufferRef.current = '';
+        return;
+      }
+
+      // 일반 문자 추가
+      if (e.key.length === 1) {
+        barcodeBufferRef.current += e.key;
+
+        // 타임아웃 초기화 (마지막 입력으로부터 150ms 후 처리)
+        if (barcodeTimeoutRef.current) clearTimeout(barcodeTimeoutRef.current);
+
+        barcodeTimeoutRef.current = setTimeout(() => {
+          if (barcodeBufferRef.current) {
+            handleBarcodeSearchGlobal(barcodeBufferRef.current.trim());
+            barcodeBufferRef.current = '';
+          }
+        }, 150);
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeyDown);
+      if (barcodeTimeoutRef.current) clearTimeout(barcodeTimeoutRef.current);
+    };
+  }, []);
 
   const loadProducts = async () => {
     try {
@@ -111,6 +168,85 @@ const PurchaseFormPage: React.FC = () => {
     } catch (error) {
       console.error('Failed to load users:', error);
     }
+  };
+
+  // 바코드 검색 성공 핸들러
+  // 바코드 검색 함수 (전역 리스너용)
+  const handleBarcodeSearchGlobal = useCallback(async (barcodeValue: string) => {
+    if (!barcodeValue) return;
+
+    try {
+      const result = await barcodeService.searchByBarcode(barcodeValue);
+      message.success(`상품 검색됨: ${result.product_name}`);
+      handleBarcodeFound(result);
+    } catch (error: any) {
+      if (error.message.includes('등록되지 않았습니다')) {
+        // 미등록 바코드
+        handleBarcodeNotFound(barcodeValue);
+      } else {
+        message.error(error.message || '바코드 검색에 실패했습니다.');
+      }
+    }
+  }, []);
+
+  const handleBarcodeFound = (result: BarcodeSearchResult) => {
+    console.log('[Barcode Found]', result);
+    setSelectedProductId(result.product_id);
+    // products 배열에서 찾기
+    let product = products.find(p => p.id === result.product_id);
+    if (!product) {
+      // 상품이 없으면 검색 결과에서 만들어서 사용
+      console.log('[Creating temporary product]', { product_name: result.product_name });
+      product = {
+        id: result.product_id,
+        brand_id: '',
+        product_code: result.product_code,
+        product_name: result.product_name,
+        category: result.category || 'shoes',
+        description: '',
+        is_active: true,
+        brand_name: result.brand_name,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      } as Product;
+    }
+    setSelectedProduct(product);
+    // 바코드에서 받은 사이즈의 수량을 +1 (같은 바코드를 여러 번 스캔하면 누적)
+    setSizeQuantityMap(prev => {
+      const currentQty = prev[result.size] || 0;
+      return { ...prev, [result.size]: currentQty + 1 };
+    });
+    console.log('[Selected Product with Size]', product, 'Size:', result.size);
+    message.success(`${result.product_name} (${result.size}) +1 추가됨`);
+  };
+
+  // 바코드 검색 실패 핸들러 (미등록 상품)
+  const handleBarcodeNotFound = (barcode: string) => {
+    setScannedBarcode(barcode);
+    setUnregisteredBarcodeModalVisible(true);
+  };
+
+  // 자동 선택된 상품을 추가
+  const handleAutoSelectProduct = (productId: string) => {
+    const product = products.find(p => p.id === productId);
+    if (product) {
+      setSelectedProductId(productId);
+      handleProductChange(productId);
+      setBarcodeSearchResult(null);
+      message.success(`${product.product_name}이(가) 선택되었습니다.`);
+    }
+  };
+
+  // 새로운 상품이 등록되었을 때
+  const handleNewProductRegistered = (newProduct: Product) => {
+    // 상품 목록 새로고침
+    loadProducts();
+    // 새로 등록된 상품 자동 선택
+    setTimeout(() => {
+      setSelectedProductId(newProduct.id);
+      handleProductChange(newProduct.id);
+      message.success(`${newProduct.product_name}이(가) 등록되고 선택되었습니다.`);
+    }, 500);
   };
 
   // QR 코드 폴링 정리
@@ -334,8 +470,7 @@ const PurchaseFormPage: React.FC = () => {
       return;
     }
 
-    const product = products.find(p => p.id === selectedProductId);
-    if (!product) {
+    if (!selectedProduct) {
       message.error('상품을 찾을 수 없습니다');
       return;
     }
@@ -354,12 +489,20 @@ const PurchaseFormPage: React.FC = () => {
       size,
       quantity,
       purchase_price: purchasePrice,
-      product_name: product.product_name,
-      product_code: product.product_code,
+      product_name: selectedProduct.product_name,
+      product_code: selectedProduct.product_code,
     }));
 
-    setItems(newItems);
-    setConfirmModalVisible(true);
+    // 기존 items에 새로운 상품 추가
+    setItems(prev => [...prev, ...newItems]);
+
+    // 상품 추가 폼 초기화 (다음 상품 추가를 위해)
+    setSelectedProductId('');
+    setSelectedProduct(null);
+    setSizeQuantityMap({});
+    setPurchasePrice(0);
+
+    message.success(`${selectedProduct.product_name}이(가) 추가되었습니다.`);
   };
 
   // 최종 등록 확인
@@ -721,15 +864,16 @@ const PurchaseFormPage: React.FC = () => {
                     placeholder="구매자 선택"
                     allowClear
                     showSearch
+                    optionLabelProp="label"
                     filterOption={(input, option) =>
-                      String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
+                      String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())
                     }
                     disabled={currentUser?.role !== 'admin'}
-                  >
-                    {users.map(user => (
-                      <Option key={user.id} value={user.id}>{user.full_name}</Option>
-                    ))}
-                  </Select>
+                    options={users.map(user => ({
+                      label: user.full_name,
+                      value: user.id,
+                    }))}
+                  />
                 </Form.Item>
 
                 <Form.Item name="receiver_id" label="입고확인자">
@@ -737,14 +881,15 @@ const PurchaseFormPage: React.FC = () => {
                     placeholder="입고확인자 선택"
                     allowClear
                     showSearch
+                    optionLabelProp="label"
                     filterOption={(input, option) =>
-                      String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
+                      String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())
                     }
-                  >
-                    {users.map(user => (
-                      <Option key={user.id} value={user.id}>{user.full_name}</Option>
-                    ))}
-                  </Select>
+                    options={users.map(user => ({
+                      label: user.full_name,
+                      value: user.id,
+                    }))}
+                  />
                 </Form.Item>
 
                 <Form.Item name="notes" label="메모" style={{ marginBottom: 0 }}>
@@ -900,6 +1045,41 @@ const PurchaseFormPage: React.FC = () => {
                 )}
               </div>
 
+              {/* 바코드 검색 */}
+              <Card
+                title="바코드 스캔으로 상품 추가"
+                size="small"
+                style={{ marginBottom: 24 }}
+              >
+                <BarcodeInput
+                  onBarcodeFound={handleBarcodeFound}
+                  onBarcodeNotFound={handleBarcodeNotFound}
+                  placeholder="바코드 리더기로 스캔하거나 수동으로 입력..."
+                />
+                {barcodeSearchResult && (
+                  <Card size="small" style={{ marginTop: 16, backgroundColor: '#f0f9ff' }}>
+                    <Row gutter={16}>
+                      <Col span={12}>
+                        <div><strong>상품명:</strong> {barcodeSearchResult.product_name}</div>
+                        <div><strong>상품코드:</strong> {barcodeSearchResult.product_code}</div>
+                        <div><strong>브랜드:</strong> {barcodeSearchResult.brand_name || '-'}</div>
+                      </Col>
+                      <Col span={12}>
+                        <div><strong>가용 재고:</strong> {barcodeSearchResult.available_qty}개</div>
+                        <div><strong>바코드:</strong> {barcodeSearchResult.barcode_value}</div>
+                      </Col>
+                    </Row>
+                    <Button
+                      type="primary"
+                      style={{ marginTop: 12 }}
+                      onClick={() => handleAutoSelectProduct(barcodeSearchResult.product_id)}
+                    >
+                      이 상품으로 추가
+                    </Button>
+                  </Card>
+                )}
+              </Card>
+
               {/* 상품 추가 */}
               <Card
                 title="상품 추가"
@@ -916,6 +1096,8 @@ const PurchaseFormPage: React.FC = () => {
                     style={{ width: '100%' }}
                     value={selectedProductId || undefined}
                     onChange={handleProductChange}
+                    labelInValue={false}
+                    optionLabelProp="label"
                     filterOption={(input, option) => {
                       const product = products.find(p => p.id === option?.value);
                       if (!product) return false;
@@ -966,65 +1148,68 @@ const PurchaseFormPage: React.FC = () => {
                         </div>
                       );
                     }}
-                    options={products.map(product => ({
-                      label: `[${product.brand_name}] ${product.product_name}`,
-                      value: product.id,
-                    }))}
+                    options={[
+                      // 바코드로 선택된 상품 (products 배열에 없을 수 있음)
+                      ...(selectedProduct && !products.find(p => p.id === selectedProductId) ? [{
+                        label: `[${selectedProduct.brand_name || '-'}] ${selectedProduct.product_name}`,
+                        value: selectedProduct.id,
+                      }] : []),
+                      // 기존 상품 목록
+                      ...products.map(product => ({
+                        label: `[${product.brand_name}] ${product.product_name}`,
+                        value: product.id,
+                      }))
+                    ]}
                   />
                 </div>
 
-                {/* 사이즈별 수량 입력 */}
-                {selectedProduct && (
-                  <div>
+                {/* 바코드로 추가된 사이즈별 수량 */}
+                {selectedProduct && Object.keys(sizeQuantityMap).length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
                     <div style={{
                       padding: '8px 12px',
-                      backgroundColor: '#e6f7ff',
+                      backgroundColor: '#f6ffed',
                       borderRadius: '4px',
-                      border: '1px solid #91d5ff',
+                      border: '1px solid #b7eb8f',
                       marginBottom: 12,
-                      fontSize: '12px',
-                      color: '#0050b3',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center'
+                      fontSize: '13px',
+                      color: '#274e2b',
+                      fontWeight: 500
                     }}>
-                      <span>
-                        {selectedProduct.category === 'shoes' && '👟 신발 사이즈'}
-                        {selectedProduct.category === 'clothing' && '👕 의류 사이즈'}
-                        {['hats', 'bags', 'accessories', 'socks'].includes(selectedProduct.category || '') && '📦 프리 사이즈'}
-                      </span>
-                      <span>수량을 입력하세요 (0 = 미구매)</span>
+                      ✓ 바코드로 추가된 사이즈
                     </div>
 
-                    <div style={{
-                      display: 'grid',
-                      gridTemplateColumns: selectedProduct.category === 'shoes'
-                        ? 'repeat(auto-fill, minmax(120px, 1fr))'
-                        : 'repeat(auto-fill, minmax(100px, 1fr))',
-                      gap: '8px',
-                      marginBottom: 16
-                    }}>
-                      {getSizesForCategory(selectedProduct.category).map(size => (
-                        <div key={size} style={{
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'center',
-                          padding: '8px',
-                          border: '1px solid #d9d9d9',
-                          borderRadius: '4px',
-                          backgroundColor: sizeQuantityMap[size] > 0 ? '#e6f7ff' : '#fff'
-                        }}>
-                          <div style={{ fontWeight: 500, marginBottom: 4, fontSize: '13px' }}>{getSizeDisplay(size)}</div>
-                          <InputNumber
-                            min={0}
-                            value={sizeQuantityMap[size] || 0}
-                            onChange={(val) => handleSizeQuantityChange(size, val || 0)}
-                            style={{ width: '100%' }}
-                            size="small"
-                          />
-                        </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: 16 }}>
+                      {Object.entries(sizeQuantityMap).map(([size, qty]) => (
+                        qty > 0 && (
+                          <div key={size} style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '12px',
+                            border: '1px solid #e6f7ff',
+                            borderRadius: '4px',
+                            backgroundColor: '#fafafa'
+                          }}>
+                            <div style={{ fontSize: '14px', fontWeight: 500, minWidth: '80px' }}>
+                              {getSizeDisplay(size)}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <InputNumber
+                                min={1}
+                                value={qty}
+                                onChange={(val) => handleSizeQuantityChange(size, val || 1)}
+                                style={{ width: '60px' }}
+                                size="small"
+                              />
+                              <span style={{ fontSize: '13px', color: '#666' }}>개</span>
+                            </div>
+                          </div>
+                        )
                       ))}
                     </div>
+                  </div>
+                )}
 
                     {/* 구매가 입력 */}
                     <div style={{ marginBottom: 16 }}>
@@ -1068,6 +1253,44 @@ const PurchaseFormPage: React.FC = () => {
                   </div>
                 )}
               </Card>
+
+              {/* 추가된 상품 목록 */}
+              {items.length > 0 && (
+                <Card
+                  title={`추가된 상품 (${items.length}건)`}
+                  size="small"
+                  style={{ marginBottom: 24 }}
+                >
+                  <Table
+                    columns={columns}
+                    dataSource={items}
+                    pagination={false}
+                    bordered
+                    rowKey={(_, index) => index}
+                    summary={() => (
+                      <Table.Summary.Row>
+                        <Table.Summary.Cell colSpan={6} align="right">
+                          <strong>합계</strong>
+                        </Table.Summary.Cell>
+                        <Table.Summary.Cell align="right">
+                          <strong>₩{calculateTotal().toLocaleString()}</strong>
+                        </Table.Summary.Cell>
+                        <Table.Summary.Cell />
+                      </Table.Summary.Row>
+                    )}
+                  />
+                  <div style={{ marginTop: 16 }}>
+                    <Button
+                      type="primary"
+                      size="large"
+                      style={{ width: '100%', backgroundColor: '#1890ff', height: 44, fontSize: 16 }}
+                      htmlType="submit"
+                    >
+                      구매 등록
+                    </Button>
+                  </div>
+                </Card>
+              )}
           </Space>
         </div>
       </Form>
@@ -1229,6 +1452,14 @@ const PurchaseFormPage: React.FC = () => {
           </div>
         </div>
       </Modal>
+
+      {/* 미등록 바코드 팝업 */}
+      <UnregisteredBarcodeModal
+        barcode={scannedBarcode}
+        visible={unregisteredBarcodeModalVisible}
+        onSuccess={handleNewProductRegistered}
+        onCancel={() => setUnregisteredBarcodeModalVisible(false)}
+      />
     </Card>
     </div>
   );

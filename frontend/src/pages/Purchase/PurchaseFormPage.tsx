@@ -28,7 +28,6 @@ import { productService } from '../../services/product';
 import { uploadService } from '../../services/upload';
 import { userService } from '../../services/user';
 import { barcodeService, BarcodeSearchResult } from '../../services/barcode';
-import { BarcodeInput } from '../../components/BarcodeInput';
 import { UnregisteredBarcodeModal } from '../../components/UnregisteredBarcodeModal';
 import { PaymentType, PurchaseItem } from '../../types/purchase';
 import { Product } from '../../types/product';
@@ -1053,11 +1052,17 @@ const PurchaseFormPage: React.FC = () => {
                 size="small"
                 style={{ marginBottom: 24 }}
               >
-                <BarcodeInput
-                  onBarcodeFound={handleBarcodeFound}
-                  onBarcodeNotFound={handleBarcodeNotFound}
-                  placeholder="바코드 리더기로 스캔하거나 수동으로 입력..."
-                />
+                <div style={{
+                  padding: '16px',
+                  backgroundColor: '#f0f9ff',
+                  border: '1px solid #91d5ff',
+                  borderRadius: '4px',
+                  textAlign: 'center',
+                  fontSize: '14px',
+                  color: '#0050b3'
+                }}>
+                  🔍 페이지 어디서든 바코드 리더기로 스캔하면 자동으로 상품이 추가됩니다
+                </div>
                 {barcodeSearchResult && (
                   <Card size="small" style={{ marginTop: 16, backgroundColor: '#f0f9ff' }}>
                     <Row gutter={16}>

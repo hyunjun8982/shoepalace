@@ -116,6 +116,8 @@ const PurchaseFormPage: React.FC = () => {
       // Enter 키: 버퍼 제출
       if (e.key === 'Enter' && barcodeBufferRef.current) {
         e.preventDefault();
+        // 타임아웃 clear (중복 처리 방지)
+        if (barcodeTimeoutRef.current) clearTimeout(barcodeTimeoutRef.current);
         handleBarcodeSearchGlobal(barcodeBufferRef.current.trim());
         barcodeBufferRef.current = '';
         return;

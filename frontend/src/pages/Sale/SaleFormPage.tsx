@@ -28,6 +28,10 @@ import { inventoryService } from '../../services/inventory';
 import { ExchangeService } from '../../services/exchange';
 import { getFileUrl } from '../../utils/urlUtils';
 import { InventoryDetail } from '../../types/inventory';
+import { barcodeService, BarcodeSearchResult } from '../../services/barcode';
+import { BarcodeInput } from '../../components/BarcodeInput';
+import { UnregisteredBarcodeModal } from '../../components/UnregisteredBarcodeModal';
+import { productService } from '../../services/product';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -76,6 +80,11 @@ const SaleFormPageNew: React.FC = () => {
   const [sellerSalePriceOriginal, setSellerSalePriceOriginal] = useState<number>(0);
   const [sellerSaleCurrency, setSellerSaleCurrency] = useState<string>('KRW');
   const [confirmModalVisible, setConfirmModalVisible] = useState(false);
+
+  // 바코드 검색 관련 상태
+  const [barcodeSearchResult, setBarcodeSearchResult] = useState<BarcodeSearchResult | null>(null);
+  const [unregisteredBarcodeModalVisible, setUnregisteredBarcodeModalVisible] = useState(false);
+  const [scannedBarcode, setScannedBarcode] = useState<string>('');
 
   const isEditMode = !!saleId;
 
@@ -156,6 +165,40 @@ const SaleFormPageNew: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // 바코드 검색 성공 핸들러
+  const handleBarcodeFound = (result: BarcodeSearchResult) => {
+    setSelectedProductId(result.product_id);
+    const product = groupedInventory.find(p => p.product_id === result.product_id);
+    if (product) {
+      message.success(`${product.product_name}이(가) 선택되었습니다.`);
+    } else {
+      message.warning('재고 목록에서 해당 상품을 찾을 수 없습니다.');
+    }
+  };
+
+  // 바코드 검색 실패 핸들러 (미등록 상품)
+  const handleBarcodeNotFound = (barcode: string) => {
+    setScannedBarcode(barcode);
+    setUnregisteredBarcodeModalVisible(true);
+  };
+
+  // 자동 선택된 상품을 추가
+  const handleAutoSelectProduct = (productId: string) => {
+    const product = groupedInventory.find(p => p.product_id === productId);
+    if (product) {
+      setSelectedProductId(productId);
+      setBarcodeSearchResult(null);
+      message.success(`${product.product_name}이(가) 선택되었습니다.`);
+    }
+  };
+
+  // 새로운 상품이 등록되었을 때
+  const handleNewProductRegistered = () => {
+    // 재고 목록 새로고침
+    fetchInventoryItems();
+    message.success('새 상품이 등록되었습니다. 재고 목록이 새로고침됩니다.');
   };
 
   const fetchSaleData = async () => {
@@ -301,7 +344,7 @@ const SaleFormPageNew: React.FC = () => {
     return Object.values(sizeQuantityMap).reduce((sum, qty) => sum + qty, 0);
   };
 
-  // 확인 버튼 클릭 시 모달 표시
+  // 상품 추가 버튼 클릭 시
   const handleShowConfirmModal = () => {
     if (!selectedProductId) {
       message.warning('상품을 선택해주세요.');
@@ -340,8 +383,29 @@ const SaleFormPageNew: React.FC = () => {
       }
     }
 
-    // 모든 검증 통과 시 확인 모달 표시
-    setConfirmModalVisible(true);
+    // 여러 사이즈를 selectedProducts에 추가
+    const krwPrice = ExchangeService.convertToKRW(sellerSalePriceOriginal, sellerSaleCurrency);
+    const newItems: SaleItemCreate[] = validSizes.map(([size, qty]) => ({
+      product_id: selectedProductId,
+      product_name: product.product_name,
+      size: size,
+      quantity: qty,
+      seller_sale_price_original: sellerSalePriceOriginal,
+      seller_sale_currency: sellerSaleCurrency,
+      seller_sale_price_krw: krwPrice,
+      product_image_url: product.product_image_url || '',
+    }));
+
+    // 기존 items에 새로운 상품들 추가
+    setSelectedProducts(prev => [...prev, ...newItems]);
+
+    // 상품 추가 폼 초기화 (다음 상품 추가를 위해)
+    setSelectedProductId('');
+    setSizeQuantityMap({});
+    setSellerSalePriceOriginal(0);
+    setSellerSaleCurrency('KRW');
+
+    message.success(`${product.product_name}이(가) 추가되었습니다.`);
   };
 
   // 최종 등록 확인 후 실행
@@ -697,6 +761,41 @@ const SaleFormPageNew: React.FC = () => {
             </Row>
           </Card>
 
+          {/* 바코드 검색 */}
+          <Card
+            title="바코드 스캔으로 상품 추가"
+            size="small"
+            style={{ marginBottom: 24 }}
+          >
+            <BarcodeInput
+              onBarcodeFound={handleBarcodeFound}
+              onBarcodeNotFound={handleBarcodeNotFound}
+              placeholder="바코드 리더기로 스캔하거나 수동으로 입력..."
+            />
+            {barcodeSearchResult && (
+              <Card size="small" style={{ marginTop: 16, backgroundColor: '#f0f9ff' }}>
+                <Row gutter={16}>
+                  <Col span={12}>
+                    <div><strong>상품명:</strong> {barcodeSearchResult.product_name}</div>
+                    <div><strong>상품코드:</strong> {barcodeSearchResult.product_code}</div>
+                    <div><strong>브랜드:</strong> {barcodeSearchResult.brand_name || '-'}</div>
+                  </Col>
+                  <Col span={12}>
+                    <div><strong>가용 재고:</strong> {barcodeSearchResult.available_qty}개</div>
+                    <div><strong>바코드:</strong> {barcodeSearchResult.barcode_value}</div>
+                  </Col>
+                </Row>
+                <Button
+                  type="primary"
+                  style={{ marginTop: 12 }}
+                  onClick={() => handleAutoSelectProduct(barcodeSearchResult.product_id)}
+                >
+                  이 상품으로 추가
+                </Button>
+              </Card>
+            )}
+          </Card>
+
           {/* 상품 추가 */}
           <Card
             title="상품 추가"
@@ -1011,6 +1110,14 @@ const SaleFormPageNew: React.FC = () => {
           </div>
         </div>
       </Modal>
+
+      {/* 미등록 바코드 팝업 */}
+      <UnregisteredBarcodeModal
+        barcode={scannedBarcode}
+        visible={unregisteredBarcodeModalVisible}
+        onSuccess={() => handleNewProductRegistered()}
+        onCancel={() => setUnregisteredBarcodeModalVisible(false)}
+      />
     </div>
   );
 };

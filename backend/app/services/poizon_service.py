@@ -38,9 +38,135 @@ class PoizonService:
         self.client = PoizonAPI(APP_KEY, APP_SECRET, BASE_URL)
         self.region = "KR"
         self.language = "ko"
+        self.timezone = "Asia/Seoul"
         self.currency = "KRW"
         self.page_size = 20
         self.max_page = 495
+
+    def get_price_data_by_barcode(self, barcode: str) -> Optional[Dict]:
+        """
+        바코드로 상품 정보 + 사이즈별 가격 전체 조회
+
+        흐름:
+        1. intl-commodity/intl/sku/sku-basic-info/by-barcodes → spuInfo(title, logoUrl) + SKU 목록
+        2. recommend-bid/price per skuId → 가격 조회 (50% 백분위수 = average_price)
+
+        Args:
+            barcode: 바코드 값
+
+        Returns:
+            {
+                "title": "상품명",
+                "logo_url": "이미지 URL",
+                "sizes": [{ size_kr, size_us, sku_id, bar_code, average_price }, ...]
+            } 또는 None
+        """
+        try:
+            endpoint = "intl-commodity/intl/sku/sku-basic-info/by-barcodes"
+            params = {
+                "barcodes": [barcode.strip()],
+                "region": self.region,
+            }
+
+            logger.info(f"[Poizon] 바코드로 SKU 조회: {barcode}")
+            response = self.client.send_request(endpoint, params)
+
+            if response.get("code") != 200 or not response.get("data"):
+                logger.warning(f"[Poizon] {barcode}: SKU 정보 없음")
+                return None
+
+            ALLOWED_APPAREL_SIZES = {'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', 'XXXXL'}
+            SIZE_NORMALIZE = {'2XL': 'XXL', '3XL': 'XXXL', '4XL': 'XXXXL', '5XL': 'XXXXXL'}
+
+            # spuInfo에서 title, logoUrl 추출
+            title = None
+            logo_url = None
+            sizes = []
+            seen_sizes = set()
+
+            for item in response["data"]:
+                spu_info = item.get("spuInfo", {})
+                if spu_info:
+                    title = title or spu_info.get("title")
+                    logo_url = logo_url or spu_info.get("logoUrl")
+
+                for sku in item.get("skuInfoList", []):
+                    sku_id = sku.get("skuId")
+                    bar_code = sku.get("barCode", "")
+
+                    size_kr = None
+                    size_us = None
+                    for region in sku.get("regionSalePvInfoList", []):
+                        size_info_list = region.get("sizeInfos") or region.get("sizeInfo") or []
+                        for size_info in size_info_list:
+                            size_key = size_info.get("sizeKey")
+                            size_value = str(size_info.get("value", ""))
+
+                            if size_key == "KR":
+                                if "(" in size_value:
+                                    size_kr = size_value.split("(")[0].strip()
+                                elif "mm" in size_value.lower():
+                                    mm_match = re.search(r'(\d+)mm', size_value.lower())
+                                    if mm_match:
+                                        size_kr = mm_match.group(1)
+                                elif size_value.isdigit():
+                                    size_kr = size_value
+                            elif size_key == "SIZE":
+                                cleaned = size_value.upper().strip()
+                                if cleaned.startswith("SIZE "):
+                                    cleaned = cleaned[5:].strip()
+                                if "/" in cleaned:
+                                    cleaned = cleaned.split("/")[-1].strip()
+                                cleaned = SIZE_NORMALIZE.get(cleaned, cleaned)
+                                if cleaned in ALLOWED_APPAREL_SIZES:
+                                    size_kr = cleaned
+                            elif size_key == "US Men":
+                                size_us = size_value
+
+                    if size_kr and sku_id and size_kr not in seen_sizes:
+                        seen_sizes.add(size_kr)
+                        sizes.append({
+                            "size_kr": size_kr,
+                            "size_us": size_us,
+                            "sku_id": str(sku_id),
+                            "bar_code": bar_code,
+                        })
+
+            logger.info(f"[Poizon] {barcode}: {len(sizes)}개 SKU, title={title}")
+
+            if not sizes:
+                return None
+
+            # 대상 사이즈 필터링 (220-290 신발, XS-XXXXL 의류)
+            SMALL_SIZES = set(str(x) for x in range(220, 255, 5))
+            LARGE_SIZES = set(str(x) for x in range(255, 295, 5))
+            TARGET_SIZES = SMALL_SIZES | LARGE_SIZES | ALLOWED_APPAREL_SIZES
+
+            target_skus = [s for s in sizes if s["size_kr"] in TARGET_SIZES]
+
+            if not target_skus:
+                logger.warning(f"[Poizon] {barcode}: 대상 사이즈 없음")
+                return {"title": title, "logo_url": logo_url, "sizes": []}
+
+            # recommend-bid/price로 각 skuId별 가격 조회
+            sku_ids = [s["sku_id"] for s in target_skus]
+            prices = self.get_prices_batch(sku_ids, max_workers=3, delay=0.3)
+
+            for sku in target_skus:
+                price_info = prices.get(sku["sku_id"])
+                if price_info:
+                    sku["average_price"] = price_info.get("average_price")
+                    sku["leak_price"] = price_info.get("leak_price")
+                else:
+                    sku["average_price"] = None
+                    sku["leak_price"] = None
+
+            logger.info(f"[Poizon] {barcode}: {len(target_skus)}개 사이즈 가격 조회 완료")
+            return {"title": title, "logo_url": logo_url, "sizes": target_skus}
+
+        except Exception as e:
+            logger.error(f"[Poizon] {barcode} 조회 실패: {e}")
+            return None
 
     def get_price_data_by_article_number(self, article_number: str) -> Optional[Dict]:
         """

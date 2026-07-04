@@ -1,5 +1,6 @@
 import api from './api';
 import { Product, ProductCreate, ProductUpdate } from '../types/product';
+import { Brand } from '../types';
 
 export const productService = {
   // 상품 목록 조회
@@ -45,5 +46,11 @@ export const productService = {
     const params = excludeId ? { exclude_id: excludeId } : {};
     const response = await api.get(`/products/check-code/${productCode}`, { params });
     return response.data.exists;
+  },
+
+  // 브랜드 목록 조회
+  async getBrands(): Promise<Brand[]> {
+    const response = await api.get('/brands');
+    return response.data.items || response.data || [];
   },
 };

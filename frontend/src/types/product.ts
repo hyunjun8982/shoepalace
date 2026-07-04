@@ -10,6 +10,17 @@ export interface Inventory {
   updated_at: string;
 }
 
+export interface Barcode {
+  id: string;
+  product_id: string;
+  barcode_value: string;
+  barcode_type: string;
+  is_active: boolean;
+  notes?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Product {
   id: string;
   brand_id: string;
@@ -21,6 +32,7 @@ export interface Product {
   description?: string;
   image_url?: string;
   inventory?: Inventory[];
+  barcode?: Barcode;
   created_at: string;
   updated_at: string;
 }

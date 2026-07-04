@@ -1984,8 +1984,8 @@ const AdidasAccountListPage: React.FC = () => {
                     )}
                   </Space>
                 )}
-              {selectedRowKeys.length > 0 && (
-                <Space size={8} align="center">
+                {selectedRowKeys.length > 0 && (
+                  <Space size={8} align="center">
                   <span style={{ color: '#666', fontWeight: 500, fontSize: '13px' }}>
                     {selectedRowKeys.length}개 선택
                   </span>
@@ -2029,7 +2029,7 @@ const AdidasAccountListPage: React.FC = () => {
                     </Button>
                   </Popconfirm>
                 </Space>
-              )}
+                )}
               </Space>
             </div>
           </div>

@@ -242,6 +242,8 @@ def create_purchase(
 
     # 구매 아이템 생성 및 총액 계산
     total_amount = 0.0
+    inventory_cache = {}  # 이번 구매 내에서 생성한 inventory를 추적
+
     for item_data in purchase_data.items:
         # 상품 확인
         try:
@@ -285,22 +287,31 @@ def create_purchase(
         total_amount += item_data.purchase_price * item_data.quantity
 
         # 재고 업데이트 (사이즈별로 관리)
-        inventory = db.query(Inventory).filter(
-            Inventory.product_id == item_data.product_id,
-            Inventory.size == item_data.size
-        ).first()
+        inventory_key = (str(item_data.product_id), item_data.size)
 
-        if inventory:
-            inventory.quantity += item_data.quantity
+        # 메모리 캐시에서 확인 (같은 구매 내에서 생성한 inventory)
+        if inventory_key in inventory_cache:
+            inventory_cache[inventory_key].quantity += item_data.quantity
         else:
-            inventory = Inventory(
-                id=uuid.uuid4(),
-                product_id=item_data.product_id,
-                size=item_data.size,
-                quantity=item_data.quantity,
-                reserved_quantity=0
-            )
-            db.add(inventory)
+            # DB에서 조회
+            inventory = db.query(Inventory).filter(
+                Inventory.product_id == item_data.product_id,
+                Inventory.size == item_data.size
+            ).first()
+
+            if inventory:
+                inventory.quantity += item_data.quantity
+                inventory_cache[inventory_key] = inventory
+            else:
+                inventory = Inventory(
+                    id=uuid.uuid4(),
+                    product_id=item_data.product_id,
+                    size=item_data.size,
+                    quantity=item_data.quantity,
+                    reserved_quantity=0
+                )
+                db.add(inventory)
+                inventory_cache[inventory_key] = inventory
 
     # 총액 업데이트
     purchase.total_amount = total_amount

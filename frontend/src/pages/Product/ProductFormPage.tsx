@@ -10,6 +10,9 @@ import {
   App,
   Upload,
   Modal,
+  Row,
+  Col,
+  message as antMessage,
 } from 'antd';
 import { PlusOutlined, UploadOutlined } from '@ant-design/icons';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
@@ -17,6 +20,7 @@ import { ProductCreate, ProductUpdate } from '../../types/product';
 import { productService } from '../../services/product';
 import { brandService, Brand } from '../../services/brand';
 import { categoryService, Category } from '../../services/category';
+import { barcodeService } from '../../services/barcode';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { getFileUrl } from '../../utils/urlUtils';
 
@@ -38,6 +42,15 @@ const ProductFormPage: React.FC = () => {
   const [imageUrl, setImageUrl] = useState<string>('');
   const [brandIconFile, setBrandIconFile] = useState<File | null>(null);
   const [brandIconUrl, setBrandIconUrl] = useState<string>('');
+
+  // 사이즈별 바코드 관리
+  interface SizeBarcode {
+    size: string;
+    barcode_value: string;
+    id?: string;  // 기존 바코드일 경우
+  }
+  const [sizeBarcodes, setSizeBarcodes] = useState<SizeBarcode[]>([]);
+  const [newSizeBarcode, setNewSizeBarcode] = useState({ size: '', barcode_value: '' });
 
   const isEditMode = !!productId;
   const fromPurchase = location.state?.from === 'purchase';
@@ -83,6 +96,25 @@ const ProductFormPage: React.FC = () => {
       // 기존 이미지 표시
       const imagePath = getFileUrl(`/uploads/products/${product.brand_name}/${product.product_code}.png`);
       setImageUrl(imagePath || '');
+
+      // 기존 바코드 로드
+      try {
+        const response = await barcodeService.getAllBarcodesByProduct(product.id);
+        if (response && response.length > 0) {
+          console.log(`Loaded ${response.length} barcodes for product`, product.id);
+          setSizeBarcodes(
+            response.map(b => ({
+              size: b.size,
+              barcode_value: b.barcode_value,
+              id: b.id
+            }))
+          );
+        } else {
+          console.log('No barcodes found for product:', product.id);
+        }
+      } catch (error: any) {
+        console.error('Failed to load barcodes:', error.message || error);
+      }
     } catch (error) {
       message.error('상품 정보를 불러오는데 실패했습니다.');
     } finally {
@@ -288,6 +320,32 @@ const ProductFormPage: React.FC = () => {
         message.success(isEditMode ? '상품이 수정되었습니다.' : '상품이 등록되었습니다.');
       }
 
+      // 사이즈별 바코드 저장
+      if (sizeBarcodes.length > 0) {
+        try {
+          for (const sizeBarcode of sizeBarcodes) {
+            if (sizeBarcode.id) {
+              // 기존 바코드 업데이트
+              await barcodeService.updateBarcode(sizeBarcode.id, {
+                barcode_value: sizeBarcode.barcode_value,
+              });
+            } else {
+              // 새 바코드 생성
+              await barcodeService.createBarcode({
+                product_id: savedProduct.id,
+                size: sizeBarcode.size,
+                barcode_value: sizeBarcode.barcode_value,
+                barcode_type: 'custom',
+              });
+            }
+          }
+          message.success('바코드가 저장되었습니다.');
+        } catch (error: any) {
+          console.warn('바코드 저장 실패:', error);
+          message.warning('상품은 저장되었지만 일부 바코드 저장에 실패했습니다.');
+        }
+      }
+
       // 구매 페이지에서 왔으면 구매 페이지로, 아니면 상품 목록으로
       if (fromPurchase) {
         navigate('/purchases/new');
@@ -345,6 +403,7 @@ const ProductFormPage: React.FC = () => {
                         {brand.name}
                       </Option>
                     ))}
+                    <Option value="etc">기타</Option>
                   </Select>
                 </Form.Item>
 
@@ -386,6 +445,74 @@ const ProductFormPage: React.FC = () => {
                 >
                   <Input placeholder="상품명을 입력하세요" />
                 </Form.Item>
+              </div>
+
+              {/* 사이즈별 바코드 */}
+              <div style={{ marginTop: 24 }}>
+                <h3 style={{ marginBottom: 12 }}>사이즈별 바코드 (선택사항)</h3>
+
+                {/* 기존 바코드 목록 */}
+                {sizeBarcodes.length > 0 && (
+                  <div style={{ marginBottom: 16, padding: '12px', backgroundColor: '#f5f5f5', borderRadius: '4px' }}>
+                    {sizeBarcodes.map((item, index) => (
+                      <div
+                        key={index}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '8px 0',
+                          borderBottom: index < sizeBarcodes.length - 1 ? '1px solid #e8e8e8' : 'none'
+                        }}
+                      >
+                        <span>
+                          <strong>{item.size}</strong>: {item.barcode_value}
+                        </span>
+                        <Button
+                          type="text"
+                          danger
+                          size="small"
+                          onClick={() => setSizeBarcodes(sizeBarcodes.filter((_, i) => i !== index))}
+                        >
+                          삭제
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* 새 바코드 추가 */}
+                <Row gutter={8} style={{ marginBottom: 8 }}>
+                  <Col flex="100px">
+                    <Input
+                      placeholder="사이즈 (예: M, L, 260)"
+                      value={newSizeBarcode.size}
+                      onChange={(e) => setNewSizeBarcode({ ...newSizeBarcode, size: e.target.value })}
+                    />
+                  </Col>
+                  <Col flex="auto">
+                    <Input
+                      placeholder="바코드 번호"
+                      value={newSizeBarcode.barcode_value}
+                      onChange={(e) => setNewSizeBarcode({ ...newSizeBarcode, barcode_value: e.target.value })}
+                    />
+                  </Col>
+                  <Col>
+                    <Button
+                      type="primary"
+                      onClick={() => {
+                        if (newSizeBarcode.size && newSizeBarcode.barcode_value) {
+                          setSizeBarcodes([...sizeBarcodes, newSizeBarcode]);
+                          setNewSizeBarcode({ size: '', barcode_value: '' });
+                        } else {
+                          message.warning('사이즈와 바코드를 모두 입력해주세요');
+                        }
+                      }}
+                    >
+                      추가
+                    </Button>
+                  </Col>
+                </Row>
               </div>
 
               {/* 상품 이미지 */}

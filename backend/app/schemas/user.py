@@ -6,7 +6,7 @@ from app.models.user import UserRole
 # 기본 사용자 스키마
 class UserBase(BaseModel):
     username: Optional[str] = None
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
     full_name: Optional[str] = None
     role: Optional[UserRole] = None
     is_active: Optional[bool] = True

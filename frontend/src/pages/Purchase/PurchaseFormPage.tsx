@@ -1211,45 +1211,48 @@ const PurchaseFormPage: React.FC = () => {
                   </div>
                 )}
 
-                    {/* 구매가 입력 */}
-                    <div style={{ marginBottom: 16 }}>
-                      <div style={{ marginBottom: 8 }}>
-                        <label style={{ fontSize: '14px', fontWeight: 500 }}>구매가</label>
-                      </div>
-                      <InputNumber
-                        min={0}
-                        value={purchasePrice}
-                        onChange={(val) => setPurchasePrice(val || 0)}
-                        style={{ width: '100%' }}
-                        size="large"
-                        formatter={value => `₩${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                        placeholder="구매가 입력"
-                      />
+                {/* 구매가 입력 */}
+                {selectedProduct && Object.keys(sizeQuantityMap).length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ marginBottom: 8 }}>
+                      <label style={{ fontSize: '14px', fontWeight: 500 }}>구매가</label>
                     </div>
+                    <InputNumber
+                      min={0}
+                      value={purchasePrice}
+                      onChange={(val) => setPurchasePrice(val || 0)}
+                      style={{ width: '100%' }}
+                      size="large"
+                      formatter={value => `₩${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                      placeholder="구매가 입력"
+                    />
+                  </div>
+                )}
 
-                    <div style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      padding: '12px',
-                      backgroundColor: '#f5f5f5',
-                      borderRadius: '4px',
-                      marginBottom: 16
-                    }}>
-                      <div style={{ fontSize: '16px', fontWeight: 500 }}>
-                        총 수량: <span style={{ color: '#1890ff', fontSize: '18px' }}>{getTotalQuantity()}</span>개
-                      </div>
-                      <Button
-                        type="primary"
-                        icon={<CheckCircleOutlined />}
-                        onClick={handleAddItems}
-                        disabled={Object.values(sizeQuantityMap).every(qty => qty === 0)}
-                        size="large"
-                        style={{ backgroundColor: '#0d1117', borderColor: '#0d1117' }}
-                      >
-                        등록
-                      </Button>
+                {/* 등록 버튼 */}
+                {selectedProduct && Object.keys(sizeQuantityMap).length > 0 && (
+                  <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '12px',
+                    backgroundColor: '#f5f5f5',
+                    borderRadius: '4px',
+                    marginBottom: 16
+                  }}>
+                    <div style={{ fontSize: '16px', fontWeight: 500 }}>
+                      총 수량: <span style={{ color: '#1890ff', fontSize: '18px' }}>{getTotalQuantity()}</span>개
                     </div>
+                    <Button
+                      type="primary"
+                      icon={<CheckCircleOutlined />}
+                      onClick={handleAddItems}
+                      disabled={Object.values(sizeQuantityMap).every(qty => qty === 0)}
+                      size="large"
+                      style={{ backgroundColor: '#0d1117', borderColor: '#0d1117' }}
+                    >
+                      등록
+                    </Button>
                   </div>
                 )}
               </Card>

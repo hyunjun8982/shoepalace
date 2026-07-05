@@ -16,6 +16,7 @@ import {
   Checkbox,
   Divider,
   Empty,
+  Descriptions,
 } from 'antd';
 import {
   PlusOutlined,
@@ -29,15 +30,18 @@ import {
   StarOutlined,
   ManOutlined,
   GiftOutlined,
+  BarcodeOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useNavigate } from 'react-router-dom';
 import { Product } from '../../types/product';
 import { productService } from '../../services/product';
+import { barcodeService } from '../../services/barcode';
 import { brandService, Brand } from '../../services/brand';
 import { useAuth } from '../../contexts/AuthContext';
 import { getBrandIconUrl } from '../../utils/imageUtils';
 import BrandManagementModal from '../../components/BrandManagement/BrandManagementModal';
+import { UnregisteredBarcodeModal } from '../../components/UnregisteredBarcodeModal';
 import { getFileUrl } from '../../utils/urlUtils';
 
 const { Search } = Input;
@@ -79,6 +83,14 @@ const ProductListPage: React.FC = () => {
     sale_items: [],
     deleteAll: false,
   });
+
+  // 바코드 스캔 관련 상태
+  const [barcodeInputActive, setBarcodeInputActive] = useState(false);
+  const [scannedBarcode, setScannedBarcode] = useState('');
+  const [scannedProduct, setScannedProduct] = useState<Product | null>(null);
+  const [barcodeLookupModalVisible, setBarcodeLookupModalVisible] = useState(false);
+  const [barcodeLoading, setBarcodeLoading] = useState(false);
+  const [unregisteredBarcodeVisible, setUnregisteredBarcodeVisible] = useState(false);
 
   useEffect(() => {
     fetchBrands();
@@ -198,6 +210,30 @@ const ProductListPage: React.FC = () => {
       current: newPagination.current,
       pageSize: newPagination.pageSize,
     });
+  };
+
+  // 바코드 스캔 핸들러
+  const handleBarcodeInput = async (barcode: string) => {
+    setScannedBarcode(barcode);
+    setBarcodeLoading(true);
+    try {
+      // 바코드로 상품 조회
+      const result = await barcodeService.getBarcodeInfo(barcode);
+      if (result && result.product) {
+        // 상품이 있으면 정보 표시
+        setScannedProduct(result.product);
+        setBarcodeLookupModalVisible(true);
+      } else {
+        // 상품이 없으면 미등록 상품 등록 모달 열기
+        setUnregisteredBarcodeVisible(true);
+      }
+    } catch (error) {
+      console.error('바코드 조회 실패:', error);
+      // 404 오류인 경우 미등록 상품으로 처리
+      setUnregisteredBarcodeVisible(true);
+    } finally {
+      setBarcodeLoading(false);
+    }
   };
 
   // 이미지 경로 생성 함수
@@ -519,6 +555,30 @@ const ProductListPage: React.FC = () => {
           boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
         }}
       >
+        {/* 숨겨진 바코드 입력 필드 */}
+        <input
+          type="text"
+          style={{ position: 'absolute', left: '-9999px' }}
+          value={scannedBarcode}
+          onChange={(e) => {
+            const barcode = e.target.value.trim();
+            if (barcode && barcodeInputActive) {
+              handleBarcodeInput(barcode);
+              setScannedBarcode('');
+              e.target.value = '';
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && scannedBarcode && barcodeInputActive) {
+              handleBarcodeInput(scannedBarcode);
+              setScannedBarcode('');
+              e.currentTarget.value = '';
+            }
+          }}
+          placeholder="바코드를 스캔하세요"
+          autoFocus={barcodeInputActive}
+        />
+
         {/* 필터 영역 */}
         <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
           <Col span={6}>
@@ -548,6 +608,14 @@ const ProductListPage: React.FC = () => {
           </Col>
           <Col span={8} style={{ textAlign: 'right' }}>
             <Space>
+              <Button
+                icon={<BarcodeOutlined />}
+                type={barcodeInputActive ? 'primary' : 'default'}
+                onClick={() => setBarcodeInputActive(!barcodeInputActive)}
+                loading={barcodeLoading}
+              >
+                {barcodeInputActive ? '바코드 스캔 중...' : '상품 조회'}
+              </Button>
               {user?.role === 'admin' && selectedRowKeys.length > 0 && (
                 <Popconfirm
                   title="선택한 상품을 삭제하시겠습니까?"
@@ -791,6 +859,69 @@ const ProductListPage: React.FC = () => {
           </div>
         )}
       </Modal>
+
+      {/* 바코드 조회 결과 모달 */}
+      <Modal
+        title="상품 조회 결과"
+        open={barcodeLookupModalVisible}
+        onCancel={() => {
+          setBarcodeLookupModalVisible(false);
+          setScannedProduct(null);
+          setBarcodeInputActive(true);
+        }}
+        footer={[
+          <Button key="cancel" onClick={() => {
+            setBarcodeLookupModalVisible(false);
+            setScannedProduct(null);
+            setBarcodeInputActive(true);
+          }}>
+            계속 스캔
+          </Button>,
+          <Button key="edit" type="primary" onClick={() => {
+            setBarcodeLookupModalVisible(false);
+            navigate(`/products/${scannedProduct?.id}`);
+          }}>
+            상품 수정
+          </Button>,
+        ]}
+        width={600}
+      >
+        {scannedProduct && (
+          <Descriptions column={1} bordered style={{ marginTop: 16 }}>
+            <Descriptions.Item label="상품명">
+              {scannedProduct.product_name}
+            </Descriptions.Item>
+            <Descriptions.Item label="상품코드">
+              {scannedProduct.product_code}
+            </Descriptions.Item>
+            <Descriptions.Item label="브랜드">
+              {scannedProduct.brand_name}
+            </Descriptions.Item>
+            <Descriptions.Item label="설명">
+              {scannedProduct.description || '-'}
+            </Descriptions.Item>
+          </Descriptions>
+        )}
+      </Modal>
+
+      {/* 미등록 바코드 모달 */}
+      <UnregisteredBarcodeModal
+        barcode={scannedBarcode}
+        visible={unregisteredBarcodeVisible}
+        onSuccess={(newProduct) => {
+          message.success('상품이 등록되었습니다');
+          setUnregisteredBarcodeVisible(false);
+          setScannedProduct(newProduct);
+          setBarcodeLookupModalVisible(true);
+          fetchProducts();
+          fetchAllProductsForStats();
+          setBarcodeInputActive(true);
+        }}
+        onCancel={() => {
+          setUnregisteredBarcodeVisible(false);
+          setBarcodeInputActive(true);
+        }}
+      />
 
       <BrandManagementModal
         visible={brandManagementVisible}

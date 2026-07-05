@@ -192,6 +192,16 @@ const PurchaseFormPage: React.FC = () => {
 
   const handleBarcodeFound = (result: BarcodeSearchResult) => {
     console.log('[Barcode Found]', result);
+
+    // 포이즌 정보만 있는 경우 (product_id가 빈 문자열)
+    if (!result.product_id || result.product_id === '') {
+      console.log('[Poizon Info Only] Opening modal for registration');
+      setScannedBarcode(result.barcode_value);
+      setUnregisteredBarcodeModalVisible(true);
+      return;
+    }
+
+    // DB에 등록된 상품
     setSelectedProductId(result.product_id);
     // products 배열에서 찾기
     let product = products.find(p => p.id === result.product_id);
@@ -239,14 +249,22 @@ const PurchaseFormPage: React.FC = () => {
   };
 
   // 새로운 상품이 등록되었을 때
-  const handleNewProductRegistered = (newProduct: Product) => {
+  const handleNewProductRegistered = (newProduct: Product, barcodeInfo: { barcode_value: string; size: string }) => {
     // 상품 목록 새로고침
     loadProducts();
-    // 새로 등록된 상품 자동 선택
+
+    // 새로 등록된 상품 자동 선택 및 사이즈 추가
     setTimeout(() => {
       setSelectedProductId(newProduct.id);
-      handleProductChange(newProduct.id);
-      message.success(`${newProduct.product_name}이(가) 등록되고 선택되었습니다.`);
+      setSelectedProduct(newProduct);
+
+      // 바코드의 사이즈 수량 추가
+      setSizeQuantityMap(prev => {
+        const currentQty = prev[barcodeInfo.size] || 0;
+        return { ...prev, [barcodeInfo.size]: currentQty + 1 };
+      });
+
+      message.success(`${newProduct.product_name} (${barcodeInfo.size}) +1 추가됨`);
     }, 500);
   };
 
@@ -1170,59 +1188,93 @@ const PurchaseFormPage: React.FC = () => {
                   />
                 </div>
 
-                {/* 바코드로 추가된 사이즈별 수량 */}
+                {/* 선택된 상품 정보 및 사이즈 */}
                 {selectedProduct && Object.keys(sizeQuantityMap).length > 0 && (
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{
-                      padding: '8px 12px',
-                      backgroundColor: '#f6ffed',
-                      borderRadius: '4px',
-                      border: '1px solid #b7eb8f',
-                      marginBottom: 12,
-                      fontSize: '13px',
-                      color: '#274e2b',
-                      fontWeight: 500
-                    }}>
-                      ✓ 바코드로 추가된 사이즈
-                    </div>
+                  <Card size="small" style={{ marginBottom: 16, backgroundColor: '#fafafa' }}>
+                    <Row gutter={16}>
+                      <Col span={6}>
+                        {selectedProduct.brand_name && selectedProduct.product_code && (
+                          <img
+                            src={getFileUrl(`/uploads/products/${selectedProduct.brand_name}/${selectedProduct.product_code}.png`)}
+                            alt={selectedProduct.product_name}
+                            style={{ width: '100%', maxHeight: 120, objectFit: 'cover', borderRadius: 4 }}
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).style.display = 'none';
+                            }}
+                          />
+                        )}
+                      </Col>
+                      <Col span={18}>
+                        <div style={{ marginBottom: 8 }}>
+                          <div style={{ fontSize: '12px', color: '#999' }}>상품코드</div>
+                          <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#000' }}>
+                            {selectedProduct.product_code}
+                          </div>
+                        </div>
+                        <div style={{ marginBottom: 8 }}>
+                          <div style={{ fontSize: '12px', color: '#999' }}>상품명</div>
+                          <div style={{ fontSize: '14px', color: '#000' }}>
+                            {selectedProduct.product_name}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '12px', color: '#999', marginBottom: 4 }}>선택된 사이즈</div>
+                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                            {Object.entries(sizeQuantityMap).map(([size, qty]) =>
+                              qty > 0 && (
+                                <Tag key={size} color="blue">
+                                  {getSizeDisplay(size)} (×{qty})
+                                </Tag>
+                              )
+                            )}
+                          </div>
+                        </div>
+                      </Col>
+                    </Row>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: 16 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: 12 }}>
                       {Object.entries(sizeQuantityMap).map(([size, qty]) => (
                         qty > 0 && (
                           <div key={size} style={{
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'space-between',
-                            padding: '12px',
-                            border: '1px solid #e6f7ff',
+                            padding: '8px 12px',
+                            border: '1px solid #d9d9d9',
                             borderRadius: '4px',
-                            backgroundColor: '#fafafa'
+                            backgroundColor: '#fff'
                           }}>
-                            <div style={{ fontSize: '14px', fontWeight: 500, minWidth: '80px' }}>
+                            <div style={{ fontSize: '13px', color: '#666', minWidth: '60px' }}>
                               {getSizeDisplay(size)}
                             </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <InputNumber
-                                min={1}
-                                value={qty}
-                                onChange={(val) => handleSizeQuantityChange(size, val || 1)}
-                                style={{ width: '60px' }}
-                                size="small"
-                              />
-                              <span style={{ fontSize: '13px', color: '#666' }}>개</span>
-                            </div>
+                            <InputNumber
+                              min={1}
+                              value={qty}
+                              onChange={(val) => handleSizeQuantityChange(size, val || 1)}
+                              style={{ width: '50px' }}
+                              size="small"
+                            />
                           </div>
                         )
                       ))}
                     </div>
-                  </div>
+                  </Card>
                 )}
 
-                {/* 구매가 입력 */}
+                {/* 구매가 입력 (필수) */}
                 {selectedProduct && Object.keys(sizeQuantityMap).length > 0 && (
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{ marginBottom: 8 }}>
-                      <label style={{ fontSize: '14px', fontWeight: 500 }}>구매가</label>
+                  <div style={{
+                    marginBottom: 16,
+                    padding: '16px',
+                    backgroundColor: '#fff7e6',
+                    border: '2px solid #ff7a45',
+                    borderRadius: '6px'
+                  }}>
+                    <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: '16px', fontWeight: 'bold', color: '#ff7a45' }}>⚠</span>
+                      <label style={{ fontSize: '15px', fontWeight: 'bold', color: '#ff7a45', margin: 0 }}>
+                        구매가 입력 (필수)
+                      </label>
                     </div>
                     <InputNumber
                       min={0}
@@ -1231,7 +1283,8 @@ const PurchaseFormPage: React.FC = () => {
                       style={{ width: '100%' }}
                       size="large"
                       formatter={value => `₩${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                      placeholder="구매가 입력"
+                      placeholder="구매가를 입력하세요"
+                      status={purchasePrice === 0 ? 'error' : ''}
                     />
                   </div>
                 )}
@@ -1254,11 +1307,11 @@ const PurchaseFormPage: React.FC = () => {
                       type="primary"
                       icon={<CheckCircleOutlined />}
                       onClick={handleAddItems}
-                      disabled={Object.values(sizeQuantityMap).every(qty => qty === 0)}
+                      disabled={Object.values(sizeQuantityMap).every(qty => qty === 0) || purchasePrice === 0}
                       size="large"
-                      style={{ backgroundColor: '#0d1117', borderColor: '#0d1117' }}
+                      style={{ backgroundColor: '#ff7a45', borderColor: '#ff7a45' }}
                     >
-                      등록
+                      추가
                     </Button>
                   </div>
                 )}

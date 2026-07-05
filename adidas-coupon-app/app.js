@@ -85,6 +85,7 @@ const state = {
     headerDateFilter: null, // 현재 열린 헤더 날짜 필터 ('created', 'couponFetched', 'fetchDate')
     headerCategoryFilter: null, // 현재 열린 쿠폰 카테고리 필터 ('amount', 'percent')
     headerStatusFilter: false, // 현재 열린 현황 필터
+    headerPwStatusFilter: false, // 현재 열린 비밀번호 변경 현황 필터
     headerMemoFilter: false, // 현재 열린 메모 필터
     accountDelay: 10, // 계정 간 대기시간 (초)
     // 필터링
@@ -98,7 +99,8 @@ const state = {
         excludeSoldCoupon: false, // 사용완료 쿠폰 제외
         excludeExpiredCoupon: false, // 기간만료 쿠폰 제외
         status: [true], // [true], [false], [true, false] - 기본값: 활성만
-        workStatuses: [], // ['completed', 'error', ...] - 복수 선택 가능
+        workStatuses: [], // ['completed', 'error', ...] - 복수 선택 가능 (조회/발급 현황)
+        pwStatuses: [], // 비밀번호 변경 현황 필터 ['completed','error','password_wrong','processing','none']
         expiringCoupon: false, // 만료 예정 쿠폰 보유 계정만
         has100kCoupon: false, // 10만원 쿠폰 보유 계정만 (통계 카드용)
         canIssue100k: false, // 10만원권 발급 가능 계정 (이력 있고 30일 경과)
@@ -682,6 +684,16 @@ function parseStatus(status) {
             const dayName = dayNames[d.getDay()];
             datetime = `${now.getFullYear()}/${month}/${day}(${dayName}) ${hour}:${minute}`;
         }
+    }
+
+    // 비밀번호 변경 작업 상태 (전용 표기) - 무슨 작업이었는지 명확히 표시
+    if (status.includes('[비밀번호 변경]')) {
+        if (status.includes('중...')) return { text: '비밀번호 변경 중', datetime, statusType: 'processing' };
+        if (status.includes('완료')) return { text: '비밀번호 변경 완료', datetime, statusType: 'success' };
+        if (status.includes('기존 비밀번호 틀림')) return { text: '비밀번호 변경 실패(기존 비번 오류)', datetime, statusType: 'password_wrong' };
+        if (status.includes('차단')) return { text: '비밀번호 변경 실패(차단)', datetime, statusType: 'error' };
+        if (status.includes('중지')) return { text: '비밀번호 변경 중지됨', datetime, statusType: 'error' };
+        return { text: '비밀번호 변경 실패', datetime, statusType: 'error' };
     }
 
     // 상태 타입 결정
@@ -1597,6 +1609,152 @@ async function issueCouponForAccount(accountId, couponTypes) {
     }
 }
 
+// ==================== 비밀번호 변경 ====================
+
+// 아디다스 비밀번호 정책 검증
+// 8글자 이상 + 대문자 1 + 소문자 1 + (숫자 또는 특수문자) 1
+function validateAdidasPassword(pw) {
+    pw = pw || '';
+    if (pw.length < 8) return { valid: false, message: '비밀번호는 8글자 이상이어야 합니다' };
+    if (!/[A-Z]/.test(pw)) return { valid: false, message: '대문자를 최소 1개 포함해야 합니다' };
+    if (!/[a-z]/.test(pw)) return { valid: false, message: '소문자를 최소 1개 포함해야 합니다' };
+    if (!/[0-9]/.test(pw) && !/[^A-Za-z0-9]/.test(pw)) return { valid: false, message: '숫자 또는 특수문자를 최소 1개 포함해야 합니다' };
+    return { valid: true, message: '' };
+}
+
+// 비밀번호 조건 충족 현황 표시용 HTML
+function renderPasswordReqs(pw) {
+    pw = pw || '';
+    const reqs = [
+        { ok: pw.length >= 8, label: '8글자 이상' },
+        { ok: /[A-Z]/.test(pw), label: '대문자' },
+        { ok: /[a-z]/.test(pw), label: '소문자' },
+        { ok: /[0-9]/.test(pw) || /[^A-Za-z0-9]/.test(pw), label: '숫자 또는 특수문자' },
+    ];
+    return reqs.map(r => `<span style="display:inline-block;margin:2px 10px 2px 0;font-size:12px;color:${r.ok ? '#16a34a' : '#9ca3af'};">${r.ok ? '✓' : '○'} ${r.label}</span>`).join('');
+}
+
+// 입력 시 조건 현황 실시간 갱신
+function updatePasswordHint(pw) {
+    const el = document.getElementById('pwReqHint');
+    if (el) el.innerHTML = renderPasswordReqs(pw);
+}
+
+// 개별 비밀번호 변경 모달 열기
+function showSinglePasswordModal(id, email) {
+    state.singlePasswordAccountId = id;
+    state.singlePasswordEmail = email;
+    state.modal = 'single-password';
+    render();
+    // 입력란 포커스
+    setTimeout(() => { const el = document.getElementById('newPasswordInput'); if (el) el.focus(); }, 50);
+}
+
+// 일괄 비밀번호 변경 모달 열기
+function showBulkPasswordModal() {
+    if (state.selectedIds.size === 0) {
+        notifyWarning('비밀번호를 변경할 계정을 선택하세요');
+        return;
+    }
+    state.modal = 'bulk-password';
+    render();
+    setTimeout(() => { const el = document.getElementById('newPasswordInput'); if (el) el.focus(); }, 50);
+}
+
+// 개별 비밀번호 변경 시작
+async function startSinglePasswordChange() {
+    const input = document.getElementById('newPasswordInput');
+    const newPassword = input ? input.value.trim() : '';
+    const v = validateAdidasPassword(newPassword);
+    if (!v.valid) {
+        notifyWarning(v.message);
+        return;
+    }
+
+    const accountId = state.singlePasswordAccountId;
+    const account = state.accounts.find(acc => acc.id === accountId);
+    if (!account) {
+        notifyError('계정을 찾을 수 없습니다');
+        return;
+    }
+
+    const confirmed = await showConfirm({
+        title: '비밀번호 변경',
+        message: `${account.email} 계정의 비밀번호를 변경하시겠습니까?`,
+        confirmText: '변경',
+        type: 'info'
+    });
+    if (!confirmed) return;
+
+    closeModal();
+    openMonitor('password', '비밀번호 변경', [account]);
+
+    try {
+        await api(`/change-password/${accountId}`, {
+            method: 'POST',
+            body: { new_password: newPassword, useProxy: getUserProxySetting() }
+        });
+    } catch (error) {
+        notifyError('비밀번호 변경 실패: ' + error.message);
+    }
+}
+
+// 일괄 비밀번호 변경 시작
+async function startBulkPasswordChange() {
+    const input = document.getElementById('newPasswordInput');
+    const newPassword = input ? input.value.trim() : '';
+    const v = validateAdidasPassword(newPassword);
+    if (!v.valid) {
+        notifyWarning(v.message);
+        return;
+    }
+
+    // 동시 실행 개수 (1=순차, 2~4=병렬)
+    const concSel = document.getElementById('pwConcurrency');
+    const concurrency = concSel ? parseInt(concSel.value, 10) || 1 : 1;
+    const useProxy = getUserProxySetting();
+
+    const ids = Array.from(state.selectedIds);
+    const accounts = ids.map(id => state.accounts.find(a => a.id === id)).filter(Boolean);
+    if (accounts.length === 0) {
+        notifyError('선택한 계정을 찾을 수 없습니다');
+        return;
+    }
+
+    // 병렬 + 프록시 OFF 면 차단 위험 경고
+    if (concurrency > 1 && !useProxy) {
+        const proceed = await showConfirm({
+            title: '⚠ 프록시 없이 병렬 실행',
+            message: `프록시가 꺼져 있어 동일 IP로 동시 ${concurrency}개를 실행합니다.\n아디다스 봇/IP 차단 위험이 높습니다. 계속하시겠습니까?\n(권장: 프록시를 켜거나 순차로 실행)`,
+            confirmText: '그래도 진행',
+            type: 'warning'
+        });
+        if (!proceed) return;
+    }
+
+    const modeStr = concurrency > 1 ? `동시 ${concurrency}개 병렬` : '순차';
+    const confirmed = await showConfirm({
+        title: '비밀번호 일괄 변경',
+        message: `선택한 ${accounts.length}개 계정의 비밀번호를 동일하게 변경하시겠습니까?\n${modeStr} 처리되며 계정당 30~60초 소요됩니다.`,
+        confirmText: `${accounts.length}개 변경`,
+        type: 'warning'
+    });
+    if (!confirmed) return;
+
+    closeModal();
+    openMonitor('password', `비밀번호 일괄 변경 (${accounts.length}개, ${modeStr})`, accounts);
+    state.selectedIds.clear();
+
+    try {
+        await api('/change-password/bulk', {
+            method: 'POST',
+            body: { ids, new_password: newPassword, concurrency, useProxy }
+        });
+    } catch (error) {
+        notifyError('비밀번호 일괄 변경 실패: ' + error.message);
+    }
+}
+
 async function bulkUpsertAccounts(accounts) {
     try {
         const result = await api('/accounts/bulk-upsert', { method: 'POST', body: accounts });
@@ -1798,6 +1956,14 @@ function getFilteredAndSortedAccounts() {
         result = result.filter(acc => {
             const status = getAccountWorkStatus(acc);
             return state.filters.workStatuses.includes(status);
+        });
+    }
+
+    // 비밀번호 변경 현황 필터 - 복수 선택
+    if (state.filters.pwStatuses.length > 0) {
+        result = result.filter(acc => {
+            const status = getAccountPwStatus(acc);
+            return state.filters.pwStatuses.includes(status);
         });
     }
 
@@ -2381,6 +2547,7 @@ function render() {
                         <button class="segment-btn segment-on" onclick="bulkToggleActive(true)">ON</button>
                         <button class="segment-btn segment-off" onclick="bulkToggleActive(false)">OFF</button>
                     </div>
+                    <button class="btn btn-default" onclick="showBulkPasswordModal()">비밀번호 변경</button>
                     <button class="btn btn-delete" onclick="bulkDelete()">삭제</button>
                 ` : ''}
             </div>
@@ -2442,6 +2609,11 @@ function render() {
                                     <span class="th-name" onmousedown="event.stopPropagation();toggleHeaderStatusFilter()">현황</span>
                                     ${state.filters.workStatuses.length > 0 ? '<span class="th-filter-dot"></span>' : ''}
                                     ${renderHeaderStatusPopover()}
+                                </th>
+                                <th class="resizable th-with-actions" style="width:90px;">
+                                    <span class="th-name" onmousedown="event.stopPropagation();toggleHeaderPwStatusFilter()">비밀번호 변경</span>
+                                    ${state.filters.pwStatuses.length > 0 ? '<span class="th-filter-dot"></span>' : ''}
+                                    ${renderHeaderPwStatusPopover()}
                                 </th>
                                 <th class="resizable" style="width:55px;">작업자</th>
                                 <th class="resizable sortable th-with-actions ${state.sort.column === 'fetchDate' ? 'sorted' : ''}" style="width:85px;">
@@ -2595,6 +2767,9 @@ function renderAccountRow(acc, rowNum) {
             <td style="font-size:11px;">
                 ${renderStatusCell(acc.web_fetch_status, acc.web_issue_status || acc.issue_status)}
             </td>
+            <td style="font-size:11px;">
+                ${renderPwStatusCell(acc.password_change_status)}
+            </td>
             <td style="text-align:center;font-size:11px;color:#666;">
                 ${acc.last_action_by || '-'}
             </td>
@@ -2609,6 +2784,7 @@ function renderAccountRow(acc, rowNum) {
                     ${acc.is_active ? `
                         <button class="btn btn-navy btn-small" style="font-size:11px;padding:2px 6px;" onclick="showSingleIssueCouponModal('${acc.id}', '${acc.email}')">조회/발급</button>
                     ` : ''}
+                    <button class="btn btn-default btn-small" style="font-size:10px;padding:2px 4px;" onclick="showSinglePasswordModal('${acc.id}', '${acc.email}')">비밀번호 변경</button>
                     <div style="display:flex;gap:2px;">
                         <button class="btn btn-default btn-small" style="font-size:10px;padding:2px 4px;flex:1;" onclick="showEditModal('${acc.id}')">수정</button>
                         <button class="btn btn-delete btn-small" style="font-size:10px;padding:2px 4px;flex:1;" onclick="deleteAccount('${acc.id}')">삭제</button>
@@ -3580,6 +3756,96 @@ teayoouun1@naver.com
         `;
     }
 
+    if (state.modal === 'single-password') {
+        const email = state.singlePasswordEmail || '';
+        return `
+            <div class="modal-overlay" onmousedown="this._mdTarget=event.target" onmouseup="if(event.target===this&&this._mdTarget===this)closeModal()">
+                <div class="modal" style="width:440px;" onclick="event.stopPropagation()">
+                    <div class="modal-header">
+                        <h3>🔑 비밀번호 변경</h3>
+                        <button class="modal-close" onmousedown="this._mdTarget=event.target" onmouseup="if(event.target===this&&this._mdTarget===this)closeModal()">×</button>
+                    </div>
+                    <div class="modal-body">
+                        <p style="margin-bottom:12px;color:#666;font-size:13px;">
+                            <strong style="color:#111;">${email}</strong> 계정의 아디다스 비밀번호를 변경합니다.
+                        </p>
+                        <label style="font-size:13px;font-weight:600;color:#333;">새 비밀번호</label>
+                        <input type="text" id="newPasswordInput" autocomplete="off"
+                            style="width:100%;margin-top:6px;padding:10px;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;"
+                            placeholder="새 비밀번호 입력"
+                            oninput="updatePasswordHint(this.value)"
+                            onkeydown="if(event.key==='Enter')startSinglePasswordChange()">
+                        <div id="pwReqHint" style="margin-top:8px;">${renderPasswordReqs('')}</div>
+                        <p style="margin-top:12px;font-size:12px;color:#999;line-height:1.5;">
+                            * 8글자 이상, 대문자·소문자 및 숫자/특수문자를 포함해야 합니다.<br>
+                            * 브라우저로 로그인 후 API로 변경합니다 (계정당 약 30~60초).<br>
+                            * 성공 시 앱에 저장된 비밀번호도 자동으로 갱신됩니다.
+                        </p>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-default" onmousedown="this._mdTarget=event.target" onmouseup="if(event.target===this&&this._mdTarget===this)closeModal()">취소</button>
+                        <button class="btn btn-primary-dark" onclick="startSinglePasswordChange()">변경</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    if (state.modal === 'bulk-password') {
+        const count = state.selectedIds.size;
+        const proxyOn = getUserProxySetting();
+        const proxyCount = (typeof proxyListCache !== 'undefined' && proxyListCache) ? proxyListCache.length : 0;
+        const proxyStatusHtml = (proxyOn && proxyCount > 0)
+            ? `<span style="color:#16a34a;font-weight:600;">프록시 ON (${proxyCount}개)</span> — 병렬 처리 안전`
+            : `<span style="color:#d97706;font-weight:600;">프록시 OFF</span> — 병렬 시 동일 IP 차단 위험`;
+        return `
+            <div class="modal-overlay" onmousedown="this._mdTarget=event.target" onmouseup="if(event.target===this&&this._mdTarget===this)closeModal()">
+                <div class="modal" style="width:460px;" onclick="event.stopPropagation()">
+                    <div class="modal-header">
+                        <h3>🔑 비밀번호 일괄 변경</h3>
+                        <button class="modal-close" onmousedown="this._mdTarget=event.target" onmouseup="if(event.target===this&&this._mdTarget===this)closeModal()">×</button>
+                    </div>
+                    <div class="modal-body">
+                        <p style="margin-bottom:12px;color:#666;font-size:13px;">
+                            선택한 <strong style="color:#111;">${count}개</strong> 계정의 비밀번호를 <strong>동일한 새 비밀번호</strong>로 변경합니다.
+                        </p>
+                        <label style="font-size:13px;font-weight:600;color:#333;">새 비밀번호 (전체 공통)</label>
+                        <input type="text" id="newPasswordInput" autocomplete="off"
+                            style="width:100%;margin-top:6px;padding:10px;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;"
+                            placeholder="새 비밀번호 입력"
+                            oninput="updatePasswordHint(this.value)"
+                            onkeydown="if(event.key==='Enter')startBulkPasswordChange()">
+                        <div id="pwReqHint" style="margin-top:8px;">${renderPasswordReqs('')}</div>
+
+                        <div style="margin-top:16px;display:flex;align-items:center;gap:10px;">
+                            <label style="font-size:13px;font-weight:600;color:#333;white-space:nowrap;">동시 실행 개수</label>
+                            <select id="pwConcurrency" style="padding:7px 10px;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;">
+                                <option value="1">1개 (순차 · 가장 안전)</option>
+                                <option value="2">2개 병렬</option>
+                                <option value="3">3개 병렬</option>
+                                <option value="4" selected>4개 병렬</option>
+                            </select>
+                        </div>
+                        <div style="margin-top:8px;padding:8px 10px;background:#f8f9fa;border-radius:4px;font-size:12px;">
+                            ${proxyStatusHtml}
+                        </div>
+
+                        <p style="margin-top:12px;font-size:12px;color:#999;line-height:1.5;">
+                            * 계정마다 브라우저 로그인 후 처리됩니다 (계정당 약 30~60초).<br>
+                            * 병렬은 동시 N개 브라우저를 띄웁니다. 각 워커는 프록시 IP를 순환 사용합니다.<br>
+                            * 오류가 나도 자동 중지하지 않고 끝까지 진행합니다. (중단은 상단 중지 버튼)<br>
+                            * 성공한 계정은 앱에 저장된 비밀번호도 자동 갱신됩니다.
+                        </p>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-default" onmousedown="this._mdTarget=event.target" onmouseup="if(event.target===this&&this._mdTarget===this)closeModal()">취소</button>
+                        <button class="btn btn-primary-dark" onclick="startBulkPasswordChange()">${count}개 일괄 변경</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
     if (state.modal && state.modal.type === 'guide') {
         return `
             <div class="modal-overlay" onmousedown="this._mdTarget=event.target" onmouseup="if(event.target===this&&this._mdTarget===this)closeModal()">
@@ -3916,6 +4182,54 @@ function getAvailableWorkStatuses() {
     return Object.entries(statusMap)
         .filter(([, count]) => count > 0)
         .map(([key, count]) => ({ key, label: labels[key], count }));
+}
+
+// 비밀번호 변경 현황 → 필터 키
+function getAccountPwStatus(acc) {
+    const raw = acc.password_change_status || '';
+    const { statusType } = parseStatus(raw);
+    switch (statusType) {
+        case 'success': return 'completed';
+        case 'password_wrong': return 'password_wrong';
+        case 'error':
+            // 실패와 차단을 분리
+            return raw.includes('차단') ? 'blocked' : 'error';
+        case 'processing': return 'processing';
+        case 'waiting': return 'pending';
+        default: return 'none'; // 비밀번호 변경 미실행
+    }
+}
+
+// 비밀번호 변경 현황별 개수 (필터 팝오버용)
+function getAvailablePwStatuses() {
+    const statusMap = { completed: 0, password_wrong: 0, blocked: 0, error: 0, processing: 0, none: 0 };
+    state.accounts.forEach(acc => {
+        const s = getAccountPwStatus(acc);
+        if (statusMap[s] !== undefined) statusMap[s]++;
+    });
+    const labels = {
+        completed: '변경 완료',
+        password_wrong: '기존 비번 오류',
+        blocked: '차단',
+        error: '실패',
+        processing: '진행중',
+        none: '미실행'
+    };
+    return Object.entries(statusMap)
+        .filter(([, count]) => count > 0)
+        .map(([key, count]) => ({ key, label: labels[key], count }));
+}
+
+// 비밀번호 변경 현황 셀 렌더링
+function renderPwStatusCell(pwStatus) {
+    const parsed = parseStatus(pwStatus);
+    if (parsed.statusType === 'none') return '<span style="color:#ccc;">-</span>';
+    const colorMap = {
+        success: '#16a34a', error: '#ef4444', password_wrong: '#f97316',
+        processing: '#111', waiting: '#8c8c8c'
+    };
+    const color = colorMap[parsed.statusType] || '#666';
+    return `<span style="color:${color};font-size:13px;font-weight:600;white-space:normal;">${parsed.text}</span>`;
 }
 
 // 팝오버 필터 바 렌더링
@@ -4684,6 +4998,7 @@ function toggleHeaderCategoryFilter(categoryKey) {
     state.headerCategoryFilter = state.headerCategoryFilter === categoryKey ? null : categoryKey;
     state.headerDateFilter = null;
     state.headerStatusFilter = false;
+    state.headerPwStatusFilter = false;
     state.headerMemoFilter = false;
     render();
 }
@@ -4692,6 +5007,16 @@ function toggleHeaderStatusFilter() {
     state.headerStatusFilter = !state.headerStatusFilter;
     state.headerDateFilter = null;
     state.headerCategoryFilter = null;
+    state.headerPwStatusFilter = false;
+    state.headerMemoFilter = false;
+    render();
+}
+
+function toggleHeaderPwStatusFilter() {
+    state.headerPwStatusFilter = !state.headerPwStatusFilter;
+    state.headerDateFilter = null;
+    state.headerCategoryFilter = null;
+    state.headerStatusFilter = false;
     state.headerMemoFilter = false;
     render();
 }
@@ -4701,6 +5026,7 @@ function toggleHeaderMemoFilter() {
     state.headerDateFilter = null;
     state.headerCategoryFilter = null;
     state.headerStatusFilter = false;
+    state.headerPwStatusFilter = false;
     render();
 }
 
@@ -4777,6 +5103,33 @@ function renderHeaderStatusPopover() {
     });
     html += '<div class="cat-filter-divider"></div>';
     html += `<button class="cat-filter-reset" onclick="state.filters.workStatuses=[];state.headerStatusFilter=false;state.currentPage=1;render()">초기화</button>`;
+    html += '</div>';
+    return html;
+}
+
+function renderHeaderPwStatusPopover() {
+    if (!state.headerPwStatusFilter) return '';
+    const statuses = getAvailablePwStatuses();
+    const active = state.filters.pwStatuses;
+    const statusColors = {
+        completed: '#16a34a', password_wrong: '#f97316', blocked: '#b91c1c',
+        error: '#ef4444', processing: '#3b82f6', none: '#9ca3af'
+    };
+
+    let html = '<div class="th-category-popover" data-popover="pwstatus" onclick="event.stopPropagation()">';
+    html += '<div class="cat-filter-section-title">비밀번호 변경 현황</div>';
+    statuses.forEach(s => {
+        const checked = active.includes(s.key);
+        const color = statusColors[s.key] || '#6b7280';
+        html += `<div class="cat-filter-item${checked ? ' checked' : ''}" onclick="event.stopPropagation();toggleFilter('pwStatuses','${s.key}')">
+            <span class="cat-filter-check">${checked ? '☑' : '☐'}</span>
+            <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${color};flex-shrink:0;"></span>
+            <span class="cat-filter-name">${s.label}</span>
+            <span class="cat-filter-count">${s.count}개</span>
+        </div>`;
+    });
+    html += '<div class="cat-filter-divider"></div>';
+    html += `<button class="cat-filter-reset" onclick="state.filters.pwStatuses=[];state.headerPwStatusFilter=false;state.currentPage=1;render()">초기화</button>`;
     html += '</div>';
     return html;
 }

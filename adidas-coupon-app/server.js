@@ -535,6 +535,7 @@ async function initDB() {
         // 컬럼 자동 추가 (없으면)
         await pool.query(`ALTER TABLE adidas_accounts ADD COLUMN IF NOT EXISTS adiclub_level TEXT`).catch(() => {});
         await pool.query(`ALTER TABLE adidas_accounts ADD COLUMN IF NOT EXISTS proxy_url TEXT`).catch(() => {});
+        await pool.query(`ALTER TABLE adidas_accounts ADD COLUMN IF NOT EXISTS password_change_status TEXT`).catch(() => {});
         // 조회이력 테이블
         await pool.query(`
             CREATE TABLE IF NOT EXISTS account_fetch_history (
@@ -2289,6 +2290,25 @@ function getIssueCouponMobileScriptPath() {
     return null;
 }
 
+// 비밀번호 변경 Python 스크립트 경로
+function getChangePasswordScriptPath() {
+    // 배포 환경 (extraResources로 복사된 경로)
+    if (process.resourcesPath) {
+        const prodPath = path.join(process.resourcesPath, 'scripts', 'change_password.py');
+        if (fs.existsSync(prodPath)) {
+            return prodPath;
+        }
+    }
+
+    // 개발 환경
+    const devPath = path.join(__dirname, 'scripts', 'change_password.py');
+    if (fs.existsSync(devPath)) {
+        return devPath;
+    }
+
+    return null;
+}
+
 // 쿠폰 일괄 발급 (반드시 단건 발급보다 먼저 정의해야 함 - Express 라우팅 순서)
 app.post('/api/issue-coupon/bulk', async (req, res) => {
     const { ids, coupon_type, coupon_types, promo_quantities, mode, actionBy, useProxy } = req.body;
@@ -2639,9 +2659,14 @@ async function processIssueCouponSequentially(accounts, coupon_type, useIncognit
             let result = await issueCouponForAccount(account, accountCouponType, false, useIncognito, usePlaywright, useHeadless);
 
             // 연속 오류 카운트 (봇 차단 포함)
+            // 포인트 부족(INSUFFICIENT_POINTS)은 계정 사정(잔여 포인트 없음)일 뿐 시스템 오류가 아니므로
+            // 연속 오류 카운트에서 제외 (증가/리셋 안 함)
+            const isInsufficientPoints = result && result.error === 'INSUFFICIENT_POINTS';
             const isBotBlocked = result && result.error && result.error.startsWith('BOT_BLOCKED');
             const isError = isBotBlocked || (result && result.error) || !result;
-            if (isError) {
+            if (isInsufficientPoints) {
+                // 카운트 변화 없이 통과
+            } else if (isError) {
                 consecutiveErrors++;
                 if (consecutiveErrors >= CONSECUTIVE_ERROR_LIMIT) {
                     addLog(`[일괄발급] ${CONSECUTIVE_ERROR_LIMIT}회 연속 오류 발생 - 남은 계정 일괄 중지`);
@@ -3531,6 +3556,325 @@ function processIssueCouponMobileForHybrid(accounts, coupon_type) {
 // ========== 진행 상태 API (모니터링용) ==========
 
 // 모니터링 시작 시 상태 초기화
+// ==================== 비밀번호 변경 ====================
+
+// 아디다스 비밀번호 정책 검증 (8글자 이상 + 대문자 + 소문자 + 숫자/특수문자)
+function isValidAdidasPassword(pw) {
+    if (!pw || typeof pw !== 'string' || pw.length < 8) return false;
+    if (!/[A-Z]/.test(pw)) return false;
+    if (!/[a-z]/.test(pw)) return false;
+    if (!/[0-9]/.test(pw) && !/[^A-Za-z0-9]/.test(pw)) return false;
+    return true;
+}
+
+const PASSWORD_POLICY_MSG = '비밀번호는 8글자 이상이며 대문자·소문자와 숫자 또는 특수문자를 포함해야 합니다';
+
+// stdout 에서 [RESULT] {json} 추출 (중첩 {} 매칭)
+function extractResultJson(stdout) {
+    const resultIndex = stdout.indexOf('[RESULT]');
+    if (resultIndex === -1) return null;
+    const jsonStart = stdout.indexOf('{', resultIndex);
+    if (jsonStart === -1) return null;
+    let depth = 0;
+    let jsonEnd = jsonStart;
+    for (let i = jsonStart; i < stdout.length; i++) {
+        if (stdout[i] === '{') depth++;
+        else if (stdout[i] === '}') depth--;
+        if (depth === 0) { jsonEnd = i + 1; break; }
+    }
+    try {
+        return JSON.parse(stdout.substring(jsonStart, jsonEnd));
+    } catch (e) {
+        addLog(`[비밀번호 변경] 결과 JSON 파싱 실패: ${e.message}`);
+        return null;
+    }
+}
+
+// 비번 변경과 동일 세션에서 조회한 계정 정보를 데이터 컬럼에만 조용히 반영
+// (조회일시/조회이력/web_fetch_status 는 건드리지 않음)
+function applyFetchedInfo(account, info) {
+    if (!info || typeof info !== 'object') return;
+    const hasVouchers = Array.isArray(info.vouchers);
+    const hasAny = info.name || info.phone || info.barcode || info.level != null
+        || info.points != null || hasVouchers;
+    if (!hasAny) return;
+
+    const vouchersJson = hasVouchers
+        ? JSON.stringify(mergeVouchers(info.vouchers, account.owned_vouchers))
+        : null;
+
+    runQuery(`
+        UPDATE adidas_accounts
+        SET name = COALESCE($1, name),
+            phone = COALESCE($2, phone),
+            adikr_barcode = COALESCE($3, adikr_barcode),
+            adiclub_level = COALESCE($4, adiclub_level),
+            current_points = COALESCE($5, current_points),
+            owned_vouchers = COALESCE($6, owned_vouchers),
+            updated_at = NOW()
+        WHERE id = $7
+    `, [
+        info.name || null,
+        info.phone || null,
+        info.barcode || null,
+        info.level || null,
+        (info.points === undefined || info.points === null) ? null : info.points,
+        vouchersJson,
+        account.id
+    ]).catch(e => addLog(`[DB오류] ${e.message}`));
+
+    addLog(`[비밀번호 변경] 계정정보 동시 갱신 - ${account.email} (P:${info.points != null ? info.points : '-'}, 쿠폰:${hasVouchers ? info.vouchers.length : '-'})`);
+}
+
+// 단일 계정 비밀번호 변경 (스크립트 실행 → 성공 시 DB 비밀번호 갱신)
+function changePasswordForAccount(account, newPassword, useIncognito = false, proxy = null) {
+    return new Promise((resolve) => {
+        const scriptPath = getChangePasswordScriptPath();
+        if (!scriptPath) {
+            const msg = '비밀번호 변경 스크립트를 찾을 수 없습니다';
+            addLog(`[비밀번호 변경] ${msg}`);
+            updateProgress(account.id, 'password', 'error', msg);
+            return resolve({ success: false, error: 'NO_SCRIPT' });
+        }
+
+        const procMsg = `[비밀번호 변경] 진행 중... ${getNowTime()}`;
+        updateProgress(account.id, 'password', 'processing', procMsg);
+        runQuery('UPDATE adidas_accounts SET password_change_status = $1, updated_at = NOW() WHERE id = $2', [procMsg, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
+
+        const { spawn } = require('child_process');
+        const pythonPath = getPythonPath();
+
+        // named args 먼저, -- separator 후 positional (비밀번호에 -- 포함 대비)
+        const args = ['-u', scriptPath];
+        if (useIncognito) args.push('--incognito');
+        if (proxy) args.push('--proxy', proxy);
+        args.push('--', account.email, account.password, newPassword);
+
+        const pythonProcess = spawn(pythonPath, args, {
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+            windowsHide: true
+        });
+
+        let stdout = '';
+        let stderr = '';
+        pythonProcess.stdout.on('data', (data) => {
+            const chunk = data.toString('utf-8');
+            stdout += chunk;
+            if (chunk.includes('ERROR') || chunk.includes('[RESULT]')) {
+                addLog(`[비밀번호 변경] ${chunk.substring(0, 150)}`);
+            }
+        });
+        pythonProcess.stderr.on('data', (data) => {
+            const chunk = data.toString();
+            stderr += chunk;
+            if (chunk.includes('Error') || chunk.includes('Exception') || chunk.includes('Traceback')) {
+                addLog(`[비밀번호 변경 오류] ${chunk.substring(0, 150)}`);
+            }
+        });
+
+        pythonProcess.on('close', (code) => {
+            const result = extractResultJson(stdout);
+            const isSuccess = result && result.success === true;
+
+            // 비번 변경 성공/실패와 무관하게, 로그인되어 조회된 정보가 있으면 데이터만 조용히 갱신
+            applyFetchedInfo(account, result && result.info);
+
+            if (isSuccess) {
+                const okMsg = `[비밀번호 변경] 완료 ${getNowTime()}`;
+                // 성공 시 DB 비밀번호를 새 비밀번호로 갱신 (이후 로그인/조회/발급이 새 비번 사용)
+                runQuery('UPDATE adidas_accounts SET password = $1, password_change_status = $2, updated_at = NOW() WHERE id = $3',
+                    [newPassword, okMsg, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
+                addLog(`[비밀번호 변경] 성공 - ${account.email}`);
+                updateProgress(account.id, 'password', 'success', okMsg);
+                resolve({ success: true });
+            } else {
+                const ec = (result && result.error) || 'UNKNOWN';
+                let errMsg;
+                let progressStatus = 'error';
+                let ipBlocked = false;
+                if (ec === 'PASSWORD_WRONG') {
+                    errMsg = `[비밀번호 변경] 기존 비밀번호 틀림 ${getNowTime()}`;
+                    progressStatus = 'password_wrong';
+                } else if (typeof ec === 'string' && ec.startsWith('BOT_BLOCKED')) {
+                    const botMsg = ec.includes(':') ? ec.split(':').slice(1).join(':').trim() : '';
+                    errMsg = botMsg ? `[비밀번호 변경] 차단 의심 : ${botMsg} ${getNowTime()}` : `[비밀번호 변경] 차단 의심 ${getNowTime()}`;
+                } else if (ec === 'IP_BLOCKED') {
+                    errMsg = `[비밀번호 변경] IP 차단 ${getNowTime()}`;
+                    ipBlocked = true;
+                } else if (ec === 'TOKEN_FAILED' || ec === 'LOGIN_FAILED') {
+                    errMsg = `[비밀번호 변경] 로그인/토큰 실패 ${getNowTime()}`;
+                } else if (ec === 'API_FAILED') {
+                    const sc = result && result.status_code ? `(${result.status_code})` : '';
+                    errMsg = `[비밀번호 변경] API 실패${sc} ${getNowTime()}`;
+                } else {
+                    errMsg = `[비밀번호 변경] 알 수 없는 오류 ${getNowTime()}`;
+                }
+                runQuery('UPDATE adidas_accounts SET password_change_status = $1, updated_at = NOW() WHERE id = $2', [errMsg, account.id]).catch(e => addLog(`[DB오류] ${e.message}`));
+                addLog(`[비밀번호 변경] 실패 - ${account.email}: ${ec}`);
+                updateProgress(account.id, 'password', progressStatus, errMsg);
+                resolve({ success: false, error: ec, ipBlocked });
+            }
+        });
+    });
+}
+
+// 비밀번호 일괄 변경 순차 처리
+async function processChangePasswordSequentially(accounts, newPassword, useIncognito = false, useProxy = false) {
+    const accountIds = accounts.map(a => a.id);
+    startBatchProcess('password-web', `비밀번호 변경 (${accounts.length}개)`, accountIds, null);
+
+    try {
+        for (let i = 0; i < accounts.length; i++) {
+            const account = accounts[i];
+            // 사용자 수동 중지만 처리 (오류 누적 자동 중지는 없음)
+            if (runningBatchProcess.abortRequested) {
+                addLog(`[비밀번호 변경] 사용자 중지 요청 - 남은 계정 건너뜀`);
+                for (let j = i; j < accounts.length; j++) {
+                    updateProgress(accounts[j].id, 'password', 'error', '[비밀번호 변경] 사용자에 의해 중지됨');
+                }
+                break;
+            }
+
+            const proxy = useProxy ? getProxyForAccount() : null;
+            await changePasswordForAccount(account, newPassword, useIncognito, proxy);
+
+            // 다음 계정 전 대기 (IP 레이트 리밋 방지)
+            if (i < accounts.length - 1) {
+                const delaySec = accountDelaySec || 10;
+                addLog(`[비밀번호 변경] 다음 계정까지 ${delaySec}초 대기...`);
+                await new Promise(resolve => setTimeout(resolve, delaySec * 1000));
+            }
+        }
+    } finally {
+        endBatchProcess();
+    }
+}
+
+// 비밀번호 일괄 변경 병렬 처리 (동시성 제한 풀, 각 워커가 다른 프록시 IP 사용 권장)
+async function processChangePasswordParallel(accounts, newPassword, concurrency = 4, useIncognito = false, useProxy = false) {
+    const accountIds = accounts.map(a => a.id);
+    const workers = Math.max(1, Math.min(concurrency, accounts.length));
+    startBatchProcess('password-web', `비밀번호 변경 (${accounts.length}개, 동시 ${workers})`, accountIds, null);
+
+    // 전체 대기 상태로 초기화
+    accounts.forEach(acc => updateProgress(acc.id, 'password', 'waiting', '대기 중'));
+
+    // 오류 누적 자동 중지 없음 - 사용자 수동 중지만 처리
+    let nextIndex = 0;
+
+    const runWorker = async () => {
+        while (true) {
+            if (runningBatchProcess.abortRequested) return;
+            const idx = nextIndex++;
+            if (idx >= accounts.length) return;
+            const account = accounts[idx];
+
+            const proxy = useProxy ? getProxyForAccount() : null;
+            await changePasswordForAccount(account, newPassword, useIncognito, proxy);
+        }
+    };
+
+    try {
+        await Promise.all(Array.from({ length: workers }, () => runWorker()));
+        // 사용자가 중지한 경우, 아직 시작 못한 계정 정리
+        if (runningBatchProcess.abortRequested) {
+            const reason = '[비밀번호 변경] 사용자에 의해 중지됨';
+            for (let i = nextIndex; i < accounts.length; i++) {
+                updateProgress(accounts[i].id, 'password', 'error', reason);
+                runQuery('UPDATE adidas_accounts SET password_change_status = $1, updated_at = NOW() WHERE id = $2', [reason, accounts[i].id]).catch(() => {});
+            }
+        }
+    } finally {
+        endBatchProcess();
+    }
+}
+
+// 비밀번호 일괄 변경 (반드시 단건보다 먼저 정의 - Express 라우팅 순서)
+app.post('/api/change-password/bulk', async (req, res) => {
+    const { ids, new_password, actionBy, concurrency, useProxy } = req.body;
+    try {
+        if (!ids || !Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ error: '변경할 계정 ID가 없습니다' });
+        }
+        if (!isValidAdidasPassword(new_password)) {
+            return res.status(400).json({ error: PASSWORD_POLICY_MSG });
+        }
+
+        // 작업자 기록
+        if (actionBy) {
+            const ph = ids.map((_, i) => `$${i + 2}`).join(',');
+            pool.query(`UPDATE adidas_accounts SET last_action_by = $1, last_action_type = '비밀번호 변경', last_action_at = NOW() WHERE id IN (${ph})`, [actionBy, ...ids]).catch(() => {});
+        }
+
+        const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
+        const accountsMap = new Map();
+        (await query(`SELECT * FROM adidas_accounts WHERE id IN (${placeholders})`, ids)).forEach(acc => {
+            accountsMap.set(acc.id, acc);
+        });
+        const accounts = ids.map(id => accountsMap.get(id)).filter(Boolean);
+        if (accounts.length === 0) {
+            return res.status(404).json({ error: '선택한 계정을 찾을 수 없습니다' });
+        }
+
+        // 비밀번호 변경은 검증된 비시크릿(일반) uc 경로로 고정 (시크릿은 봇탐지 위험, 이점 없음)
+        const useIncognito = false;
+
+        // 동시 실행 개수 (1=순차, 2~6=병렬). 잘못된 값은 1로 정규화
+        let workers = parseInt(concurrency, 10);
+        if (!Number.isFinite(workers) || workers < 1) workers = 1;
+        if (workers > 6) workers = 6;
+
+        // 프록시 사용 시 목록 로드 및 인덱스 초기화
+        const useProxyFlagLocal = useProxy === true;
+        if (useProxyFlagLocal) { loadProxyList(); proxyIndexCounter = 0; }
+
+        if (workers > 1) {
+            // 병렬: 프록시 없이 단일 IP 병렬은 차단 위험 → 경고 로그
+            if (!useProxyFlagLocal || proxyListCache.length === 0) {
+                addLog(`[비밀번호 변경] ⚠ 경고: 프록시 없이 동시 ${workers} 병렬 - 단일 IP 봇 차단 위험`);
+            }
+            addLog(`[비밀번호 변경] ${accounts.length}개 계정 병렬 변경 시작 (동시 ${workers}, 프록시 ${useProxyFlagLocal ? `ON/${proxyListCache.length}개` : 'OFF'})`);
+            res.json({ message: `${accounts.length}개 계정 비밀번호 변경을 시작합니다. (동시 ${workers}개 병렬 처리)` });
+            processChangePasswordParallel(accounts, new_password, workers, useIncognito, useProxyFlagLocal);
+        } else {
+            addLog(`[비밀번호 변경] ${accounts.length}개 계정 순차 변경 시작 (프록시 ${useProxyFlagLocal ? 'ON' : 'OFF'})`);
+            res.json({ message: `${accounts.length}개 계정 비밀번호 변경을 시작합니다. 순차적으로 처리됩니다.` });
+            processChangePasswordSequentially(accounts, new_password, useIncognito, useProxyFlagLocal);
+        }
+    } catch (error) {
+        addLog(`[비밀번호 변경] 오류: ${error.message}`);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 비밀번호 변경 - 단일 계정
+app.post('/api/change-password/:id', async (req, res) => {
+    const { id } = req.params;
+    const { new_password, useProxy } = req.body;
+    try {
+        const account = await queryOne('SELECT * FROM adidas_accounts WHERE id = $1', [id]);
+        if (!account) {
+            return res.status(404).json({ error: '계정을 찾을 수 없습니다' });
+        }
+        if (!isValidAdidasPassword(new_password)) {
+            return res.status(400).json({ error: PASSWORD_POLICY_MSG });
+        }
+
+        // 비밀번호 변경은 검증된 비시크릿(일반) uc 경로로 고정
+        const useIncognito = false;
+        // 단일 변경도 프록시 옵션 지원 (선택)
+        let proxy = null;
+        if (useProxy === true) { loadProxyList(); proxyIndexCounter = 0; proxy = getProxyForAccount(); }
+        addLog(`[비밀번호 변경] 시작 - ${account.email}`);
+        updateProgress(id, 'password', 'processing', `비밀번호 변경 중... ${getNowTime()}`);
+        res.json({ message: `${account.email} 비밀번호 변경을 시작합니다.` });
+
+        changePasswordForAccount(account, new_password, useIncognito, proxy);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 app.post('/api/progress/init', (req, res) => {
     const { ids, type } = req.body;
 

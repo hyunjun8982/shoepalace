@@ -326,6 +326,9 @@ async function retrySelectedItems() {
         initBulkPromoQuantity(false);
         state.modal = 'issue-coupon';
         render();
+    } else if (type === 'password') {
+        // 비밀번호 변경은 새 비밀번호를 다시 입력해야 하므로 모니터 재처리 미지원
+        notifyWarning('비밀번호 변경은 모니터에서 재처리할 수 없습니다. 목록에서 다시 변경해 주세요.');
     }
 }
 

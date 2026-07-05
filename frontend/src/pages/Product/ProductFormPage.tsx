@@ -50,6 +50,7 @@ const ProductFormPage: React.FC = () => {
     id?: string;  // 기존 바코드일 경우
   }
   const [sizeBarcodes, setSizeBarcodes] = useState<SizeBarcode[]>([]);
+  const [originalSizeBarcodes, setOriginalSizeBarcodes] = useState<SizeBarcode[]>([]);  // 원본 바코드 상태
   const [newSizeBarcode, setNewSizeBarcode] = useState({ size: '', barcode_value: '' });
 
   const isEditMode = !!productId;
@@ -102,13 +103,13 @@ const ProductFormPage: React.FC = () => {
         const response = await barcodeService.getAllBarcodesByProduct(product.id);
         if (response && response.length > 0) {
           console.log(`Loaded ${response.length} barcodes for product`, product.id);
-          setSizeBarcodes(
-            response.map(b => ({
-              size: b.size,
-              barcode_value: b.barcode_value,
-              id: b.id
-            }))
-          );
+          const loadedBarcodes = response.map(b => ({
+            size: b.size,
+            barcode_value: b.barcode_value,
+            id: b.id
+          }));
+          setSizeBarcodes(loadedBarcodes);
+          setOriginalSizeBarcodes(loadedBarcodes);  // 원본 상태 저장
         } else {
           console.log('No barcodes found for product:', product.id);
         }
@@ -320,30 +321,45 @@ const ProductFormPage: React.FC = () => {
         message.success(isEditMode ? '상품이 수정되었습니다.' : '상품이 등록되었습니다.');
       }
 
-      // 사이즈별 바코드 저장
-      if (sizeBarcodes.length > 0) {
-        try {
-          for (const sizeBarcode of sizeBarcodes) {
-            if (sizeBarcode.id) {
-              // 기존 바코드 업데이트
-              await barcodeService.updateBarcode(sizeBarcode.id, {
-                barcode_value: sizeBarcode.barcode_value,
-              });
-            } else {
-              // 새 바코드 생성
-              await barcodeService.createBarcode({
-                product_id: savedProduct.id,
-                size: sizeBarcode.size,
-                barcode_value: sizeBarcode.barcode_value,
-                barcode_type: 'custom',
-              });
-            }
+      // 사이즈별 바코드 저장 및 삭제 처리
+      try {
+        // 삭제된 바코드 찾기 (원본에는 있지만 현재에는 없는 것)
+        const deletedBarcodes = originalSizeBarcodes.filter(orig =>
+          !sizeBarcodes.some(current => current.id === orig.id)
+        );
+
+        // 삭제된 바코드 API 호출
+        for (const barcode of deletedBarcodes) {
+          if (barcode.id) {
+            await barcodeService.deleteBarcode(barcode.id);
+            console.log('Deleted barcode:', barcode.id);
           }
-          message.success('바코드가 저장되었습니다.');
-        } catch (error: any) {
-          console.warn('바코드 저장 실패:', error);
-          message.warning('상품은 저장되었지만 일부 바코드 저장에 실패했습니다.');
         }
+
+        // 현재 바코드 저장/업데이트
+        for (const sizeBarcode of sizeBarcodes) {
+          if (sizeBarcode.id) {
+            // 기존 바코드 업데이트
+            await barcodeService.updateBarcode(sizeBarcode.id, {
+              barcode_value: sizeBarcode.barcode_value,
+            });
+          } else {
+            // 새 바코드 생성
+            await barcodeService.createBarcode({
+              product_id: savedProduct.id,
+              size: sizeBarcode.size,
+              barcode_value: sizeBarcode.barcode_value,
+              barcode_type: 'custom',
+            });
+          }
+        }
+
+        if (deletedBarcodes.length > 0 || sizeBarcodes.length > 0) {
+          message.success('바코드가 저장되었습니다.');
+        }
+      } catch (error: any) {
+        console.warn('바코드 저장 실패:', error);
+        message.warning('상품은 저장되었지만 일부 바코드 저장에 실패했습니다.');
       }
 
       // 구매 페이지에서 왔으면 구매 페이지로, 아니면 상품 목록으로

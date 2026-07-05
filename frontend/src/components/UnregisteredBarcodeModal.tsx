@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Modal, Form, Input, Select, Button, message, Upload, Image, Tabs, Row, Col, Alert, Spin } from 'antd';
+import { Modal, Form, Input, Select, Button, message, Upload, Image, Tabs, Row, Col, Alert, Spin, Radio } from 'antd';
 import { UploadOutlined, LinkOutlined, DeleteOutlined } from '@ant-design/icons';
 import { productService } from '../services/product';
 import { barcodeService, PoizonProductInfo } from '../services/barcode';
@@ -9,7 +9,7 @@ import { Brand } from '../types';
 interface UnregisteredBarcodeModalProps {
   barcode: string;
   visible: boolean;
-  onSuccess: (newProduct: Product) => void;
+  onSuccess: (newProduct: Product, barcodeInfo: { barcode_value: string; size: string }) => void;
   onCancel: () => void;
 }
 
@@ -26,7 +26,6 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>('');
   const [productName, setProductName] = useState<string>('');
-  const [size, setSize] = useState<string>('');  // 사이즈 입력
   const [poizonLoading, setPoizonLoading] = useState(false);
   const [poizonInfo, setPoizonInfo] = useState<PoizonProductInfo | null>(null);
   const [poizonError, setPoizonError] = useState(false);
@@ -34,13 +33,44 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
   // 팝업 열릴 때 브랜드 목록 및 포이즌 정보 로드
   useEffect(() => {
     if (visible) {
-      loadBrands();
-      loadPoizonInfo();
+      // 모달 열려있음 표시 (바코드 입력 방지)
+      document.documentElement.setAttribute('data-modal-open', 'true');
+
+      // 바코드 스캐너 입력 차단 (캡처 페이즈에서)
+      const blockBarcodeInput = (e: KeyboardEvent) => {
+        // INPUT/TEXTAREA/SELECT는 허용 (모달 내 입력은 가능)
+        const target = e.target as HTMLElement;
+        if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
+          return;
+        }
+        // 수정자 키는 통과
+        if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) {
+          return;
+        }
+        // 다른 모든 키보드 입력 차단
+        if (e.key.length === 1 || e.key === 'Enter') {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+        }
+      };
+
+      document.addEventListener('keydown', blockBarcodeInput, true); // 캡처 페이즈
+
       // 바코드 값을 읽기 전용 필드로 설정 및 카테고리 기본값 설정
       form.setFieldsValue({
         barcode,
         category: 'shoes' // 기본값: 신발
       });
+
+      // 브랜드 로드 후 포이즌 정보 로드
+      loadBrands().then((loadedBrands) => {
+        loadPoizonInfo(loadedBrands);
+      });
+
+      return () => {
+        document.removeEventListener('keydown', blockBarcodeInput, true);
+        document.documentElement.setAttribute('data-modal-open', 'false');
+      };
     }
   }, [visible, barcode, form]);
 
@@ -50,16 +80,18 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
     try {
       const response = await productService.getBrands();
       setBrands(response || []);
+      return response || [];
     } catch (error) {
       console.error('Failed to load brands:', error);
       message.error('브랜드 목록 로드 실패');
+      return [];
     } finally {
       setBrandsLoading(false);
     }
   };
 
   // 포이즌 API에서 바코드 정보 로드
-  const loadPoizonInfo = async () => {
+  const loadPoizonInfo = async (loadedBrands?: any[]) => {
     setPoizonLoading(true);
     setPoizonError(false);
     setPoizonInfo(null);
@@ -67,20 +99,53 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
       const result = await barcodeService.lookupBarcodeFromPoizon(barcode);
       if (result) {
         setPoizonInfo(result);
-        // 포이즌 정보로 필드 자동 채우기
-        form.setFieldsValue({
-          product_name: result.title,
-        });
-        setProductName(result.title);
 
-        // 첫번째 사이즈 자동 설정
-        if (result.sizes && result.sizes.length > 0) {
-          setSize(result.sizes[0].size_kr);
+        // 포이즌 정보에서 추출 (poizon_info 필드 사용)
+        const poizonData = (result as any).poizon_info || result;
+
+        // 포이즌 정보로 필드 자동 채우기
+        const formValues: any = {
+          product_name: poizonData.title || result.title,
+          category: 'shoes', // 카테고리 기본값 명시적으로 설정
+        };
+
+        // 상품코드 설정 (article_number가 있으면)
+        const articleNumber = (poizonData as any).article_number || (poizonData as any).articleNumber;
+        if (articleNumber) {
+          formValues.product_code = articleNumber;
         }
 
+        // 브랜드 설정 (brand_name이 있으면 매칭)
+        const brandName = (poizonData as any).brand_name || (poizonData as any).brandName;
+        const brandsToUse = loadedBrands || brands;
+        console.log('[Brand Matching] brandName:', brandName, 'brands:', brandsToUse);
+
+        if (brandName && brandsToUse.length > 0) {
+          const matchedBrand = brandsToUse.find(b => {
+            const matches = b.name.toLowerCase() === brandName.toLowerCase();
+            console.log('[Brand Check]', b.name, '===', brandName, '?', matches);
+            return matches;
+          });
+          if (matchedBrand) {
+            console.log('[Brand Matched]', matchedBrand);
+            formValues.brand_id = matchedBrand.id;
+          } else {
+            console.log('[Brand Not Matched]', brandName);
+          }
+        }
+
+        // 사이즈가 1개만 있으면 자동 선택
+        const sizes = poizonData.sizes || result.sizes;
+        if (sizes && sizes.length === 1) {
+          formValues.size = sizes[0].size_kr;
+        }
+
+        form.setFieldsValue(formValues);
+        setProductName(poizonData.title || result.title);
+
         // 이미지 미리보기 설정
-        if (result.logo_url) {
-          setImagePreview(result.logo_url);
+        if (poizonData.logo_url) {
+          setImagePreview(poizonData.logo_url);
         }
       } else {
         setPoizonError(true);
@@ -144,49 +209,76 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
 
   // 상품 등록 처리
   const handleSubmit = async (values: any) => {
-    // size 검증
-    if (!size.trim()) {
-      message.error('사이즈를 입력해주세요');
-      return;
-    }
-
     setLoading(true);
     try {
-      // 1. 상품 등록
-      const newProduct = await productService.createProduct({
-        brand_id: values.brand_id,
-        product_code: values.product_code,
-        product_name: values.product_name,
-        category: values.category,
-        description: values.description,
-      });
+      let targetProduct = null;
+
+      // 1. 상품 등록 시도
+      try {
+        targetProduct = await productService.createProduct({
+          brand_id: values.brand_id,
+          product_code: values.product_code,
+          product_name: values.product_name,
+          category: values.category,
+          description: values.description,
+          image_url: poizonInfo?.logo_url,  // 포이즌 이미지 URL
+        });
+        message.info('새 상품이 등록되었습니다');
+      } catch (createError: any) {
+        // 상품 코드 중복 에러인 경우 → 기존 상품을 포이즌 정보로 업데이트
+        if (createError.response?.status === 409 ||
+            createError.response?.data?.detail?.includes('Product code already exists')) {
+          console.log('상품 코드 중복, 기존 상품을 최신 정보로 업데이트');
+          targetProduct = await productService.getProductByCode(values.product_code);
+          if (!targetProduct) {
+            throw new Error('상품 코드는 중복되지만 기존 상품을 찾을 수 없습니다.');
+          }
+
+          // 기존 상품을 포이즌 정보로 업데이트
+          await productService.updateProduct(targetProduct.id, {
+            product_name: values.product_name,
+            product_code: values.product_code,
+            brand_id: values.brand_id,
+            category: values.category,
+            description: values.description,
+            image_url: poizonInfo?.logo_url,  // 포이즌 이미지 URL
+          });
+
+          message.info('기존 상품을 최신 정보로 업데이트합니다');
+        } else {
+          throw createError;
+        }
+      }
 
       // 2. 바코드 매핑 (사이즈 포함)
       try {
         await barcodeService.createBarcode({
-          product_id: newProduct.id,
-          size: size.trim(),
+          product_id: targetProduct.id,
+          size: values.size,
           barcode_value: barcode,
           barcode_type: 'custom',
           notes: `Auto-registered from barcode scan`,
         });
+        message.success('바코드가 등록되었습니다');
       } catch (barcodeError: any) {
         console.warn('Failed to create barcode mapping:', barcodeError);
         // 바코드 등록 실패해도 상품은 등록되었으니 계속 진행
+        message.warn('바코드 등록 중 오류가 발생했지만 계속 진행합니다');
       }
 
-      message.success('상품이 등록되었습니다');
       form.resetFields();
       setImageFile(null);
       setImagePreview('');
       setProductName('');
-      setSize('');
-      onSuccess(newProduct);
+      onSuccess(targetProduct, {
+        barcode_value: barcode,
+        size: values.size,
+      });
       onCancel();
     } catch (error: any) {
       console.error('Failed to register product:', error);
       const errorMsg = error.response?.data?.detail || error.message || '상품 등록 실패';
-      message.error(`상품 등록 실패: ${errorMsg}`);
+      message.error(`실패: ${errorMsg}`);
     } finally {
       setLoading(false);
     }
@@ -198,16 +290,14 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
       open={visible}
       onCancel={onCancel}
       footer={null}
-      width={900}
+      width={650}
+      bodyStyle={{ padding: '16px' }}
       destroyOnClose
     >
       <Spin spinning={poizonLoading}>
-        <div style={{ marginBottom: 24 }}>
-          <div style={{ fontSize: '14px', color: '#666' }}>
-            스캔된 바코드: <strong style={{ fontSize: '16px', color: '#1890ff' }}>{barcode}</strong>
-          </div>
-          <div style={{ fontSize: '12px', color: '#999', marginTop: 8 }}>
-            이 바코드가 등록되지 않았습니다. 아래에서 상품 정보를 입력하면 자동으로 등록됩니다.
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: '13px', color: '#666' }}>
+            바코드: <strong>{barcode}</strong>
           </div>
 
           {/* 포이즌 정보 상태 표시 */}
@@ -224,9 +314,8 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
             <Alert
               type="success"
               message="포이즌 정보 자동 로드됨"
-              description="포이즌 API에서 상품 정보를 가져왔습니다. 필요시 수정 가능합니다."
-              style={{ marginTop: 12 }}
-              showIcon
+              style={{ marginTop: 12, padding: '8px 12px' }}
+              showIcon={false}
             />
           )}
         </div>
@@ -236,6 +325,7 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
         layout="vertical"
         onFinish={handleSubmit}
         autoComplete="off"
+        onPaste={handleImagePaste}
       >
         <Form.Item label="바코드" name="barcode">
           <Input disabled />
@@ -253,18 +343,6 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
                 onChange={(e) => setProductName(e.target.value)}
               />
             </Form.Item>
-            {productName && (
-              <div style={{ marginTop: -16, marginBottom: 16, fontSize: 13 }}>
-                <a
-                  href={`https://kream.co.kr/search?keyword=${encodeURIComponent(productName)}&tab=products`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ color: '#1890ff' }}
-                >
-                  🔗 KREAM에서 "{productName}" 검색하기
-                </a>
-              </div>
-            )}
           </Col>
           <Col xs={24} sm={12}>
             <Form.Item
@@ -283,41 +361,32 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
           </Col>
         </Row>
 
+        {productName && (
+          <div style={{ fontSize: 13, marginBottom: 12 }}>
+            <a
+              href={`https://kream.co.kr/search?keyword=${encodeURIComponent(productName)}&tab=products`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#1890ff' }}
+            >
+              🔗 KREAM에서 "{productName}" 검색하기
+            </a>
+          </div>
+        )}
+
         <Form.Item
           label="사이즈 (필수)"
+          name="size"
+          rules={[{ required: true, message: '사이즈를 선택해주세요' }]}
         >
-          {poizonInfo && poizonInfo.sizes.length > 0 && (
-            <div style={{ marginBottom: 12, padding: '8px 12px', backgroundColor: '#f0f5ff', borderRadius: 4, fontSize: 12 }}>
-              <div style={{ color: '#666', marginBottom: 6 }}>
-                🎯 포이즌 API에서 조회된 사이즈:
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {poizonInfo.sizes.map((s) => (
-                  <div
-                    key={s.sku_id}
-                    onClick={() => setSize(s.size_kr)}
-                    style={{
-                      padding: '4px 8px',
-                      backgroundColor: size === s.size_kr ? '#1890ff' : '#fff',
-                      color: size === s.size_kr ? '#fff' : '#666',
-                      border: '1px solid #d9d9d9',
-                      borderRadius: 4,
-                      cursor: 'pointer',
-                      fontSize: 12,
-                      transition: 'all 0.2s'
-                    }}
-                  >
-                    {s.size_kr} {s.size_us ? `(US: ${s.size_us})` : ''}
-                    {s.average_price && ` - ₩${s.average_price.toLocaleString()}`}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          <Input
-            placeholder="예: M, L, 260, XL"
-            value={size}
-            onChange={(e) => setSize(e.target.value)}
+          <Radio.Group
+            options={poizonInfo?.sizes?.map(s => ({
+              value: s.size_kr,
+              label: `${s.size_kr}${s.size_us ? ` (US: ${s.size_us})` : ''}`,
+            })) || []}
+            optionType="button"
+            buttonStyle="solid"
+            style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}
           />
         </Form.Item>
 
@@ -367,100 +436,34 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
           label="설명 (선택사항)"
           name="description"
         >
-          <Input.TextArea
-            rows={2}
-            placeholder="상품 설명을 입력하세요"
-          />
+          <Input placeholder="상품 설명을 입력하세요" />
         </Form.Item>
 
         <Form.Item label="이미지 (선택사항)">
-          <Tabs
-            items={[
-              {
-                key: 'paste',
-                label: <span><LinkOutlined /> 붙여넣기 (Ctrl+V)</span>,
-                children: (
-                  <div style={{ paddingTop: 8 }} onPaste={handleImagePaste} tabIndex={0}>
-                    {!imagePreview ? (
-                      <div style={{
-                        padding: '20px',
-                        border: '2px dashed #1890ff',
-                        borderRadius: 4,
-                        textAlign: 'center',
-                        cursor: 'pointer',
-                        backgroundColor: '#fafafa'
-                      }}>
-                        <div style={{ fontSize: 14, color: '#666' }}>
-                          웹에서 이미지를 복사한 후<br />
-                          <strong style={{ color: '#1890ff' }}>Ctrl+V</strong>를 눌러주세요
-                        </div>
-                      </div>
-                    ) : (
-                      <div>
-                        <Image
-                          src={imagePreview}
-                          alt="Preview"
-                          style={{ maxWidth: '100%', maxHeight: 150, borderRadius: 4 }}
-                        />
-                        <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-                          <Button
-                            danger
-                            icon={<DeleteOutlined />}
-                            onClick={handleImageReset}
-                          >
-                            삭제
-                          </Button>
-                          <span style={{ color: '#999', fontSize: 12 }}>
-                            다시 붙여넣으려면 삭제 후 Ctrl+V를 누르세요
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ),
-              },
-              {
-                key: 'upload',
-                label: <span><UploadOutlined /> 파일 업로드</span>,
-                children: (
-                  <div style={{ paddingTop: 8 }}>
-                    {!imagePreview ? (
-                      <Upload
-                        maxCount={1}
-                        beforeUpload={handleImageUpload}
-                        accept="image/*"
-                        showUploadList={imageFile ? true : false}
-                      >
-                        <Button icon={<UploadOutlined />}>
-                          {imageFile ? `선택됨: ${imageFile.name}` : '이미지 선택'}
-                        </Button>
-                      </Upload>
-                    ) : (
-                      <div>
-                        <Image
-                          src={imagePreview}
-                          alt="Preview"
-                          style={{ maxWidth: '100%', maxHeight: 150, borderRadius: 4 }}
-                        />
-                        <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-                          <Button
-                            danger
-                            icon={<DeleteOutlined />}
-                            onClick={handleImageReset}
-                          >
-                            삭제
-                          </Button>
-                          <span style={{ color: '#999', fontSize: 12 }}>
-                            다시 업로드하려면 삭제 후 새로운 파일을 선택하세요
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ),
-              },
-            ]}
-          />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            {!imagePreview ? (
+              <div style={{ fontSize: 12, color: '#999' }}>
+                웹에서 이미지 복사 후 <strong style={{ color: '#1890ff' }}>Ctrl+V</strong>로 붙여넣기
+              </div>
+            ) : (
+              <>
+                <Image
+                  src={imagePreview}
+                  alt="Preview"
+                  style={{ maxWidth: 80, maxHeight: 80, borderRadius: 4 }}
+                  preview={{ mask: '보기' }}
+                />
+                <Button
+                  danger
+                  size="small"
+                  icon={<DeleteOutlined />}
+                  onClick={handleImageReset}
+                >
+                  삭제
+                </Button>
+              </>
+            )}
+          </div>
         </Form.Item>
 
         <Form.Item>

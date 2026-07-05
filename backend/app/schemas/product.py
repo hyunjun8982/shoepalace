@@ -3,6 +3,27 @@ from datetime import datetime
 from uuid import UUID
 from pydantic import BaseModel, field_validator
 
+# Barcode 스키마
+class BarcodeSchema(BaseModel):
+    id: str
+    product_id: str
+    barcode_value: str
+    barcode_type: str
+    is_active: bool
+    notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    @field_validator('id', 'product_id', mode='before')
+    @classmethod
+    def convert_uuid_to_str(cls, v):
+        if isinstance(v, UUID):
+            return str(v)
+        return v
+
+    class Config:
+        from_attributes = True
+
 # Inventory 스키마
 class InventorySchema(BaseModel):
     id: str
@@ -34,7 +55,7 @@ class ProductBase(BaseModel):
     is_active: Optional[bool] = True
 
 class ProductCreate(ProductBase):
-    pass
+    image_url: Optional[str] = None  # 포이즌 이미지 URL
 
 class ProductUpdate(BaseModel):
     brand_id: Optional[str] = None
@@ -42,12 +63,14 @@ class ProductUpdate(BaseModel):
     product_name: Optional[str] = None
     category: Optional[str] = None
     description: Optional[str] = None
+    image_url: Optional[str] = None  # 포이즌 이미지 URL
 
 class Product(ProductBase):
     id: str
     brand_name: Optional[str] = None
     brand_icon_url: Optional[str] = None
     inventory: Optional[List[InventorySchema]] = None
+    barcode: Optional[BarcodeSchema] = None
     created_at: datetime
     updated_at: datetime
 

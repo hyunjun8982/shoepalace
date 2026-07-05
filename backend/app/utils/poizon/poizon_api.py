@@ -42,7 +42,7 @@ class PoizonAPI:
     def get_str(self, obj, is_sub=False):
         """객체를 문자열로 변환"""
         if isinstance(obj, (list, tuple)):
-            return ','.join(self.get_str(x, True) for x in obj)
+            return ','.join(self.get_str(x, False) for x in obj)
         elif isinstance(obj, dict):
             value_str = "{"
             for sub_key in sorted(obj.keys()):
@@ -58,8 +58,11 @@ class PoizonAPI:
         
     def send_request(self, endpoint, params):
         # 현재 타임스탬프 생성
-        params["timestamp"] = int(time.time() * 1000)
-        params["app_key"] = self.app_key  # app_key를 정확히 전달
+        timestamp = int(time.time() * 1000)
+
+        # 모든 엔드포인트: 기존 방식 (모든 파라미터를 Body에 포함)
+        params["timestamp"] = timestamp
+        params["app_key"] = self.app_key
 
         # 서명 생성
         sign, request_string = self.calculate_sign(params)

@@ -41,7 +41,27 @@ export const barcodeService = {
       const response = await api.get(
         `/barcodes/search/${barcodeValue.trim().toUpperCase()}`
       );
-      return response.data;
+      const data = response.data;
+
+      // BarcodeProductInfo (포이즌 정보)인 경우 BarcodeSearchResult 형식으로 변환
+      if (data.title && !data.barcode_id) {
+        return {
+          barcode_id: '',
+          product_id: '',
+          size: '',
+          barcode_value: barcodeValue.trim().toUpperCase(),
+          product_code: '',
+          product_name: data.title,
+          brand_name: undefined,
+          category: undefined,
+          image_url: data.logo_url,
+          available_qty: 0,
+          // 포이즌 데이터 추가 (모달에서 사용)
+          poizon_info: data as PoizonProductInfo
+        } as any;
+      }
+
+      return data;
     } catch (error: any) {
       if (error.response?.status === 404) {
         throw new Error('해당 바코드가 등록되지 않았습니다.');

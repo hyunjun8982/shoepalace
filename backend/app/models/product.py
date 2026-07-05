@@ -12,9 +12,19 @@ class Product(BaseModel):
     category = Column(String(50))
     description = Column(Text)
     image_url = Column(String(500))
+    barcode_id = Column(UUID(as_uuid=True), ForeignKey("barcodes.id"), nullable=True, index=True)
 
     # 관계 설정
     brand = relationship("Brand", back_populates="products")
-    purchase_items = relationship("PurchaseItem", back_populates="product")
-    sale_items = relationship("SaleItem", back_populates="product")
-    inventory = relationship("Inventory", back_populates="product")
+    purchase_items = relationship("PurchaseItem", back_populates="product", cascade="all, delete-orphan")
+    sale_items = relationship("SaleItem", back_populates="product", cascade="all, delete-orphan")
+    inventory = relationship("Inventory", back_populates="product", cascade="all, delete-orphan")
+    # Barcode는 barcodes.product_id로 관계 설정
+    barcode = relationship(
+        "Barcode",
+        primaryjoin="Product.id == foreign(Barcode.product_id)",
+        foreign_keys="[Barcode.product_id]",
+        uselist=False,
+        viewonly=True,
+        lazy="joined"
+    )

@@ -36,6 +36,17 @@ export const productService = {
     return response.data;
   },
 
+  // 상품 관련 항목 조회
+  async getRelatedItems(productId: string): Promise<any> {
+    const response = await api.get(`/products/${productId}/related-items`);
+    return response.data;
+  },
+
+  // 상품 및 선택된 관련 항목 삭제
+  async deleteProductWithItems(productId: string, deleteData: any): Promise<void> {
+    await api.post(`/products/${productId}/delete-with-items`, deleteData);
+  },
+
   // 상품 삭제
   async deleteProduct(id: string): Promise<void> {
     await api.delete(`/products/${id}`);
@@ -46,6 +57,16 @@ export const productService = {
     const params = excludeId ? { exclude_id: excludeId } : {};
     const response = await api.get(`/products/check-code/${productCode}`, { params });
     return response.data.exists;
+  },
+
+  // 상품코드로 상품 조회
+  async getProductByCode(productCode: string): Promise<Product | null> {
+    try {
+      const response = await api.get(`/products/by-code/${productCode}`);
+      return response.data;
+    } catch (error) {
+      return null;
+    }
   },
 
   // 브랜드 목록 조회

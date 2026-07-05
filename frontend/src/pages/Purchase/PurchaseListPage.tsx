@@ -26,6 +26,7 @@ import {
   CalendarOutlined,
   RiseOutlined,
   DollarOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons';
 import { Purchase, PaymentType, PurchaseStatus } from '../../types/purchase';
 import { purchaseService } from '../../services/purchase';
@@ -34,6 +35,7 @@ import { brandService, Brand } from '../../services/brand';
 import { userService } from '../../services/user';
 import { User } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
+import { DeliveryNoteModal } from '../../components/DeliveryNoteModal';
 import dayjs from 'dayjs';
 import './PurchaseListPage.css';
 import { formatCurrencyWithKoreanSeparate, roundToWon } from '../../utils/currencyUtils';
@@ -56,6 +58,7 @@ const PurchaseListPage: React.FC = () => {
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [deliveryNoteModalVisible, setDeliveryNoteModalVisible] = useState(false);
 
   // 필터 상태
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(() => {
@@ -682,6 +685,14 @@ const PurchaseListPage: React.FC = () => {
           <Col span={4} style={{ textAlign: 'right' }}>
             <Space>
               {selectedRowKeys.length > 0 && (
+                <>
+                  <Button
+                    icon={<FileTextOutlined />}
+                    onClick={() => setDeliveryNoteModalVisible(true)}
+                    style={{ backgroundColor: '#52c41a', color: '#fff', borderColor: '#52c41a' }}
+                  >
+                    입고장 추출 ({selectedRowKeys.length})
+                  </Button>
                   <Button
                     danger
                     icon={<DeleteOutlined />}
@@ -689,6 +700,7 @@ const PurchaseListPage: React.FC = () => {
                   >
                     선택 삭제 ({selectedRowKeys.length})
                   </Button>
+                </>
               )}
               <Button
                 type="primary"
@@ -726,6 +738,13 @@ const PurchaseListPage: React.FC = () => {
           }}
         />
       </Card>
+
+      {/* 입고장 추출 모달 */}
+      <DeliveryNoteModal
+        visible={deliveryNoteModalVisible}
+        purchases={purchases.filter(p => selectedRowKeys.includes(p.id))}
+        onClose={() => setDeliveryNoteModalVisible(false)}
+      />
     </div>
   );
 };

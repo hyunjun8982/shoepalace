@@ -12,6 +12,10 @@ import {
   App,
   Popconfirm,
   Switch,
+  Modal,
+  Checkbox,
+  Divider,
+  Empty,
 } from 'antd';
 import {
   PlusOutlined,
@@ -61,6 +65,23 @@ const ProductListPage: React.FC = () => {
   });
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [brandManagementVisible, setBrandManagementVisible] = useState(false);
+
+  // 삭제 모달 관련 상태
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [relatedItems, setRelatedItems] = useState<any>(null);
+  const [selectedForDelete, setSelectedForDelete] = useState<{
+    barcodes: string[];
+    inventories: string[];
+    purchase_items: string[];
+    sale_items: string[];
+    deleteAll: boolean;
+  }>({
+    barcodes: [],
+    inventories: [],
+    purchase_items: [],
+    sale_items: [],
+    deleteAll: false,
+  });
 
   useEffect(() => {
     fetchBrands();
@@ -122,12 +143,43 @@ const ProductListPage: React.FC = () => {
 
   const handleDelete = async (productId: string) => {
     try {
-      await productService.deleteProduct(productId);
-      message.success('상품이 삭제되었습니다.');
+      setLoading(true);
+      // 연관 항목 조회
+      const items = await productService.getRelatedItems(productId);
+      setRelatedItems({ ...items, productId });
+      setSelectedForDelete({
+        barcodes: items.barcodes.map((b: any) => b.id),
+        inventories: items.inventories.map((inv: any) => inv.id),
+        purchase_items: items.purchase_items.map((pi: any) => pi.id),
+        sale_items: items.sale_items.map((si: any) => si.id),
+        deleteAll: false,
+      });
+      setDeleteModalVisible(true);
+    } catch (error) {
+      message.error('상품 정보 조회에 실패했습니다.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    try {
+      setLoading(true);
+      await productService.deleteProductWithItems(relatedItems.productId, {
+        delete_all: selectedForDelete.deleteAll,
+        barcode_ids: selectedForDelete.barcodes,
+        inventory_ids: selectedForDelete.inventories,
+        purchase_item_ids: selectedForDelete.purchase_items,
+        sale_item_ids: selectedForDelete.sale_items,
+      });
+      message.success('삭제되었습니다.');
+      setDeleteModalVisible(false);
       fetchProducts();
       fetchAllProductsForStats();
     } catch (error) {
-      message.error('상품 삭제에 실패했습니다.');
+      message.error('삭제에 실패했습니다.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -658,7 +710,185 @@ const ProductListPage: React.FC = () => {
           size="middle"
         />
       </Card>
-    
+
+      {/* 삭제 확인 모달 */}
+      <Modal
+        title={relatedItems ? `${relatedItems.product.product_name} 삭제` : '상품 삭제'}
+        open={deleteModalVisible}
+        onCancel={() => setDeleteModalVisible(false)}
+        width={700}
+        footer={[
+          <Button key="cancel" onClick={() => setDeleteModalVisible(false)}>
+            취소
+          </Button>,
+          <Button
+            key="submit"
+            type="primary"
+            danger
+            loading={loading}
+            onClick={handleConfirmDelete}
+          >
+            삭제
+          </Button>,
+        ]}
+      >
+        {relatedItems && (
+          <div>
+            <div style={{ marginBottom: 20, padding: '12px', backgroundColor: '#fff7e6', borderRadius: '4px' }}>
+              <div style={{ fontSize: '14px' }}>
+                <strong>{relatedItems.product.product_code}</strong> - {relatedItems.product.product_name}
+              </div>
+            </div>
+
+            {/* 전체 삭제 옵션 */}
+            <div style={{ marginBottom: 20 }}>
+              <Checkbox
+                checked={selectedForDelete.deleteAll}
+                onChange={(e) =>
+                  setSelectedForDelete({
+                    ...selectedForDelete,
+                    deleteAll: e.target.checked,
+                    barcodes: e.target.checked ? relatedItems.barcodes.map((b: any) => b.id) : [],
+                    inventories: e.target.checked ? relatedItems.inventories.map((inv: any) => inv.id) : [],
+                    purchase_items: e.target.checked ? relatedItems.purchase_items.map((pi: any) => pi.id) : [],
+                    sale_items: e.target.checked ? relatedItems.sale_items.map((si: any) => si.id) : [],
+                  })
+                }
+              >
+                <strong>전체 삭제 (상품 + 모든 관련 항목)</strong>
+              </Checkbox>
+            </div>
+
+            {!selectedForDelete.deleteAll && (
+              <>
+                {/* 바코드 */}
+                {relatedItems.barcodes.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: 8, color: '#666' }}>
+                      바코드 ({relatedItems.barcodes.length}개)
+                    </div>
+                    <div style={{ paddingLeft: 24 }}>
+                      {relatedItems.barcodes.map((barcode: any) => (
+                        <div key={barcode.id} style={{ marginBottom: 8 }}>
+                          <Checkbox
+                            checked={selectedForDelete.barcodes.includes(barcode.id)}
+                            onChange={(e) => {
+                              const newIds = e.target.checked
+                                ? [...selectedForDelete.barcodes, barcode.id]
+                                : selectedForDelete.barcodes.filter((id) => id !== barcode.id);
+                              setSelectedForDelete({
+                                ...selectedForDelete,
+                                barcodes: newIds,
+                              });
+                            }}
+                          >
+                            {barcode.size}: {barcode.barcode_value}
+                          </Checkbox>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 재고 */}
+                {relatedItems.inventories.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: 8, color: '#666' }}>
+                      재고 ({relatedItems.inventories.length}개)
+                    </div>
+                    <div style={{ paddingLeft: 24 }}>
+                      {relatedItems.inventories.map((inventory: any) => (
+                        <div key={inventory.id} style={{ marginBottom: 8 }}>
+                          <Checkbox
+                            checked={selectedForDelete.inventories.includes(inventory.id)}
+                            onChange={(e) => {
+                              const newIds = e.target.checked
+                                ? [...selectedForDelete.inventories, inventory.id]
+                                : selectedForDelete.inventories.filter((id) => id !== inventory.id);
+                              setSelectedForDelete({
+                                ...selectedForDelete,
+                                inventories: newIds,
+                              });
+                            }}
+                          >
+                            {inventory.size}: {inventory.quantity}개
+                          </Checkbox>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 구매 항목 */}
+                {relatedItems.purchase_items.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: 8, color: '#666' }}>
+                      구매 항목 ({relatedItems.purchase_items.length}개)
+                    </div>
+                    <div style={{ paddingLeft: 24 }}>
+                      {relatedItems.purchase_items.map((item: any, index: number) => (
+                        <div key={item.id} style={{ marginBottom: 8 }}>
+                          <Checkbox
+                            checked={selectedForDelete.purchase_items.includes(item.id)}
+                            onChange={(e) => {
+                              const newIds = e.target.checked
+                                ? [...selectedForDelete.purchase_items, item.id]
+                                : selectedForDelete.purchase_items.filter((id) => id !== item.id);
+                              setSelectedForDelete({
+                                ...selectedForDelete,
+                                purchase_items: newIds,
+                              });
+                            }}
+                          >
+                            구매 항목 #{index + 1}: {item.quantity}개
+                          </Checkbox>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 판매 항목 */}
+                {relatedItems.sale_items.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: 8, color: '#666' }}>
+                      판매 항목 ({relatedItems.sale_items.length}개)
+                    </div>
+                    <div style={{ paddingLeft: 24 }}>
+                      {relatedItems.sale_items.map((item: any, index: number) => (
+                        <div key={item.id} style={{ marginBottom: 8 }}>
+                          <Checkbox
+                            checked={selectedForDelete.sale_items.includes(item.id)}
+                            onChange={(e) => {
+                              const newIds = e.target.checked
+                                ? [...selectedForDelete.sale_items, item.id]
+                                : selectedForDelete.sale_items.filter((id) => id !== item.id);
+                              setSelectedForDelete({
+                                ...selectedForDelete,
+                                sale_items: newIds,
+                              });
+                            }}
+                          >
+                            판매 항목 #{index + 1}: {item.quantity}개
+                          </Checkbox>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 관련 항목이 없는 경우 */}
+                {relatedItems.barcodes.length === 0 &&
+                  relatedItems.inventories.length === 0 &&
+                  relatedItems.purchase_items.length === 0 &&
+                  relatedItems.sale_items.length === 0 && (
+                    <Empty description="관련 항목이 없습니다. 상품만 삭제됩니다." />
+                  )}
+              </>
+            )}
+          </div>
+        )}
+      </Modal>
 
       <BrandManagementModal
         visible={brandManagementVisible}

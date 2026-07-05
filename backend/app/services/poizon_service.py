@@ -65,7 +65,6 @@ class PoizonService:
             endpoint = "intl-commodity/intl/sku/sku-basic-info/by-barcodes"
             params = {
                 "barcodes": [barcode.strip()],
-                "region": self.region,
             }
 
             logger.info(f"[Poizon] 바코드로 SKU 조회: {barcode}")
@@ -78,17 +77,30 @@ class PoizonService:
             ALLOWED_APPAREL_SIZES = {'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', 'XXXXL'}
             SIZE_NORMALIZE = {'2XL': 'XXL', '3XL': 'XXXL', '4XL': 'XXXXL', '5XL': 'XXXXXL'}
 
-            # spuInfo에서 title, logoUrl 추출
+            # spuInfo에서 title, logoUrl, articleNumber, brandName 추출
             title = None
             logo_url = None
+            article_number = None
+            brand_name = None
             sizes = []
             seen_sizes = set()
 
-            for item in response["data"]:
+            # data.contents에서 아이템 추출 (배열 또는 객체의 contents 필드)
+            data = response["data"]
+            items = data if isinstance(data, list) else data.get("contents", [])
+
+            for item in items:
+                # KR 지역만 처리
+                item_region = item.get("region")
+                if item_region and item_region != "KR":
+                    continue
+
                 spu_info = item.get("spuInfo", {})
                 if spu_info:
                     title = title or spu_info.get("title")
                     logo_url = logo_url or spu_info.get("logoUrl")
+                    article_number = article_number or spu_info.get("articleNumber")
+                    brand_name = brand_name or spu_info.get("brandName")
 
                 for sku in item.get("skuInfoList", []):
                     sku_id = sku.get("skuId")
@@ -148,21 +160,14 @@ class PoizonService:
                 logger.warning(f"[Poizon] {barcode}: 대상 사이즈 없음")
                 return {"title": title, "logo_url": logo_url, "sizes": []}
 
-            # recommend-bid/price로 각 skuId별 가격 조회
-            sku_ids = [s["sku_id"] for s in target_skus]
-            prices = self.get_prices_batch(sku_ids, max_workers=3, delay=0.3)
-
-            for sku in target_skus:
-                price_info = prices.get(sku["sku_id"])
-                if price_info:
-                    sku["average_price"] = price_info.get("average_price")
-                    sku["leak_price"] = price_info.get("leak_price")
-                else:
-                    sku["average_price"] = None
-                    sku["leak_price"] = None
-
-            logger.info(f"[Poizon] {barcode}: {len(target_skus)}개 사이즈 가격 조회 완료")
-            return {"title": title, "logo_url": logo_url, "sizes": target_skus}
+            logger.info(f"[Poizon] {barcode}: {len(target_skus)}개 사이즈 조회 완료")
+            return {
+                "title": title,
+                "logo_url": logo_url,
+                "article_number": article_number,
+                "brand_name": brand_name,
+                "sizes": target_skus
+            }
 
         except Exception as e:
             logger.error(f"[Poizon] {barcode} 조회 실패: {e}")
@@ -206,17 +211,30 @@ class PoizonService:
             ALLOWED_APPAREL_SIZES = {'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', 'XXXXL'}
             SIZE_NORMALIZE = {'2XL': 'XXL', '3XL': 'XXXL', '4XL': 'XXXXL', '5XL': 'XXXXXL'}
 
-            # spuInfo에서 title, logoUrl 추출
+            # spuInfo에서 title, logoUrl, articleNumber, brandName 추출
             title = None
             logo_url = None
+            article_number = None
+            brand_name = None
             sizes = []
             seen_sizes = set()
 
-            for item in response["data"]:
+            # data.contents에서 아이템 추출 (배열 또는 객체의 contents 필드)
+            data = response["data"]
+            items = data if isinstance(data, list) else data.get("contents", [])
+
+            for item in items:
+                # KR 지역만 처리
+                item_region = item.get("region")
+                if item_region and item_region != "KR":
+                    continue
+
                 spu_info = item.get("spuInfo", {})
                 if spu_info:
                     title = title or spu_info.get("title")
                     logo_url = logo_url or spu_info.get("logoUrl")
+                    article_number = article_number or spu_info.get("articleNumber")
+                    brand_name = brand_name or spu_info.get("brandName")
 
                 for sku in item.get("skuInfoList", []):
                     sku_id = sku.get("skuId")

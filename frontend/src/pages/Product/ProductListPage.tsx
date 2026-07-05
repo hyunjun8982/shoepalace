@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Card,
   Table,
@@ -85,6 +85,7 @@ const ProductListPage: React.FC = () => {
   });
 
   // 바코드 스캔 관련 상태
+  const barcodeInputRef = useRef<HTMLInputElement>(null);
   const [barcodeInputActive, setBarcodeInputActive] = useState(false);
   const [scannedBarcode, setScannedBarcode] = useState('');
   const [scannedProduct, setScannedProduct] = useState<Product | null>(null);
@@ -97,6 +98,15 @@ const ProductListPage: React.FC = () => {
     fetchAllProductsForStats(); // 통계용 전체 상품 조회
     fetchProducts();
   }, [pagination.current, pagination.pageSize, filters]);
+
+  // 바코드 입력 활성화/비활성화 시 focus 설정
+  useEffect(() => {
+    if (barcodeInputActive && barcodeInputRef.current) {
+      setTimeout(() => {
+        barcodeInputRef.current?.focus();
+      }, 100);
+    }
+  }, [barcodeInputActive]);
 
   const fetchBrands = async () => {
     try {
@@ -627,6 +637,7 @@ const ProductListPage: React.FC = () => {
       >
         {/* 숨겨진 바코드 입력 필드 */}
         <input
+          ref={barcodeInputRef}
           type="text"
           style={{ position: 'absolute', left: '-9999px' }}
           value={scannedBarcode}
@@ -646,7 +657,6 @@ const ProductListPage: React.FC = () => {
             }
           }}
           placeholder="바코드를 스캔하세요"
-          autoFocus={barcodeInputActive}
         />
 
         {/* 필터 영역 */}

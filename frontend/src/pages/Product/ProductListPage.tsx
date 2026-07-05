@@ -293,16 +293,18 @@ const ProductListPage: React.FC = () => {
         // 상품이 없으면 미등록 상품 등록 모달 열기 (알림음은 모달에서 재생)
         setScannedBarcode(barcode);
         setUnregisteredBarcodeVisible(true);
-        // 미등록 바코드: 바코드 모달 닫기
+        // 미등록 바코드: 모든 드로어 닫기
         setBarcodeModalVisible(false);
+        setBarcodeLookupModalVisible(false);
       }
     } catch (error) {
       console.error('바코드 조회 실패:', error);
       // 404 오류인 경우 미등록 상품으로 처리 (알림음은 모달에서 재생)
       setScannedBarcode(barcode);
       setUnregisteredBarcodeVisible(true);
-      // 미등록 바코드: 바코드 모달 닫기
+      // 미등록 바코드: 모든 드로어 닫기
       setBarcodeModalVisible(false);
+      setBarcodeLookupModalVisible(false);
     } finally {
       setBarcodeLoading(false);
     }

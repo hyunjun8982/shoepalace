@@ -1,0 +1,75 @@
+stages:
+  - build
+  - deploy
+
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: ""
+
+# Docker 빌드 (선택사항 - 필요시만 사용)
+build_frontend:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  script:
+    - echo "Frontend build skipped - using docker-compose build on deploy"
+  only:
+    - main
+
+# 운영 배포
+deploy_prod:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client git
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-keyscan -H $PROD_SERVER_HOST >> ~/.ssh/known_hosts 2>/dev/null
+  script:
+    - |
+      ssh $PROD_SERVER_USER@$PROD_SERVER_HOST << 'EOF'
+      cd $PROD_PROJECT_PATH
+      git pull origin main
+      docker compose -f docker-compose.prod.yml build --no-cache frontend
+      docker compose -f docker-compose.prod.yml up -d frontend
+      docker compose -f docker-compose.prod.yml logs frontend --tail 20
+      EOF
+  after_script:
+    - rm -rf ~/.ssh
+  only:
+    - main
+  environment:
+    name: production
+    url: https://129.212.227.252
+
+# 수동 배포 (필요시)
+deploy_prod_manual:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client git
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-keyscan -H $PROD_SERVER_HOST >> ~/.ssh/known_hosts 2>/dev/null
+  script:
+    - |
+      ssh $PROD_SERVER_USER@$PROD_SERVER_HOST << 'EOF'
+      cd $PROD_PROJECT_PATH
+      git pull origin main
+      docker compose -f docker-compose.prod.yml build --no-cache frontend
+      docker compose -f docker-compose.prod.yml up -d frontend
+      docker compose -f docker-compose.prod.yml logs frontend --tail 20
+      EOF
+  after_script:
+    - rm -rf ~/.ssh
+  when: manual
+  only:
+    - main
+  environment:
+    name: production
+    url: https://129.212.227.252

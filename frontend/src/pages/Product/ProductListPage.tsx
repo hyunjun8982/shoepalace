@@ -284,20 +284,23 @@ const ProductListPage: React.FC = () => {
         playSuccessSound();
         setScannedProduct(result as any);
         setBarcodeLookupModalVisible(true);
+        // 상품 등록됨: 바코드 스캔 계속 가능
       } else {
         // 상품이 없으면 미등록 상품 등록 모달 열기 (알림음은 모달에서 재생)
         setScannedBarcode(barcode);
         setUnregisteredBarcodeVisible(true);
+        // 미등록 바코드: 스캔 비활성화
+        setBarcodeInputActive(false);
       }
     } catch (error) {
       console.error('바코드 조회 실패:', error);
       // 404 오류인 경우 미등록 상품으로 처리 (알림음은 모달에서 재생)
       setScannedBarcode(barcode);
       setUnregisteredBarcodeVisible(true);
+      // 미등록 바코드: 스캔 비활성화
+      setBarcodeInputActive(false);
     } finally {
       setBarcodeLoading(false);
-      // 바코드 입력 완료 후 스캔 비활성화
-      setBarcodeInputActive(false);
     }
   };
 
@@ -948,11 +951,35 @@ const ProductListPage: React.FC = () => {
       >
         {scannedProduct && (
           <Descriptions column={1} bordered style={{ marginTop: 16 }}>
+            <Descriptions.Item label="바코드 번호">
+              {(scannedProduct as any).barcode_value || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="상품 이미지">
+              {(() => {
+                const imagePath = getImagePath(scannedProduct.product_code, scannedProduct.brand_name);
+                if (imagePath) {
+                  return (
+                    <img
+                      src={imagePath}
+                      alt={scannedProduct.product_name}
+                      style={{ maxWidth: '200px', maxHeight: '200px', objectFit: 'contain' }}
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
+                  );
+                }
+                return '-';
+              })()}
+            </Descriptions.Item>
             <Descriptions.Item label="상품명">
               {scannedProduct.product_name}
             </Descriptions.Item>
             <Descriptions.Item label="상품코드">
               {scannedProduct.product_code}
+            </Descriptions.Item>
+            <Descriptions.Item label="사이즈">
+              {(scannedProduct as any).size || '-'}
             </Descriptions.Item>
             <Descriptions.Item label="브랜드">
               {scannedProduct.brand_name}

@@ -86,6 +86,7 @@ const ProductListPage: React.FC = () => {
 
   // 바코드 스캔 관련 상태
   const barcodeInputRef = useRef<HTMLInputElement>(null);
+  const [barcodeModalVisible, setBarcodeModalVisible] = useState(false); // 바코드 스캔 모달
   const [barcodeInputActive, setBarcodeInputActive] = useState(false);
   const [scannedBarcode, setScannedBarcode] = useState('');
   const [scannedProduct, setScannedProduct] = useState<Product | null>(null);
@@ -99,15 +100,14 @@ const ProductListPage: React.FC = () => {
     fetchProducts();
   }, [pagination.current, pagination.pageSize, filters]);
 
-  // 바코드 입력 활성화/비활성화 시 focus 설정
-  // 모달이 열려있어도 바코드 스캔이 가능하도록 focus 유지
+  // 바코드 스캔 모달이 열려있을 때 focus 설정
   useEffect(() => {
-    if ((barcodeInputActive || barcodeLookupModalVisible) && barcodeInputRef.current) {
+    if (barcodeModalVisible && barcodeInputRef.current) {
       setTimeout(() => {
         barcodeInputRef.current?.focus();
       }, 100);
     }
-  }, [barcodeInputActive, barcodeLookupModalVisible]);
+  }, [barcodeModalVisible]);
 
   const fetchBrands = async () => {
     try {
@@ -285,21 +285,22 @@ const ProductListPage: React.FC = () => {
         playSuccessSound();
         setScannedProduct(result as any);
         setBarcodeLookupModalVisible(true);
-        // 상품 등록됨: 바코드 스캔 계속 가능
+        // 바코드 모달 닫기 (조회 결과 모달이 열림)
+        setBarcodeModalVisible(false);
       } else {
         // 상품이 없으면 미등록 상품 등록 모달 열기 (알림음은 모달에서 재생)
         setScannedBarcode(barcode);
         setUnregisteredBarcodeVisible(true);
-        // 미등록 바코드: 스캔 비활성화
-        setBarcodeInputActive(false);
+        // 미등록 바코드: 바코드 모달 닫기
+        setBarcodeModalVisible(false);
       }
     } catch (error) {
       console.error('바코드 조회 실패:', error);
       // 404 오류인 경우 미등록 상품으로 처리 (알림음은 모달에서 재생)
       setScannedBarcode(barcode);
       setUnregisteredBarcodeVisible(true);
-      // 미등록 바코드: 스캔 비활성화
-      setBarcodeInputActive(false);
+      // 미등록 바코드: 바코드 모달 닫기
+      setBarcodeModalVisible(false);
     } finally {
       setBarcodeLoading(false);
     }
@@ -634,7 +635,7 @@ const ProductListPage: React.FC = () => {
             setScannedBarcode(e.target.value);
           }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && scannedBarcode && barcodeInputActive) {
+            if (e.key === 'Enter' && scannedBarcode && barcodeModalVisible) {
               handleBarcodeInput(scannedBarcode);
               setScannedBarcode('');
               e.currentTarget.value = '';
@@ -674,11 +675,10 @@ const ProductListPage: React.FC = () => {
             <Space>
               <Button
                 icon={<BarcodeOutlined />}
-                type={barcodeInputActive ? 'primary' : 'default'}
-                onClick={() => setBarcodeInputActive(!barcodeInputActive)}
-                loading={barcodeLoading}
+                type="default"
+                onClick={() => setBarcodeModalVisible(true)}
               >
-                {barcodeInputActive ? '바코드 스캔 중...' : '상품 조회'}
+                상품 조회
               </Button>
               {user?.role === 'admin' && selectedRowKeys.length > 0 && (
                 <Popconfirm
@@ -924,6 +924,41 @@ const ProductListPage: React.FC = () => {
         )}
       </Modal>
 
+      {/* 바코드 스캔 모달 */}
+      <Modal
+        title="상품 조회"
+        open={barcodeModalVisible}
+        centered
+        width={400}
+        onCancel={() => {
+          setBarcodeModalVisible(false);
+          setScannedBarcode('');
+        }}
+        footer={[
+          <Button key="cancel" onClick={() => {
+            setBarcodeModalVisible(false);
+            setScannedBarcode('');
+          }}>
+            취소
+          </Button>,
+        ]}
+      >
+        <div style={{ textAlign: 'center', padding: '40px 0' }}>
+          <BarcodeOutlined style={{ fontSize: '64px', color: '#1890ff', marginBottom: '20px' }} />
+          <div style={{ fontSize: '16px', fontWeight: '500', marginBottom: '10px' }}>
+            바코드를 스캔해주세요
+          </div>
+          <div style={{ fontSize: '14px', color: '#666' }}>
+            스캔하면 자동으로 상품을 검색합니다
+          </div>
+          {barcodeLoading && (
+            <div style={{ marginTop: '20px', color: '#1890ff' }}>
+              검색 중...
+            </div>
+          )}
+        </div>
+      </Modal>
+
       {/* 바코드 조회 결과 모달 */}
       <Modal
         title="상품 조회 결과"
@@ -931,13 +966,11 @@ const ProductListPage: React.FC = () => {
         onCancel={() => {
           setBarcodeLookupModalVisible(false);
           setScannedProduct(null);
-          setBarcodeInputActive(true);
         }}
         footer={[
           <Button key="cancel" onClick={() => {
             setBarcodeLookupModalVisible(false);
             setScannedProduct(null);
-            setBarcodeInputActive(true);
           }}>
             계속 스캔
           </Button>,

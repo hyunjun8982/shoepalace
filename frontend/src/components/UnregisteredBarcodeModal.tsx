@@ -377,35 +377,42 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {poizonInfo?.sizes && poizonInfo.sizes.length > 0 && (
-              <Radio.Group
-                options={[
-                  ...poizonInfo.sizes.map(s => ({
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+                <Radio.Group
+                  options={poizonInfo.sizes.map(s => ({
                     value: s.size_kr,
                     label: `${s.size_kr}${s.size_us ? ` (US: ${s.size_us})` : ''}`,
-                  })),
-                  {
-                    value: 'custom',
-                    label: '직접 입력',
-                  }
-                ]}
-                optionType="button"
-                buttonStyle="solid"
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setSizeInputMode(value === 'custom');
-                  if (value !== 'custom') {
-                    form.setFieldValue('size', value);
-                  } else {
+                  }))}
+                  optionType="button"
+                  buttonStyle="solid"
+                  defaultValue={poizonInfo.sizes.length === 1 ? poizonInfo.sizes[0].size_kr : undefined}
+                  onChange={(e) => {
+                    setSizeInputMode(false);
+                    form.setFieldValue('size', e.target.value);
+                  }}
+                  style={{ display: 'flex', gap: '8px', flex: 1 }}
+                />
+                <Radio.Group
+                  options={[
+                    {
+                      value: 'custom',
+                      label: '직접 입력',
+                    }
+                  ]}
+                  optionType="button"
+                  buttonStyle="solid"
+                  onChange={(e) => {
+                    setSizeInputMode(true);
                     form.setFieldValue('size', '');
-                  }
-                }}
-                style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}
-              />
+                  }}
+                />
+              </div>
             )}
             {(sizeInputMode || !poizonInfo?.sizes || poizonInfo.sizes.length === 0) && (
               <Input
                 placeholder="사이즈를 입력하세요 (예: M, L, 260)"
                 onChange={(e) => form.setFieldValue('size', e.target.value)}
+                autoFocus
               />
             )}
           </div>

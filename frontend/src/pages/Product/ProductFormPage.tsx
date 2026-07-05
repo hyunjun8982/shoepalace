@@ -90,7 +90,7 @@ const ProductFormPage: React.FC = () => {
         const response = await barcodeService.getAllBarcodesByProduct(product.id);
         if (response && response.length > 0) {
           console.log(`Loaded ${response.length} barcodes for product`, product.id);
-          const loadedBarcodes = response.map(b => ({
+          const loadedBarcodes = response.map((b: any) => ({
             size: b.size,
             barcode_value: b.barcode_value,
             id: b.id

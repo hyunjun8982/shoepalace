@@ -578,7 +578,8 @@ def confirm_purchase(
     purchase = db.query(Purchase).options(
         joinedload(Purchase.items).joinedload(PurchaseItem.product).joinedload(Product.brand),
         joinedload(Purchase.buyer),
-        joinedload(Purchase.receiver)
+        joinedload(Purchase.receiver),
+        joinedload(Purchase.payment_card)
     ).filter(Purchase.id == purchase_id).first()
 
     if not purchase:

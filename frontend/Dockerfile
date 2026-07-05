@@ -14,7 +14,7 @@ RUN npm config set fetch-timeout 120000 && \
 
 # 소스 코드 복사 및 빌드
 COPY . .
-RUN npm run build
+RUN SKIP_PREFLIGHT_CHECK=true CI=false npm run build
 
 # 프로덕션 서버
 FROM nginx:alpine

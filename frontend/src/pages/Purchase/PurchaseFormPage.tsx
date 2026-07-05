@@ -214,8 +214,35 @@ const PurchaseFormPage: React.FC = () => {
     }, 200);
   }, []);
 
+  // 성공 알림음 (깔끔한 단일 비프음)
+  const playSuccessSound = () => {
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.type = 'sine';
+      osc.frequency.value = 1000;
+
+      gain.gain.setValueAtTime(0.7, ctx.currentTime);
+      gain.gain.setValueAtTime(0.7, ctx.currentTime + 0.25);
+      gain.gain.setValueAtTime(0, ctx.currentTime + 0.3);
+
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.3);
+
+      console.log('성공음 재생');
+    } catch (error) {
+      console.log('성공음 재생 실패:', error);
+    }
+  };
+
   const handleBarcodeFound = (result: BarcodeSearchResult) => {
     console.log('[Barcode Found]', result);
+    playSuccessSound();
 
     // 포이즌 정보만 있는 경우 (product_id가 빈 문자열)
     if (!result.product_id || result.product_id === '') {

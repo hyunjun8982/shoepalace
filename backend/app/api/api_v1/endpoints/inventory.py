@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict
+﻿from typing import List, Optional, Dict
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
@@ -268,9 +268,8 @@ def get_low_stock_alert(
             updated_at=inv.updated_at,
             product_name=inv.product.product_name,
             brand='',
-            category=inv.product.category,
-            size=inv.product.size,
-            color=inv.product.color,
+            size=None,
+            color=None,
             sku_code=inv.product.product_code
         )
         inventory_details.append(detail)
@@ -904,3 +903,6 @@ def get_upload_status(token: str):
         "uploaded": token_data['uploaded_image_url'] is not None,
         "image_url": token_data['uploaded_image_url']
     }
+
+
+

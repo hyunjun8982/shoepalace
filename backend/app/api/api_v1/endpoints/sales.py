@@ -145,10 +145,6 @@ def get_sale(
             if item.product.brand:
                 setattr(item, 'brand_name', item.product.brand.name)
 
-            # category 추가
-            if item.product.category:
-                setattr(item, 'category', item.product.category)
-
             # product_image_url이 없으면 product 정보로부터 생성
             if not item.product_image_url and item.product.brand and item.product.product_code:
                 brand_name = item.product.brand.name

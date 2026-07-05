@@ -146,8 +146,6 @@ class BaseProductImporter(ABC):
         """기존 상품 정보 업데이트"""
         product.product_name = product_data['name']
 
-        if product_data.get('category'):
-            product.category = product_data['category']
         if product_data.get('description'):
             product.description = product_data['description']
         if product_data.get('image_url'):

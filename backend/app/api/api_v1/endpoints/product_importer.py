@@ -97,8 +97,7 @@ async def import_brand_products(
         # 상품 가져오기 실행
         stats = importer.import_products(
             limit=request.limit,
-            update_existing=request.update_existing,
-            category=request.category
+            update_existing=request.update_existing
         )
 
         return ImportResponse(

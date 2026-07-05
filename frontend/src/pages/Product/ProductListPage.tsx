@@ -212,6 +212,51 @@ const ProductListPage: React.FC = () => {
     });
   };
 
+  // 성공 알림음 (깔끔한 음)
+  const playSuccessSound = () => {
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      oscillator.frequency.value = 800;
+      gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.2);
+    } catch (error) {
+      console.log('알림음 재생 실패:', error);
+    }
+  };
+
+  // 경고 알림음 (더 크고 잘 들리는 음)
+  const playAlertSound = () => {
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      // 높은 음으로 시작해서 낮은 음으로 끝나는 경고음
+      oscillator.frequency.setValueAtTime(1200, audioContext.currentTime);
+      oscillator.frequency.setValueAtTime(900, audioContext.currentTime + 0.3);
+
+      gainNode.gain.setValueAtTime(0.4, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
+
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.4);
+    } catch (error) {
+      console.log('알림음 재생 실패:', error);
+    }
+  };
+
   // 바코드 스캔 핸들러
   const handleBarcodeInput = async (barcode: string) => {
     setScannedBarcode(barcode);
@@ -220,16 +265,19 @@ const ProductListPage: React.FC = () => {
       // 바코드로 상품 조회
       const result = await barcodeService.searchByBarcode(barcode);
       if (result && result.product_id) {
-        // 상품이 있으면 정보 표시
+        // 상품이 있으면 성공 알림음 재생하고 정보 표시
+        playSuccessSound();
         setScannedProduct(result as any);
         setBarcodeLookupModalVisible(true);
       } else {
-        // 상품이 없으면 미등록 상품 등록 모달 열기
+        // 상품이 없으면 경고 알림음 재생하고 미등록 상품 등록 모달 열기
+        playAlertSound();
         setUnregisteredBarcodeVisible(true);
       }
     } catch (error) {
       console.error('바코드 조회 실패:', error);
-      // 404 오류인 경우 미등록 상품으로 처리
+      // 404 오류인 경우 경고 알림음 재생하고 미등록 상품으로 처리
+      playAlertSound();
       setUnregisteredBarcodeVisible(true);
     } finally {
       setBarcodeLoading(false);

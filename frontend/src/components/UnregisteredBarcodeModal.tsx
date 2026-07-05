@@ -361,19 +361,20 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
           {/* 포이즌 정보 상태 표시 */}
           {poizonError && (
             <Alert
-              type="warning"
-              message="포이즌 정보 없음"
-              description="포이즌 API에서 이 바코드에 대한 정보를 찾을 수 없습니다. 아래에서 직접 입력해주세요."
+              type="info"
+              message="상품 정보 입력 필요"
+              description="바코드 정보를 찾을 수 없습니다. 아래에서 상품 정보를 입력해주세요."
               style={{ marginTop: 12 }}
               showIcon
             />
           )}
           {poizonInfo && (
             <Alert
-              type="success"
-              message="포이즌 정보 자동 로드됨"
-              style={{ marginTop: 12, padding: '8px 12px' }}
-              showIcon={false}
+              type="info"
+              message="상품 정보 검증 필요"
+              description="자동 조회된 상품 정보를 확인 후 등록해주세요."
+              style={{ marginTop: 12 }}
+              showIcon
             />
           )}
         </div>

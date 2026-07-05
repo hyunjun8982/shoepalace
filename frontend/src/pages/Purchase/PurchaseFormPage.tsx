@@ -1306,13 +1306,13 @@ const PurchaseFormPage: React.FC = () => {
                     rowKey={(_, index) => index}
                     summary={() => (
                       <Table.Summary.Row>
-                        <Table.Summary.Cell colSpan={6} align="right">
+                        <Table.Summary.Cell index={0} colSpan={6} align="right">
                           <strong>합계</strong>
                         </Table.Summary.Cell>
-                        <Table.Summary.Cell align="right">
+                        <Table.Summary.Cell index={1} align="right">
                           <strong>₩{calculateTotal().toLocaleString()}</strong>
                         </Table.Summary.Cell>
-                        <Table.Summary.Cell />
+                        <Table.Summary.Cell index={2} />
                       </Table.Summary.Row>
                     )}
                   />

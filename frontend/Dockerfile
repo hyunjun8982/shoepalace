@@ -9,7 +9,8 @@ RUN npm config set fetch-timeout 120000 && \
     npm config set fetch-retry-mintimeout 20000 && \
     npm config set fetch-retry-maxtimeout 120000 && \
     npm cache clean --force && \
-    npm ci || npm ci || npm ci
+    rm -rf node_modules && \
+    npm install --legacy-peer-deps || npm install --legacy-peer-deps || npm install --legacy-peer-deps
 
 # 소스 코드 복사 및 빌드
 COPY . .

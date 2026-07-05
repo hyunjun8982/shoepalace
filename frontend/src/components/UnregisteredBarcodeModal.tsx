@@ -373,51 +373,42 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
         <Form.Item
           label="사이즈 (필수)"
           name="size"
-          rules={[{ required: true, message: '사이즈를 선택하거나 입력해주세요' }]}
+          rules={[{ required: true, message: '사이즈를 입력해주세요' }]}
         >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {poizonInfo?.sizes && poizonInfo.sizes.length > 0 && (
+          {poizonInfo?.sizes && poizonInfo.sizes.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                {!sizeInputMode && (
+                  <Radio.Group
+                    value={form.getFieldValue('size')}
+                    options={poizonInfo.sizes.map(s => ({
+                      value: s.size_kr,
+                      label: `${s.size_kr}${s.size_us ? ` (US: ${s.size_us})` : ''}`,
+                    }))}
+                    optionType="button"
+                    buttonStyle="solid"
+                    onChange={(e) => {
+                      form.setFieldValue('size', e.target.value);
+                    }}
+                    style={{ display: 'flex', gap: '8px' }}
+                  />
+                )}
                 <Radio.Group
-                  value={sizeInputMode ? undefined : form.getFieldValue('size')}
-                  options={poizonInfo.sizes.map(s => ({
-                    value: s.size_kr,
-                    label: `${s.size_kr}${s.size_us ? ` (US: ${s.size_us})` : ''}`,
-                  }))}
-                  optionType="button"
-                  buttonStyle="solid"
-                  onChange={(e) => {
-                    setSizeInputMode(false);
-                    form.setFieldValue('size', e.target.value);
-                  }}
-                  style={{ display: 'flex', gap: '8px' }}
-                />
-                <Radio.Group
-                  options={[
-                    {
-                      value: 'custom',
-                      label: '직접 입력',
-                    }
-                  ]}
-                  optionType="button"
-                  buttonStyle="solid"
                   value={sizeInputMode ? 'custom' : undefined}
-                  onChange={(e) => {
+                  options={[{ value: 'custom', label: '직접 입력' }]}
+                  optionType="button"
+                  buttonStyle="solid"
+                  onChange={() => {
                     setSizeInputMode(true);
                     form.setFieldValue('size', '');
                   }}
                 />
               </div>
-            )}
-            {(sizeInputMode || !poizonInfo?.sizes || poizonInfo.sizes.length === 0) && (
-              <Input
-                placeholder="사이즈를 입력하세요 (예: M, L, 260)"
-                value={form.getFieldValue('size') || ''}
-                onChange={(e) => form.setFieldValue('size', e.target.value)}
-                autoFocus
-              />
-            )}
-          </div>
+              {sizeInputMode && <Input placeholder="사이즈를 입력하세요 (예: M, L, 260)" autoFocus />}
+            </div>
+          ) : (
+            <Input placeholder="사이즈를 입력하세요 (예: M, L, 260)" autoFocus />
+          )}
         </Form.Item>
 
         <Form.Item

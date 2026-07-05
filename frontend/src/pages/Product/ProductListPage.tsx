@@ -218,10 +218,10 @@ const ProductListPage: React.FC = () => {
     setBarcodeLoading(true);
     try {
       // 바코드로 상품 조회
-      const result = await barcodeService.getBarcodeInfo(barcode);
-      if (result && result.product) {
+      const result = await barcodeService.searchByBarcode(barcode);
+      if (result && result.product_id) {
         // 상품이 있으면 정보 표시
-        setScannedProduct(result.product);
+        setScannedProduct(result as any);
         setBarcodeLookupModalVisible(true);
       } else {
         // 상품이 없으면 미등록 상품 등록 모달 열기

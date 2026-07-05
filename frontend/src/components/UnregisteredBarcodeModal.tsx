@@ -262,6 +262,41 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
         message.warning('바코드 등록 중 오류가 발생했지만 계속 진행합니다');
       }
 
+      // 3. 이미지 업로드
+      if (imageFile) {
+        try {
+          const brandName = brands.find(b => b.id === values.brand_id)?.name || '';
+          if (!brandName) {
+            console.warn('Brand name not found for image upload');
+          } else {
+            const formData = new FormData();
+            formData.append('file', imageFile);
+            formData.append('brand_name', brandName);
+            formData.append('product_code', values.product_code);
+
+            const token = localStorage.getItem('access_token');
+            const response = await fetch('/api/v1/products/upload-image', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${token}`,
+              },
+              body: formData,
+            });
+
+            if (!response.ok) {
+              const errorData = await response.json();
+              console.warn('Image upload failed:', errorData);
+            } else {
+              const result = await response.json();
+              console.log('Image upload success:', result);
+            }
+          }
+        } catch (error) {
+          console.warn('Image upload error:', error);
+          // 이미지 업로드 실패해도 상품 등록은 성공했으니 계속 진행
+        }
+      }
+
       form.resetFields();
       setImageFile(null);
       setImagePreview('');

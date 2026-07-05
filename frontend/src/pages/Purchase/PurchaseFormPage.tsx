@@ -241,15 +241,18 @@ const PurchaseFormPage: React.FC = () => {
 
   const handleBarcodeFound = (result: BarcodeSearchResult) => {
     console.log('[Barcode Found]', result);
-    playSuccessSound();
 
     // 포이즌 정보만 있는 경우 (product_id가 빈 문자열)
     if (!result.product_id || result.product_id === '') {
       console.log('[Poizon Info Only] Opening modal for registration');
+      // 알림음은 UnregisteredBarcodeModal에서 재생
       setScannedBarcode(result.barcode_value);
       setUnregisteredBarcodeModalVisible(true);
       return;
     }
+
+    // 등록된 상품인 경우만 성공음 재생
+    playSuccessSound();
 
     // DB에 등록된 상품 - 바로 items에 추가
     let product = products.find(p => p.id === result.product_id);

@@ -275,7 +275,6 @@ const ProductListPage: React.FC = () => {
 
   // 바코드 스캔 핸들러
   const handleBarcodeInput = async (barcode: string) => {
-    setScannedBarcode(barcode);
     setBarcodeLoading(true);
     try {
       // 바코드로 상품 조회
@@ -287,11 +286,13 @@ const ProductListPage: React.FC = () => {
         setBarcodeLookupModalVisible(true);
       } else {
         // 상품이 없으면 미등록 상품 등록 모달 열기 (알림음은 모달에서 재생)
+        setScannedBarcode(barcode);
         setUnregisteredBarcodeVisible(true);
       }
     } catch (error) {
       console.error('바코드 조회 실패:', error);
       // 404 오류인 경우 미등록 상품으로 처리 (알림음은 모달에서 재생)
+      setScannedBarcode(barcode);
       setUnregisteredBarcodeVisible(true);
     } finally {
       setBarcodeLoading(false);

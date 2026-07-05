@@ -286,14 +286,12 @@ const ProductListPage: React.FC = () => {
         setScannedProduct(result as any);
         setBarcodeLookupModalVisible(true);
       } else {
-        // 상품이 없으면 경고 알림음 재생하고 미등록 상품 등록 모달 열기
-        playAlertSound();
+        // 상품이 없으면 미등록 상품 등록 모달 열기 (알림음은 모달에서 재생)
         setUnregisteredBarcodeVisible(true);
       }
     } catch (error) {
       console.error('바코드 조회 실패:', error);
-      // 404 오류인 경우 경고 알림음 재생하고 미등록 상품으로 처리
-      playAlertSound();
+      // 404 오류인 경우 미등록 상품으로 처리 (알림음은 모달에서 재생)
       setUnregisteredBarcodeVisible(true);
     } finally {
       setBarcodeLoading(false);
@@ -628,12 +626,7 @@ const ProductListPage: React.FC = () => {
           style={{ position: 'absolute', left: '-9999px' }}
           value={scannedBarcode}
           onChange={(e) => {
-            const barcode = e.target.value.trim();
-            if (barcode && barcodeInputActive) {
-              handleBarcodeInput(barcode);
-              setScannedBarcode('');
-              e.target.value = '';
-            }
+            setScannedBarcode(e.target.value);
           }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && scannedBarcode && barcodeInputActive) {

@@ -173,10 +173,14 @@ const SaleFormPageNew: React.FC = () => {
 
   // 바코드 검색 성공 핸들러
   const handleBarcodeFound = (result: BarcodeSearchResult) => {
+    console.log('[SaleFormPage] Barcode found:', result);
+    console.log('[SaleFormPage] Searching for product_id:', result.product_id);
+    console.log('[SaleFormPage] Available products:', groupedInventory.map(p => p.product_id));
+
     const product = groupedInventory.find(p => p.product_id === result.product_id);
 
     if (!product) {
-      message.error('재고 목록에서 해당 상품을 찾을 수 없습니다.');
+      message.error(`재고 목록에서 해당 상품을 찾을 수 없습니다. (ID: ${result.product_id})`);
       return;
     }
 

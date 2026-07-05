@@ -31,9 +31,36 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
   const [poizonError, setPoizonError] = useState(false);
   const [sizeInputMode, setSizeInputMode] = useState(false);
 
+  // 알림 소리 재생
+  const playNotificationSound = () => {
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      // 2개 음톤으로 알림음 생성
+      oscillator.frequency.setValueAtTime(1000, audioContext.currentTime);
+      oscillator.frequency.setValueAtTime(1500, audioContext.currentTime + 0.15);
+
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.3);
+    } catch (error) {
+      console.log('알림 소리 재생 실패:', error);
+    }
+  };
+
   // 팝업 열릴 때 브랜드 목록 및 포이즌 정보 로드
   useEffect(() => {
     if (visible) {
+      // 알림 소리 재생
+      playNotificationSound();
+
       // 모달 열려있음 표시 (바코드 입력 방지)
       document.documentElement.setAttribute('data-modal-open', 'true');
 

@@ -1004,9 +1004,11 @@ const ProductListPage: React.FC = () => {
               {(() => {
                 const imagePath = getImagePath(scannedProduct.product_code, scannedProduct.brand_name);
                 if (imagePath) {
+                  // 이미지 캐시 무효화를 위해 timestamp 추가
+                  const imageUrlWithTimestamp = `${imagePath}?t=${new Date().getTime()}`;
                   return (
                     <img
-                      src={imagePath}
+                      src={imageUrlWithTimestamp}
                       alt={scannedProduct.product_name}
                       style={{ maxWidth: '200px', maxHeight: '200px', objectFit: 'contain' }}
                       onError={(e) => {

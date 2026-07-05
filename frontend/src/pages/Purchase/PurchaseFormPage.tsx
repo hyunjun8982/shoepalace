@@ -50,7 +50,7 @@ const PurchaseFormPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<PurchaseItem[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [cards, setCards] = useState<AntCard[]>([]);
+  const [cards, setCards] = useState<Card[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [sizeQuantities, setSizeQuantities] = useState<{ size: string; quantity: number }[]>([
     { size: '', quantity: 1 }

@@ -88,7 +88,7 @@ export const BarcodeInput: React.FC<BarcodeInputProps> = ({
     setLoading(true);
     try {
       const result = await barcodeService.searchByBarcode(barcodeValue);
-      message.success(`상품 검색됨: ${result.product_name}`);
+      // 성공 메시지 제거 (onBarcodeFound에서 처리)
       onBarcodeFound(result);
       setBarcode('');
     } catch (error: any) {

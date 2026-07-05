@@ -173,13 +173,36 @@ const SaleFormPageNew: React.FC = () => {
 
   // 바코드 검색 성공 핸들러
   const handleBarcodeFound = (result: BarcodeSearchResult) => {
-    setSelectedProductId(result.product_id);
     const product = groupedInventory.find(p => p.product_id === result.product_id);
-    if (product) {
-      message.success(`${product.product_name}이(가) 선택되었습니다.`);
-    } else {
-      message.warning('재고 목록에서 해당 상품을 찾을 수 없습니다.');
+
+    if (!product) {
+      message.error('재고 목록에서 해당 상품을 찾을 수 없습니다.');
+      return;
     }
+
+    // 바코드의 사이즈로 재고 확인
+    const sizeInventory = product.sizes.find(s => s.size === result.size);
+    if (!sizeInventory || sizeInventory.available_quantity === 0) {
+      message.error(`재고가 없습니다. (${product.product_name} / ${result.size})`);
+      return;
+    }
+
+    // selectedProducts에 자동으로 추가 (수량 1)
+    const newItem: SaleItemCreate = {
+      product_id: result.product_id,
+      size: result.size,
+      quantity: 1,
+      seller_sale_price_original: 0,
+      seller_sale_currency: 'KRW',
+      seller_sale_price_krw: 0,
+      product_name: product.product_name,
+      product_code: product.product_code,
+      brand_name: product.brand_name,
+      product_image_url: product.product_image_url || '',
+    };
+
+    setSelectedProducts(prev => [...prev, newItem]);
+    message.success(`${product.product_name} (${result.size})이 추가되었습니다.`);
   };
 
   // 바코드 검색 실패 핸들러 (미등록 상품)

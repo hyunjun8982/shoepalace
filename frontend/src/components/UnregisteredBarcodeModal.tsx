@@ -188,7 +188,8 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
   // 클립보드 paste 핸들러
   const handleImagePaste = (e: React.ClipboardEvent) => {
     const items = e.clipboardData.items;
-    for (let item of items) {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
       if (item.kind === 'file' && item.type.startsWith('image/')) {
         const file = item.getAsFile();
         if (file) {

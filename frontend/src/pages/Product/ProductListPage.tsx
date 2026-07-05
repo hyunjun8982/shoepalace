@@ -17,6 +17,7 @@ import {
   Divider,
   Empty,
   Descriptions,
+  Drawer,
 } from 'antd';
 import {
   PlusOutlined,
@@ -100,14 +101,15 @@ const ProductListPage: React.FC = () => {
     fetchProducts();
   }, [pagination.current, pagination.pageSize, filters]);
 
-  // 바코드 스캔 모달이 열려있을 때 focus 설정
+  // 바코드 스캔이 활성화되었을 때 focus 설정
+  // barcodeModalVisible 또는 barcodeLookupModalVisible이 true일 때 focus 유지
   useEffect(() => {
-    if (barcodeModalVisible && barcodeInputRef.current) {
+    if ((barcodeModalVisible || barcodeLookupModalVisible) && barcodeInputRef.current) {
       setTimeout(() => {
         barcodeInputRef.current?.focus();
       }, 100);
     }
-  }, [barcodeModalVisible]);
+  }, [barcodeModalVisible, barcodeLookupModalVisible]);
 
   const fetchBrands = async () => {
     try {
@@ -635,7 +637,7 @@ const ProductListPage: React.FC = () => {
             setScannedBarcode(e.target.value);
           }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && scannedBarcode && barcodeModalVisible) {
+            if (e.key === 'Enter' && scannedBarcode && (barcodeModalVisible || barcodeLookupModalVisible)) {
               handleBarcodeInput(scannedBarcode);
               setScannedBarcode('');
               e.currentTarget.value = '';
@@ -924,24 +926,28 @@ const ProductListPage: React.FC = () => {
         )}
       </Modal>
 
-      {/* 바코드 스캔 모달 */}
-      <Modal
+      {/* 바코드 스캔 Drawer */}
+      <Drawer
         title="상품 조회"
-        open={barcodeModalVisible}
-        centered
-        width={400}
-        onCancel={() => {
+        placement="right"
+        onClose={() => {
           setBarcodeModalVisible(false);
           setScannedBarcode('');
         }}
-        footer={[
-          <Button key="cancel" onClick={() => {
-            setBarcodeModalVisible(false);
-            setScannedBarcode('');
-          }}>
+        open={barcodeModalVisible}
+        width={320}
+        mask={false}
+        footer={
+          <Button
+            block
+            onClick={() => {
+              setBarcodeModalVisible(false);
+              setScannedBarcode('');
+            }}
+          >
             취소
-          </Button>,
-        ]}
+          </Button>
+        }
       >
         <div style={{ textAlign: 'center', padding: '40px 0' }}>
           <BarcodeOutlined style={{ fontSize: '64px', color: '#1890ff', marginBottom: '20px' }} />
@@ -957,31 +963,35 @@ const ProductListPage: React.FC = () => {
             </div>
           )}
         </div>
-      </Modal>
+      </Drawer>
 
-      {/* 바코드 조회 결과 모달 */}
-      <Modal
+      {/* 바코드 조회 결과 Drawer */}
+      <Drawer
         title="상품 조회 결과"
-        open={barcodeLookupModalVisible}
-        onCancel={() => {
+        placement="right"
+        onClose={() => {
           setBarcodeLookupModalVisible(false);
           setScannedProduct(null);
         }}
-        footer={[
-          <Button key="cancel" onClick={() => {
-            setBarcodeLookupModalVisible(false);
-            setScannedProduct(null);
-          }}>
-            계속 스캔
-          </Button>,
-          <Button key="edit" type="primary" onClick={() => {
-            setBarcodeLookupModalVisible(false);
-            navigate(`/products/${scannedProduct?.id}`);
-          }}>
-            상품 수정
-          </Button>,
-        ]}
-        width={600}
+        open={barcodeLookupModalVisible}
+        width={500}
+        mask={false}
+        footer={
+          <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+            <Button onClick={() => {
+              setBarcodeLookupModalVisible(false);
+              setScannedProduct(null);
+            }}>
+              계속 스캔
+            </Button>
+            <Button type="primary" onClick={() => {
+              setBarcodeLookupModalVisible(false);
+              navigate(`/products/${scannedProduct?.id}`);
+            }}>
+              상품 수정
+            </Button>
+          </Space>
+        }
       >
         {scannedProduct && (
           <Descriptions column={1} bordered style={{ marginTop: 16 }}>
@@ -1023,7 +1033,7 @@ const ProductListPage: React.FC = () => {
             </Descriptions.Item>
           </Descriptions>
         )}
-      </Modal>
+      </Drawer>
 
       {/* 미등록 바코드 모달 */}
       <UnregisteredBarcodeModal

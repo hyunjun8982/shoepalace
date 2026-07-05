@@ -219,7 +219,6 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
           product_code: values.product_code,
           product_name: values.product_name,
           description: values.description,
-          image_url: poizonInfo?.logo_url,  // 포이즌 이미지 URL
         });
         message.info('새 상품이 등록되었습니다');
       } catch (createError: any) {
@@ -238,7 +237,6 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
             product_code: values.product_code,
             brand_id: values.brand_id,
             description: values.description,
-            image_url: poizonInfo?.logo_url,  // 포이즌 이미지 URL
           });
 
           message.info('기존 상품을 최신 정보로 업데이트합니다');
@@ -374,16 +372,15 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
         <Form.Item
           label="사이즈 (필수)"
           name="size"
-          rules={[{ required: true, message: '사이즈를 선택해주세요' }]}
+          rules={[{ required: true, message: '사이즈를 선택하거나 입력해주세요' }]}
         >
-          <Radio.Group
+          <Select
+            placeholder="사이즈 선택 또는 직접 입력"
+            mode="combobox"
             options={poizonInfo?.sizes?.map(s => ({
               value: s.size_kr,
               label: `${s.size_kr}${s.size_us ? ` (US: ${s.size_us})` : ''}`,
             })) || []}
-            optionType="button"
-            buttonStyle="solid"
-            style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}
           />
         </Form.Item>
 

@@ -514,7 +514,12 @@ const PurchaseFormPage: React.FC = () => {
     }));
 
     // 기존 items에 새로운 상품 추가
-    setItems(prev => [...prev, ...newItems]);
+    setItems(prev => {
+      const updated = [...prev, ...newItems];
+      console.log('Items after adding:', updated);
+      console.log('New items:', newItems);
+      return updated;
+    });
 
     // 상품 추가 폼 초기화 (다음 상품 추가를 위해)
     setSelectedProductId('');
@@ -713,8 +718,20 @@ const PurchaseFormPage: React.FC = () => {
         items: processedItems,
       };
 
+      console.log('Raw items (before processing):', items);
       console.log('Sending purchase data:', data); // 디버깅용
       console.log('Processed items:', processedItems); // 디버깅용
+
+      // 각 item의 product 정보 확인
+      items.forEach((item, idx) => {
+        console.log(`Item ${idx}:`, {
+          product_id: item.product_id,
+          product_name: item.product_name,
+          product_code: item.product_code,
+          brand_name: item.brand_name,
+          size: item.size,
+        });
+      });
 
       if (id) {
         await purchaseService.updatePurchase(id, data);

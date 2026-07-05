@@ -35,6 +35,7 @@ export interface PurchaseItem {
   warehouse_id?: string;
   product_name?: string;
   product_code?: string;
+  brand_name?: string;
   product?: ProductInfo;
   warehouse?: WarehouseInfo;
   size?: string;

@@ -29,6 +29,7 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
   const [poizonLoading, setPoizonLoading] = useState(false);
   const [poizonInfo, setPoizonInfo] = useState<PoizonProductInfo | null>(null);
   const [poizonError, setPoizonError] = useState(false);
+  const [sizeInputMode, setSizeInputMode] = useState(false);
 
   // 팝업 열릴 때 브랜드 목록 및 포이즌 정보 로드
   useEffect(() => {
@@ -258,7 +259,7 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
       } catch (barcodeError: any) {
         console.warn('Failed to create barcode mapping:', barcodeError);
         // 바코드 등록 실패해도 상품은 등록되었으니 계속 진행
-        message.warn('바코드 등록 중 오류가 발생했지만 계속 진행합니다');
+        message.warning('바코드 등록 중 오류가 발생했지만 계속 진행합니다');
       }
 
       form.resetFields();
@@ -374,14 +375,40 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
           name="size"
           rules={[{ required: true, message: '사이즈를 선택하거나 입력해주세요' }]}
         >
-          <Select
-            placeholder="사이즈 선택 또는 직접 입력"
-            mode="combobox"
-            options={poizonInfo?.sizes?.map(s => ({
-              value: s.size_kr,
-              label: `${s.size_kr}${s.size_us ? ` (US: ${s.size_us})` : ''}`,
-            })) || []}
-          />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {poizonInfo?.sizes && poizonInfo.sizes.length > 0 && (
+              <Radio.Group
+                options={[
+                  ...poizonInfo.sizes.map(s => ({
+                    value: s.size_kr,
+                    label: `${s.size_kr}${s.size_us ? ` (US: ${s.size_us})` : ''}`,
+                  })),
+                  {
+                    value: 'custom',
+                    label: '직접 입력',
+                  }
+                ]}
+                optionType="button"
+                buttonStyle="solid"
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setSizeInputMode(value === 'custom');
+                  if (value !== 'custom') {
+                    form.setFieldValue('size', value);
+                  } else {
+                    form.setFieldValue('size', '');
+                  }
+                }}
+                style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}
+              />
+            )}
+            {(sizeInputMode || !poizonInfo?.sizes || poizonInfo.sizes.length === 0) && (
+              <Input
+                placeholder="사이즈를 입력하세요 (예: M, L, 260)"
+                onChange={(e) => form.setFieldValue('size', e.target.value)}
+              />
+            )}
+          </div>
         </Form.Item>
 
         <Form.Item

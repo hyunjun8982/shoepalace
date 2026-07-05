@@ -248,21 +248,44 @@ const PurchaseFormPage: React.FC = () => {
     }
   };
 
-  // 새로운 상품이 등록되었을 때
+  // 새로운 상품이 등록되었을 때 - 자동으로 items에 추가
   const handleNewProductRegistered = (newProduct: Product, barcodeInfo: { barcode_value: string; size: string }) => {
     // 상품 목록 새로고침
     loadProducts();
 
-    // 새로 등록된 상품 자동 선택 및 사이즈 추가
+    // 바코드 상품을 바로 items에 추가 (구매가는 나중에 입력하도록)
     setTimeout(() => {
-      setSelectedProductId(newProduct.id);
-      setSelectedProduct(newProduct);
+      // 기존 selectedProduct가 있으면 먼저 items에 추가
+      if (selectedProduct && selectedProductId && Object.keys(sizeQuantityMap).some(size => sizeQuantityMap[size] > 0)) {
+        const validSizes = Object.entries(sizeQuantityMap).filter(([_, qty]) => qty > 0);
+        const existingItems = validSizes.map(([size, quantity]) => ({
+          product_id: selectedProductId,
+          size,
+          quantity,
+          purchase_price: purchasePrice || 0,
+          product_name: selectedProduct.product_name,
+          product_code: selectedProduct.product_code,
+          brand_name: selectedProduct.brand_name,
+        }));
+        setItems(prev => [...prev, ...existingItems]);
+      }
 
-      // 바코드의 사이즈 수량 추가
-      setSizeQuantityMap(prev => {
-        const currentQty = prev[barcodeInfo.size] || 0;
-        return { ...prev, [barcodeInfo.size]: currentQty + 1 };
-      });
+      // 새 바코드 상품을 items에 추가
+      setItems(prev => [...prev, {
+        product_id: newProduct.id,
+        size: barcodeInfo.size,
+        quantity: 1,
+        purchase_price: 0, // 구매가는 나중에 입력
+        product_name: newProduct.product_name,
+        product_code: newProduct.product_code,
+        brand_name: newProduct.brand_name,
+      }]);
+
+      // 상품 추가 폼 초기화
+      setSelectedProductId('');
+      setSelectedProduct(null);
+      setSizeQuantityMap({});
+      setPurchasePrice(0);
 
       message.success(`${newProduct.product_name} (${barcodeInfo.size}) +1 추가됨`);
     }, 500);
@@ -836,7 +859,22 @@ const PurchaseFormPage: React.FC = () => {
       key: 'purchase_price',
       width: 120,
       align: 'right',
-      render: (price: number) => `₩${price.toLocaleString()}`,
+      render: (price: number, record: any, index: number) => (
+        <InputNumber
+          value={price || 0}
+          onChange={(value) => {
+            const newItems = [...items];
+            newItems[index].purchase_price = value || 0;
+            setItems(newItems);
+          }}
+          formatter={(value) => `₩${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+          parser={(value) => value!.replace(/₩\s?|(,*)/g, '') as any}
+          min={0}
+          step={1000}
+          size="small"
+          style={{ width: '100%' }}
+        />
+      ),
     },
     {
       title: '판매예정가',

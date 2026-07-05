@@ -377,20 +377,20 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {poizonInfo?.sizes && poizonInfo.sizes.length > 0 && (
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                 <Radio.Group
+                  value={sizeInputMode ? undefined : form.getFieldValue('size')}
                   options={poizonInfo.sizes.map(s => ({
                     value: s.size_kr,
                     label: `${s.size_kr}${s.size_us ? ` (US: ${s.size_us})` : ''}`,
                   }))}
                   optionType="button"
                   buttonStyle="solid"
-                  defaultValue={poizonInfo.sizes.length === 1 ? poizonInfo.sizes[0].size_kr : undefined}
                   onChange={(e) => {
                     setSizeInputMode(false);
                     form.setFieldValue('size', e.target.value);
                   }}
-                  style={{ display: 'flex', gap: '8px', flex: 1 }}
+                  style={{ display: 'flex', gap: '8px' }}
                 />
                 <Radio.Group
                   options={[
@@ -401,6 +401,7 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
                   ]}
                   optionType="button"
                   buttonStyle="solid"
+                  value={sizeInputMode ? 'custom' : undefined}
                   onChange={(e) => {
                     setSizeInputMode(true);
                     form.setFieldValue('size', '');
@@ -411,6 +412,7 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
             {(sizeInputMode || !poizonInfo?.sizes || poizonInfo.sizes.length === 0) && (
               <Input
                 placeholder="사이즈를 입력하세요 (예: M, L, 260)"
+                value={form.getFieldValue('size') || ''}
                 onChange={(e) => form.setFieldValue('size', e.target.value)}
                 autoFocus
               />

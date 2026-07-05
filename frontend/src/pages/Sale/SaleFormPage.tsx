@@ -105,11 +105,13 @@ const SaleFormPageNew: React.FC = () => {
   const fetchInventoryItems = async () => {
     try {
       setLoading(true);
+      console.log('[SaleFormPage] Fetching inventory items...');
       const response = await inventoryService.getInventoryList({
         limit: 10000
       });
       // 모든 재고 아이템 사용 (재고 0개 포함)
       const allItems = response.items;
+      console.log('[SaleFormPage] Inventory items loaded:', allItems.length, allItems);
       setInventoryItems(allItems);
 
       // 상품별로 그룹화
@@ -149,6 +151,8 @@ const SaleFormPageNew: React.FC = () => {
         return acc;
       }, []);
 
+      console.log('[SaleFormPage] Grouped inventory:', grouped.length, grouped);
+
       // 정렬: 브랜드, 상품코드, 카테고리가 있는 상품 우선 + 재고량 많은 순
       const sorted = grouped.sort((a: any, b: any) => {
         // 1. 유효한 상품(브랜드, 상품코드, 카테고리 모두 있음) 우선
@@ -163,8 +167,10 @@ const SaleFormPageNew: React.FC = () => {
         return bTotalQty - aTotalQty;
       });
 
+      console.log('[SaleFormPage] Setting grouped inventory, count:', sorted.length);
       setGroupedInventory(sorted);
     } catch (error) {
+      console.error('[SaleFormPage] Error fetching inventory:', error);
       message.error('재고 목록을 불러오는데 실패했습니다.');
     } finally {
       setLoading(false);

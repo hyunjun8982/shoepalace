@@ -4,13 +4,21 @@ FROM node:18-alpine AS base
 FROM base AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev
+RUN npm config set fetch-timeout 120000 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm cache clean --force && \
+    npm ci --omit=dev || npm ci --omit=dev || npm ci --omit=dev
 
 # Build
 FROM base AS builder
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN npm config set fetch-timeout 120000 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm cache clean --force && \
+    npm ci || npm ci || npm ci
 COPY . .
 RUN npm run build
 

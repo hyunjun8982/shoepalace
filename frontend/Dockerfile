@@ -5,7 +5,11 @@ WORKDIR /app
 
 # 의존성 파일 복사 및 설치
 COPY package*.json ./
-RUN npm ci
+RUN npm config set fetch-timeout 120000 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm cache clean --force && \
+    npm ci || npm ci || npm ci
 
 # 소스 코드 복사 및 빌드
 COPY . .

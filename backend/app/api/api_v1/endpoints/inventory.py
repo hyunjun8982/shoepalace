@@ -38,7 +38,6 @@ def get_inventory_list(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=10000),
     search: Optional[str] = None,
-    category: Optional[str] = None,
     low_stock_only: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -56,10 +55,6 @@ def get_inventory_list(
                 Product.product_code.ilike(f"%{search}%")
             )
         )
-
-    # 카테고리 필터
-    if category:
-        query = query.filter(Product.category == category)
 
     # 재고 부족 필터
     if low_stock_only:
@@ -87,7 +82,6 @@ def get_inventory_list(
             updated_at=inv.updated_at,
             product_name=inv.product.product_name,
             brand=inv.product.brand.name if inv.product.brand else '',
-            category=inv.product.category or '',
             size=inv.size,
             color=None,
             sku_code=inv.product.product_code,
@@ -132,9 +126,8 @@ def get_inventory(
         updated_at=inventory.updated_at,
         product_name=product.product_name,
         brand='',
-        category=product.category,
-        size=product.size,
-        color=product.color,
+        size=inv.size,
+        color=None,
         sku_code=product.product_code
     )
 
@@ -179,9 +172,8 @@ def update_inventory(
         updated_at=inventory.updated_at,
         product_name=product.product_name,
         brand='',
-        category=product.category,
-        size=product.size,
-        color=product.color,
+        size=inv.size,
+        color=None,
         sku_code=product.product_code
     )
 
@@ -338,10 +330,14 @@ def get_inventory_detail_with_history(
             id=str(inv.id),
             size=inv.size or '',
             quantity=inv.quantity,
+            defect_quantity=inv.defect_quantity or 0,
             location=inv.location,
             warehouse_name=warehouse_name,
             warehouse_location=warehouse_location,
-            warehouse_image_url=warehouse_image_url
+            warehouse_image_url=warehouse_image_url,
+            defect_reason=inv.defect_reason,
+            defect_marked_at=inv.defect_marked_at,
+            defect_image_url=inv.defect_image_url
         ))
         total_quantity += inv.quantity
 
@@ -399,7 +395,6 @@ def get_inventory_detail_with_history(
         updated_at=first_inventory.updated_at,
         product_name=product.product_name,
         brand=product.brand.name if product.brand else '',
-        category=product.category or '',
         size=None,  # 사이즈 필드는 사용하지 않음
         color=None,
         sku_code=product.product_code,
@@ -602,7 +597,6 @@ def get_defective_inventory_list(
             updated_at=inv.updated_at,
             product_name=inv.product.product_name,
             brand=inv.product.brand.name if inv.product.brand else '',
-            category=inv.product.category or '',
             size=inv.size,
             color=None,
             sku_code=inv.product.product_code,

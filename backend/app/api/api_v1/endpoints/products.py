@@ -84,10 +84,9 @@ def get_products(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     brand_ids: Optional[str] = None,  # 쉼표로 구분된 brand_id 목록
-    categories: Optional[str] = None,  # 쉼표로 구분된 category 목록
     search: Optional[str] = None,
     is_active: Optional[bool] = None,
-    only_valid: Optional[bool] = None,  # 브랜드, 상품코드, 카테고리가 모두 있는 상품만
+    only_valid: Optional[bool] = None,  # 브랜드, 상품코드가 모두 있는 상품만
     order_by: Optional[str] = None,  # 정렬 기준: inventory_desc (재고량 내림차순)
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -105,21 +104,12 @@ def get_products(
         if brand_id_list:
             query = query.filter(Product.brand_id.in_(brand_id_list))
 
-    if categories:
-        category_list = [cat.strip() for cat in categories.split(',') if cat.strip()]
-        if category_list:
-            query = query.filter(Product.category.in_(category_list))
-
     if is_active is not None:
         query = query.filter(Product.is_active == is_active)
 
-    # 유효한 상품만 필터링 (브랜드, 상품코드, 카테고리가 모두 있는 상품)
+    # only_valid: 브랜드, 상품코드가 모두 있는 상품만 필터링
     if only_valid:
-        query = query.filter(
-            Product.brand_id.isnot(None),
-            Product.product_code.isnot(None),
-            Product.category.isnot(None)
-        )
+        query = query.filter(Product.brand_id.isnot(None), Product.product_code.isnot(None))
 
     if search:
         query = query.filter(
@@ -221,7 +211,6 @@ def create_product(
         brand_id=product_data.brand_id,
         product_code=product_data.product_code,
         product_name=product_data.product_name,
-        category=product_data.category,
         description=product_data.description
     )
 

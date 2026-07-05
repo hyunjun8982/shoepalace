@@ -254,6 +254,15 @@ def run_migrations() -> None:
             conn.rollback()
             print(f"Migration skipped or failed: {e}")
 
+        # products 테이블에서 category 컬럼 제거
+        try:
+            conn.execute(text("ALTER TABLE products DROP COLUMN IF EXISTS category"))
+            conn.commit()
+            print("Migration: products.category column removed")
+        except Exception as e:
+            conn.rollback()
+            print(f"Migration skipped or failed: {e}")
+
 def init_db() -> None:
     """데이터베이스 초기화"""
     # 테이블 생성 (이미 존재하면 무시)

@@ -2,6 +2,7 @@ import { ColumnsType } from 'antd/es/table';
 import { Button, Tag, Image, Tooltip, Modal } from 'antd';
 import { CheckCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { Purchase, PaymentType } from '../../types/purchase';
+import { CARD_ISSUER_LABELS, CARD_TYPE_LABELS } from '../../types/card';
 import dayjs from 'dayjs';
 import { getFileUrl } from '../../utils/urlUtils';
 
@@ -63,8 +64,8 @@ export const getColumns = (
   },
   {
     title: '상품',
-    key: 'product_image',
-    width: 60,
+    key: 'product_images',
+    width: 50,
     render: (_, record) => {
       if (!record.items || record.items.length === 0) {
         return (
@@ -84,6 +85,7 @@ export const getColumns = (
         );
       }
 
+      // 첫 번째 상품의 이미지만 표시 (같은 상품이므로)
       const firstItem = record.items[0];
       let imageUrl = firstItem.product_image_url;
 
@@ -104,7 +106,7 @@ export const getColumns = (
               height={44}
               style={{ objectFit: 'cover', borderRadius: 4 }}
               preview={{ mask: '확대' }}
-              fallback="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUH5QkbBQEfH0J0gAAAAB1pVFh0Q29tbWVudAAAAAAAQ3JlYXRlZCB3aXRoIEdJTVBkLmUHAAACNUlEQVRo3u2ZT0gUURjAf++dmZ3d3V1X13+5mrqmYhYdCqKDRX+gQ0QHRQ8FQUFBh4IOQdChCLoERUGHoEMQFEUQBEUQBR0iKII0TcvM1DL/rbq77szs7MybDgaytjO7s+4W9L7TvO+9N9/3vu+9N/MGhBBCCCGEEEIIIYQQQgghhBBCCOEVSk4N7D9wEIDW1lYAmpqaANi5cycAnZ2dAKiqCkBfXx8Aw8PD3hZq27YUGBkZkQKDg4NSYGpqSgpMTEzI/unpaSng8/mkgNfrBaCoqAiA8vJyACorKwEoLS0FIC8vD4Dbt2/PvoC1a9cCcOTIEQAKCgoAmJiY4M2bNwDcu3ePeDyeEdi7dy8A586dA2DRokUAPHjwgGvXrgFgGMacF7B//34ALl++DEBZWRkAHz584MKFC1y9ejEjfW/fvgXg5MmTANTW1gLw6NEjzp49y9jYmLcCFhY27qqqSvv27aNQT4/kdDqd5cuXUygQCEihqqoqKRQKhaRQTU2NFKqpqZFCVVVVUigYDEqhsrIyKeT3+6VQIBCQ444ePSqNnzhxAoDCwkIA4vE4T58+5e7duwBEo1FvBUSjUS5evMjz588B0HXdk/4jkQg3b97k+vXrjI6OArMooKGhgc7OTlauXJm13kajUW7dusXVq1eJRCLeCti0aRN79uyhvr7e0046nc6HDx+4c+cOr1+/9lZAbW0t69evZ+3atYRCIdLF6XRy//59Hjx4wOjoqBS4cuUKFy9elGshT548kcGRI0eGzp8/f0YIIYQQ4n/iN5kkr0OZF2IAAAAAAElFTkSuQmCC"
+              fallback="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUH5QkbBQEfH0J0gAAAAB1pVFh0Q29tbWVudAAAAAAAQ3JlYXRlZCB3aXRoIEdJTVBkLmUHAAACNUlKQVRo3u2ZT0gUURjAf++dmZ3d3V1X13+5mrqmYhYdCqKDRX+gQ0QHRQ8FQUFBh4IOQdChCLoERUGHoEMQFEUQBEUQBR0iKII0TcvM1DL/rbq77szs7MybDgaytjO7s+4W9L7TvO+9N9/3vu+9N/MGhBBCCCGEEEIIIYQQQgghhBBCCOEVSk4N7D9wEIDW1lYAmpqaANi5cycAnZ2dAKiqCkBfXx8Aw8PD3hZq27YUGBkZkQKDg4NSYGpqSgpMTEzI/unpaSng8/mkgNfrBaCoqAiA8vJyAiorKwEoLS0FIC8vD4Dbt2/PvoC1a9cCcOTIEQAKCgoAmJiY4M2bNwDcu3ePeDyeEdi7dy8A586dA2DRokUAPHjwgGvXrgFgGMacF7B//34ALl++DEBZWRkAHz584MKFC1y9ejEjfW/fvgXg5MmTANTW1gLw6NEjzp49y9jYmLcCFhY27qqqSvv27aNQT4/kdDqd5cuXUygQCEihqqoqKRQKhaRQTU2NFKqpqZFCVVVVUigYDEqhsrIyKeT3+6VQIBCQ444ePSqNnzhxAoDCwkIA4vE4T58+5e7duwBEo1FvBUSjUS5evMjz588B0HXdk/4jkQg3b97k+vXrjI6OArMooKGhgc7OTlauXJm23kajUW7dusXVq1eJRCLeCti0aRN79uyhvr7e0046nc6HDx+4c+cOr1+/9lZAbW0t69evZ+3atYRCIdLF6XRy//59Hjx4wOjoqBS4cuUKFy9elGshT548kcGRI0eGzp8/f0YIIYQQ4n/iN5kkr0OZF2IAAAAAAElFTkSuQmCC"
             />
           </div>
         );
@@ -133,8 +135,21 @@ export const getColumns = (
     width: 120,
     render: (_, record) => {
       if (!record.items || record.items.length === 0) return '-';
-      const code = record.items[0]?.product?.product_code || '-';
-      return <span style={{ fontWeight: 500, fontSize: '12px', whiteSpace: 'normal', wordBreak: 'break-all' }}>{code}</span>;
+      const codes = record.items.map(item => item.product?.product_code || '-');
+      const maxDisplay = 2;
+      const displayCodes = codes.slice(0, maxDisplay);
+      const hiddenCount = codes.length - maxDisplay;
+
+      return (
+        <div style={{ fontSize: '12px', lineHeight: '1.4' }}>
+          {displayCodes.map((code, idx) => (
+            <div key={idx} style={{ fontWeight: 500, wordBreak: 'break-all' }}>{code}</div>
+          ))}
+          {hiddenCount > 0 && (
+            <div style={{ color: '#999' }}>... +{hiddenCount}</div>
+          )}
+        </div>
+      );
     },
   },
   {
@@ -143,8 +158,21 @@ export const getColumns = (
     width: 200,
     render: (_, record) => {
       if (!record.items || record.items.length === 0) return '-';
-      const name = record.items[0]?.product?.product_name || record.items[0]?.product_name || '-';
-      return <span style={{ fontSize: '12px', whiteSpace: 'normal', wordBreak: 'break-word', color: '#333' }}>{name}</span>;
+      const names = record.items.map(item => item.product?.product_name || item.product_name || '-');
+      const maxDisplay = 2;
+      const displayNames = names.slice(0, maxDisplay);
+      const hiddenCount = names.length - maxDisplay;
+
+      return (
+        <div style={{ fontSize: '12px', lineHeight: '1.5', color: '#333' }}>
+          {displayNames.map((name, idx) => (
+            <div key={idx} style={{ wordBreak: 'break-word' }}>{name}</div>
+          ))}
+          {hiddenCount > 0 && (
+            <div style={{ color: '#999' }}>... +{hiddenCount}개</div>
+          )}
+        </div>
+      );
     },
   },
   {
@@ -204,8 +232,27 @@ export const getColumns = (
   {
     title: '결제',
     key: 'payment_info',
-    width: 70,
+    width: 150,
     render: (_, record) => {
+      // 카드 정보가 있으면 카드 정보 표시
+      if (record.payment_card && typeof record.payment_card === 'object') {
+        const cardType = (record.payment_card as any).card_type;
+        const cardIssuer = (record.payment_card as any).card_issuer;
+        const ownerName = (record.payment_card as any).owner_name;
+
+        if (cardType && cardIssuer) {
+          const cardTypeLabel = CARD_TYPE_LABELS[cardType] || cardType;
+          const cardIssuerLabel = CARD_ISSUER_LABELS[cardIssuer] || cardIssuer;
+
+          return (
+            <span style={{ fontSize: '12px' }}>
+              {cardTypeLabel} / {cardIssuerLabel} / {ownerName}
+            </span>
+          );
+        }
+      }
+
+      // 기존 payment_type 정보 표시
       const typeMap: Record<string, { text: string; color: string }> = {
         [PaymentType.CORP_CARD]: { text: '법인카드', color: 'blue' },
         [PaymentType.CORP_ACCOUNT]: { text: '법인계좌', color: 'green' },

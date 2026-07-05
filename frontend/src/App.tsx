@@ -41,6 +41,7 @@ import MobilePhotoCapturePage from './pages/Mobile/MobilePhotoCapturePage';
 import MobileReceiptCapturePage from './pages/Mobile/MobileReceiptCapturePage';
 import CardTransactionListPage from './pages/CardTransaction/CardTransactionListPage';
 import BankTransactionListPage from './pages/BankTransaction/BankTransactionListPage';
+import CardManagePage from './pages/Card/CardManagePage';
 import CodefSettingsPage from './pages/Admin/CodefSettingsPage';
 
 // Ant Design 한국어 설정
@@ -187,6 +188,9 @@ const App: React.FC = () => {
                       {/* 채팅 */}
                       <Route path="/chat" element={<ChatListPage />} />
                       <Route path="/chat/:roomId" element={<ChatRoomPage />} />
+
+                      {/* 카드 관리 */}
+                      <Route path="/cards" element={<CardManagePage />} />
 
                       {/* 카드 내역 관리 */}
                       <Route path="/card-transactions" element={<CardTransactionListPage />} />

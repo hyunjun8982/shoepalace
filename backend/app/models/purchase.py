@@ -25,7 +25,8 @@ class Purchase(BaseModel):
     receiver_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)  # 입고확인자
     is_confirmed = Column(Boolean, default=False)  # 입고확인 여부
     confirmed_at = Column(DateTime, nullable=True)  # 입고확인 일시
-    payment_type = Column(Enum(PaymentType), nullable=False)
+    payment_type = Column(Enum(PaymentType), nullable=True)  # 결제 방식
+    payment_card_id = Column(UUID(as_uuid=True), ForeignKey("cards.id"), nullable=True)
     supplier = Column(String(100))
     total_amount = Column(Numeric(12, 2), default=0)
     status = Column(Enum(PurchaseStatus), default=PurchaseStatus.pending)
@@ -36,6 +37,7 @@ class Purchase(BaseModel):
     # 관계 설정
     buyer = relationship("User", foreign_keys=[buyer_id], back_populates="purchases")
     receiver = relationship("User", foreign_keys=[receiver_id])
+    payment_card = relationship("Card", foreign_keys=[payment_card_id], back_populates="purchases", lazy="select")
     items = relationship("PurchaseItem", back_populates="purchase", cascade="all, delete-orphan")
 
 class PurchaseItem(BaseModel):

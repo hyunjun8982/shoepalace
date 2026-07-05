@@ -50,7 +50,6 @@ class ProductBase(BaseModel):
     brand_id: Optional[str] = None
     product_code: str
     product_name: str
-    category: Optional[str] = None
     description: Optional[str] = None
     is_active: Optional[bool] = True
 
@@ -61,7 +60,6 @@ class ProductUpdate(BaseModel):
     brand_id: Optional[str] = None
     product_code: Optional[str] = None
     product_name: Optional[str] = None
-    category: Optional[str] = None
     description: Optional[str] = None
     image_url: Optional[str] = None  # 포이즌 이미지 URL
 

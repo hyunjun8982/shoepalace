@@ -1,11 +1,10 @@
 from fastapi import APIRouter
-from app.api.api_v1.endpoints import auth, products, purchases, sales, inventory, settlements, uploads, users, files, test_upload, admin, brands, categories, trending_products, warehouses, notifications, product_importer, chat, kream_scraper, adidas_accounts, feature_requests, poizon_products, naver_shopping, poizon, adidas_comparison, poizon_price_watch, card_transactions, bank_transactions, barcodes
+from app.api.api_v1.endpoints import auth, products, purchases, sales, inventory, settlements, uploads, users, files, test_upload, admin, brands, trending_products, warehouses, notifications, product_importer, chat, kream_scraper, adidas_accounts, feature_requests, poizon_products, naver_shopping, poizon, adidas_comparison, poizon_price_watch, card_transactions, bank_transactions, barcodes, cards
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["인증"])
 api_router.include_router(users.router, prefix="/users", tags=["사용자"])
 api_router.include_router(brands.router, prefix="/brands", tags=["브랜드"])
-api_router.include_router(categories.router, prefix="/categories", tags=["카테고리"])
 api_router.include_router(warehouses.router, prefix="/warehouses", tags=["창고"])
 api_router.include_router(products.router, prefix="/products", tags=["상품"])
 api_router.include_router(barcodes.router, prefix="/barcodes", tags=["바코드"])
@@ -29,5 +28,6 @@ api_router.include_router(naver_shopping.router, prefix="/naver-shopping", tags=
 api_router.include_router(poizon.router, prefix="/poizon", tags=["포이즌API"])
 api_router.include_router(adidas_comparison.router, prefix="/adidas-comparison", tags=["아디다스구매비교"])
 api_router.include_router(poizon_price_watch.router, prefix="/poizon-price", tags=["포이즌가격비교"])
+api_router.include_router(cards.router, prefix="/cards", tags=["결제카드"])
 api_router.include_router(card_transactions.router, prefix="/card-transactions", tags=["카드내역"])
 api_router.include_router(bank_transactions.router, prefix="/bank-transactions", tags=["은행거래내역"])

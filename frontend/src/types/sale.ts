@@ -43,6 +43,7 @@ export interface Sale {
   sale_date: string;
   seller_id?: string;
   seller_name?: string; // 판매자명 표시용
+  payment_card_id?: string; // 결제 카드 ID
   customer_name?: string; // 고객명 또는 고객처
   customer_contact?: string;
   total_seller_amount?: number; // 총 판매자 판매금액
@@ -59,6 +60,7 @@ export interface Sale {
 
 export interface SaleCreate {
   sale_date: string;
+  payment_card_id?: string; // 결제 카드 ID
   customer_name?: string;
   customer_contact?: string;
   notes?: string;
@@ -69,6 +71,7 @@ export interface SaleCreate {
 
 export interface SaleUpdate {
   sale_date?: string;
+  payment_card_id?: string; // 결제 카드 ID
   customer_name?: string;
   customer_contact?: string;
   status?: SaleStatus;

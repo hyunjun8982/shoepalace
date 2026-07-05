@@ -87,6 +87,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     '/feature-requests': '요청사항',
     '/adidas-comparison': '아디다스 구매/판매 비교',
     '/poizon-price-comparison': '포이즌 가격비교',
+    '/cards': '결제 카드 관리',
     '/card-transactions': '카드 내역',
     '/bank-transactions': '은행 거래내역',
   };
@@ -301,6 +302,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           icon: <DollarOutlined />,
           label: '판매 관리',
           roles: ['admin', 'seller'],
+        },
+        {
+          key: '/cards',
+          icon: <CreditCardOutlined />,
+          label: '결제 카드 관리',
+          roles: ['admin', 'buyer', 'seller'],
         },
       ],
     },

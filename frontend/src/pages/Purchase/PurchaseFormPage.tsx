@@ -8,7 +8,7 @@ import {
   Button,
   Table,
   InputNumber,
-  Card,
+  Card as AntCard,
   Space,
   App,
   Checkbox,
@@ -28,9 +28,11 @@ import { productService } from '../../services/product';
 import { uploadService } from '../../services/upload';
 import { userService } from '../../services/user';
 import { barcodeService, BarcodeSearchResult } from '../../services/barcode';
+import { cardService } from '../../services/card';
 import { UnregisteredBarcodeModal } from '../../components/UnregisteredBarcodeModal';
 import { PaymentType, PurchaseItem } from '../../types/purchase';
 import { Product } from '../../types/product';
+import { Card, CARD_ISSUER_LABELS, CARD_TYPE_LABELS } from '../../types/card';
 import { User } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
 import dayjs from 'dayjs';
@@ -48,6 +50,7 @@ const PurchaseFormPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<PurchaseItem[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [cards, setCards] = useState<AntCard[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [sizeQuantities, setSizeQuantities] = useState<{ size: string; quantity: number }[]>([
     { size: '', quantity: 1 }
@@ -76,6 +79,7 @@ const PurchaseFormPage: React.FC = () => {
   // 바코드 스캔 관련 refs
   const barcodeBufferRef = useRef('');
   const barcodeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastProcessedBarcodeRef = useRef<string>(''); // 중복 처리 방지
 
   // 바코드 검색 관련 상태
   const [barcodeSearchResult, setBarcodeSearchResult] = useState<BarcodeSearchResult | null>(null);
@@ -86,6 +90,7 @@ const PurchaseFormPage: React.FC = () => {
   useEffect(() => {
     loadProducts();
     loadUsers();
+    loadCards();
     if (id) {
       loadPurchase(id);
     } else {
@@ -115,6 +120,7 @@ const PurchaseFormPage: React.FC = () => {
       // Enter 키: 버퍼 제출
       if (e.key === 'Enter' && barcodeBufferRef.current) {
         e.preventDefault();
+        e.stopPropagation();
         // 타임아웃 clear (중복 처리 방지)
         if (barcodeTimeoutRef.current) clearTimeout(barcodeTimeoutRef.current);
         handleBarcodeSearchGlobal(barcodeBufferRef.current.trim());
@@ -125,16 +131,6 @@ const PurchaseFormPage: React.FC = () => {
       // 일반 문자 추가
       if (e.key.length === 1) {
         barcodeBufferRef.current += e.key;
-
-        // 타임아웃 초기화 (마지막 입력으로부터 150ms 후 처리)
-        if (barcodeTimeoutRef.current) clearTimeout(barcodeTimeoutRef.current);
-
-        barcodeTimeoutRef.current = setTimeout(() => {
-          if (barcodeBufferRef.current) {
-            handleBarcodeSearchGlobal(barcodeBufferRef.current.trim());
-            barcodeBufferRef.current = '';
-          }
-        }, 150);
       }
     };
 
@@ -149,7 +145,7 @@ const PurchaseFormPage: React.FC = () => {
     try {
       const response = await productService.getProducts({
         limit: 1000,
-        only_valid: true,  // 브랜드, 상품코드, 카테고리가 모두 있는 상품만
+        only_valid: true,  // 브랜드, 상품코드가 모두 있는 상품만
         order_by: 'inventory_desc'  // 재고량 많은 순으로 정렬
       });
       console.log('Loaded products:', response.items); // 디버깅용
@@ -171,13 +167,33 @@ const PurchaseFormPage: React.FC = () => {
     }
   };
 
+  const loadCards = async () => {
+    try {
+      const response = await cardService.getCards({ limit: 1000, is_active: true });
+      setCards(response.items || []);
+    } catch (error) {
+      console.error('Failed to load cards:', error);
+    }
+  };
+
   // 바코드 검색 성공 핸들러
   // 바코드 검색 함수 (전역 리스너용)
   const handleBarcodeSearchGlobal = useCallback(async (barcodeValue: string) => {
     if (!barcodeValue) return;
 
+    // 중복 처리 방지: 이미 처리 중이면 무시
+    if (lastProcessedBarcodeRef.current === barcodeValue) {
+      console.log('[Duplicate barcode ignored]', barcodeValue);
+      return;
+    }
+
+    // 처리 중 표시
+    lastProcessedBarcodeRef.current = barcodeValue;
+    console.log('[Processing barcode]', barcodeValue);
+
     try {
       const result = await barcodeService.searchByBarcode(barcodeValue);
+      console.log('[Search result]', result.product_name);
       message.success(`상품 검색됨: ${result.product_name}`);
       handleBarcodeFound(result);
     } catch (error: any) {
@@ -188,6 +204,14 @@ const PurchaseFormPage: React.FC = () => {
         message.error(error.message || '바코드 검색에 실패했습니다.');
       }
     }
+
+    // 200ms 후에 캐시 초기화 (같은 상품 연속 스캔 가능하도록)
+    setTimeout(() => {
+      if (lastProcessedBarcodeRef.current === barcodeValue) {
+        lastProcessedBarcodeRef.current = '';
+        console.log('[Cache cleared]', barcodeValue);
+      }
+    }, 200);
   }, []);
 
   const handleBarcodeFound = (result: BarcodeSearchResult) => {
@@ -201,9 +225,7 @@ const PurchaseFormPage: React.FC = () => {
       return;
     }
 
-    // DB에 등록된 상품
-    setSelectedProductId(result.product_id);
-    // products 배열에서 찾기
+    // DB에 등록된 상품 - 바로 items에 추가
     let product = products.find(p => p.id === result.product_id);
     if (!product) {
       // 상품이 없으면 검색 결과에서 만들어서 사용
@@ -213,7 +235,6 @@ const PurchaseFormPage: React.FC = () => {
         brand_id: '',
         product_code: result.product_code,
         product_name: result.product_name,
-        category: result.category || 'shoes',
         description: '',
         is_active: true,
         brand_name: result.brand_name,
@@ -221,13 +242,47 @@ const PurchaseFormPage: React.FC = () => {
         updated_at: new Date().toISOString()
       } as Product;
     }
-    setSelectedProduct(product);
-    // 바코드에서 받은 사이즈의 수량을 +1 (같은 바코드를 여러 번 스캔하면 누적)
-    setSizeQuantityMap(prev => {
-      const currentQty = prev[result.size] || 0;
-      return { ...prev, [result.size]: currentQty + 1 };
+
+    console.log('[Adding to items directly]', {
+      product_id: result.product_id,
+      size: result.size,
+      product_name: product.product_name
     });
-    console.log('[Selected Product with Size]', product, 'Size:', result.size);
+
+    // 같은 상품+사이즈는 수량 증가, 없으면 새로운 행 추가
+    setItems(prev => {
+      const existingItemIndex = prev.findIndex(item =>
+        item.product_id === result.product_id && item.size === result.size
+      );
+
+      if (existingItemIndex >= 0) {
+        // 기존 항목 수량 증가
+        const newItems = [...prev];
+        newItems[existingItemIndex].quantity = (newItems[existingItemIndex].quantity || 1) + 1;
+        console.log('[Quantity increased]', {
+          product_id: result.product_id,
+          size: result.size,
+          new_quantity: newItems[existingItemIndex].quantity
+        });
+        return newItems;
+      } else {
+        // 새로운 항목 추가
+        console.log('[New item added]', {
+          product_id: result.product_id,
+          size: result.size
+        });
+        return [...prev, {
+          product_id: result.product_id,
+          size: result.size,
+          quantity: 1,
+          purchase_price: 0,
+          product_name: product.product_name,
+          product_code: product.product_code,
+          brand_name: product.brand_name,
+        }];
+      }
+    });
+
     message.success(`${result.product_name} (${result.size}) +1 추가됨`);
   };
 
@@ -237,14 +292,30 @@ const PurchaseFormPage: React.FC = () => {
     setUnregisteredBarcodeModalVisible(true);
   };
 
-  // 자동 선택된 상품을 추가
+  // 자동 선택된 상품을 items에 바로 추가
   const handleAutoSelectProduct = (productId: string) => {
     const product = products.find(p => p.id === productId);
-    if (product) {
-      setSelectedProductId(productId);
-      handleProductChange(productId);
+    if (product && barcodeSearchResult) {
+      // items에 바로 추가
+      console.log('Adding barcode result to items:', {
+        productId,
+        size: barcodeSearchResult.size,
+        barcode: barcodeSearchResult.barcode_value,
+        product_name: product.product_name
+      });
+
+      setItems(prev => [...prev, {
+        product_id: productId,
+        size: barcodeSearchResult.size,
+        quantity: 1,
+        purchase_price: 0,
+        product_name: product.product_name,
+        product_code: product.product_code,
+        brand_name: product.brand_name,
+      }]);
+
       setBarcodeSearchResult(null);
-      message.success(`${product.product_name}이(가) 선택되었습니다.`);
+      message.success(`${product.product_name} (${barcodeSearchResult.size}) +1 추가됨`);
     }
   };
 
@@ -255,31 +326,42 @@ const PurchaseFormPage: React.FC = () => {
 
     // 바코드 상품을 바로 items에 추가 (구매가는 나중에 입력하도록)
     setTimeout(() => {
-      // 기존 selectedProduct가 있으면 먼저 items에 추가
-      if (selectedProduct && selectedProductId && Object.keys(sizeQuantityMap).some(size => sizeQuantityMap[size] > 0)) {
-        const validSizes = Object.entries(sizeQuantityMap).filter(([_, qty]) => qty > 0);
-        const existingItems = validSizes.map(([size, quantity]) => ({
-          product_id: selectedProductId,
-          size,
-          quantity,
-          purchase_price: purchasePrice || 0,
-          product_name: selectedProduct.product_name,
-          product_code: selectedProduct.product_code,
-          brand_name: selectedProduct.brand_name,
-        }));
-        setItems(prev => [...prev, ...existingItems]);
-      }
+      // 한 번에 모든 items 업데이트
+      setItems(prev => {
+        const newItems = [...prev];
 
-      // 새 바코드 상품을 items에 추가
-      setItems(prev => [...prev, {
-        product_id: newProduct.id,
-        size: barcodeInfo.size,
-        quantity: 1,
-        purchase_price: 0, // 구매가는 나중에 입력
-        product_name: newProduct.product_name,
-        product_code: newProduct.product_code,
-        brand_name: newProduct.brand_name,
-      }]);
+        // 기존 selectedProduct가 있으면 먼저 items에 추가
+        if (selectedProduct && selectedProductId && Object.keys(sizeQuantityMap).some(size => sizeQuantityMap[size] > 0)) {
+          const validSizes = Object.entries(sizeQuantityMap).filter(([_, qty]) => qty > 0);
+          const existingItems = validSizes.map(([size, quantity]) => ({
+            product_id: selectedProductId,
+            size,
+            quantity,
+            purchase_price: purchasePrice || 0,
+            product_name: selectedProduct.product_name,
+            product_code: selectedProduct.product_code,
+            brand_name: selectedProduct.brand_name,
+          }));
+          newItems.push(...existingItems);
+          console.log('Added existing product items:', existingItems);
+        }
+
+        // 새 바코드 상품을 items에 추가
+        const newBarCodeItem = {
+          product_id: newProduct.id,
+          size: barcodeInfo.size,
+          quantity: 1,
+          purchase_price: 0, // 구매가는 나중에 입력
+          product_name: newProduct.product_name,
+          product_code: newProduct.product_code,
+          brand_name: newProduct.brand_name,
+        };
+        newItems.push(newBarCodeItem);
+        console.log('Added new barcode item:', newBarCodeItem);
+        console.log('Total items now:', newItems);
+
+        return newItems;
+      });
 
       // 상품 추가 폼 초기화
       setSelectedProductId('');
@@ -377,14 +459,24 @@ const PurchaseFormPage: React.FC = () => {
     }
   };
 
-  const loadNextTransactionNo = async () => {
+  const loadNextTransactionNo = async (cardType?: string) => {
     try {
-      const nextNo = await purchaseService.getNextTransactionNo();
+      const nextNo = await purchaseService.getNextTransactionNo(cardType);
       form.setFieldsValue({ transaction_no: nextNo });
     } catch (error) {
       console.error('Failed to get next transaction no:', error);
       // 에러가 발생해도 사용자가 직접 입력할 수 있으므로 경고만 표시
       console.log('거래번호를 자동으로 가져올 수 없습니다. 직접 입력해주세요.');
+    }
+  };
+
+  // 카드 선택 시 거래번호 재생성
+  const handleFormValuesChange = (changedValues: any) => {
+    if (changedValues.payment_card_id) {
+      const selectedCard = cards.find(c => c.id === changedValues.payment_card_id);
+      if (selectedCard) {
+        loadNextTransactionNo(selectedCard.card_type);
+      }
     }
   };
 
@@ -851,13 +943,25 @@ const PurchaseFormPage: React.FC = () => {
       dataIndex: 'quantity',
       key: 'quantity',
       width: 100,
-      render: (quantity: number) => quantity || 1,
+      render: (quantity: number, record: any, index: number) => (
+        <InputNumber
+          min={1}
+          value={quantity || 1}
+          onChange={(value) => {
+            const newItems = [...items];
+            newItems[index].quantity = value || 1;
+            setItems(newItems);
+          }}
+          size="small"
+          style={{ width: '100%' }}
+        />
+      ),
     },
     {
       title: '구매가',
       dataIndex: 'purchase_price',
       key: 'purchase_price',
-      width: 120,
+      width: 160,
       align: 'right',
       render: (price: number, record: any, index: number) => (
         <InputNumber
@@ -871,8 +975,8 @@ const PurchaseFormPage: React.FC = () => {
           parser={(value) => value!.replace(/₩\s?|(,*)/g, '') as any}
           min={0}
           step={1000}
-          size="small"
-          style={{ width: '100%' }}
+          size="large"
+          style={{ width: '100%', height: '36px' }}
         />
       ),
     },
@@ -908,14 +1012,14 @@ const PurchaseFormPage: React.FC = () => {
 
   return (
     <div style={{ padding: '24px' }}>
-    <Card>
+    <AntCard>
       <Form
         form={form}
         layout="vertical"
         onFinish={handleSubmit}
+        onValuesChange={handleFormValuesChange}
         initialValues={{
           purchase_date: dayjs(),
-          payment_type: PaymentType.CORP_CARD,
         }}
       >
         <div>
@@ -940,16 +1044,16 @@ const PurchaseFormPage: React.FC = () => {
                 </Form.Item>
 
                 <Form.Item
-                  name="payment_type"
-                  label="결제방식"
-                  rules={[{ required: true, message: '결제방식을 선택해주세요' }]}
+                  name="payment_card_id"
+                  label="결제 카드"
+                  rules={[{ required: true, message: '결제 카드를 선택해주세요' }]}
                 >
-                  <Select>
-                    <Option value={PaymentType.CORP_CARD}>법인카드</Option>
-                    <Option value={PaymentType.CORP_ACCOUNT}>법인계좌</Option>
-                    <Option value={PaymentType.PERSONAL_CARD}>개인카드</Option>
-                    <Option value={PaymentType.PERSONAL_CARD_INSER}>개인카드(인서)</Option>
-                    <Option value={PaymentType.PERSONAL_CARD_DAHEE}>개인카드(다희)</Option>
+                  <Select placeholder="카드를 선택하세요">
+                    {cards.map(card => (
+                      <Option key={card.id} value={card.id}>
+                        [{CARD_TYPE_LABELS[card.card_type]}] - [{CARD_ISSUER_LABELS[card.card_issuer]}] - [{card.owner_name}] - ****-****-****-{card.card_number}
+                      </Option>
+                    ))}
                   </Select>
                 </Form.Item>
 
@@ -1147,7 +1251,7 @@ const PurchaseFormPage: React.FC = () => {
               </div>
 
               {/* 바코드 검색 */}
-              <Card
+              <AntCard
                 title="바코드 스캔으로 상품 추가"
                 size="small"
                 style={{ marginBottom: 24 }}
@@ -1164,7 +1268,7 @@ const PurchaseFormPage: React.FC = () => {
                   🔍 페이지 어디서든 바코드 리더기로 스캔하면 자동으로 상품이 추가됩니다
                 </div>
                 {barcodeSearchResult && (
-                  <Card size="small" style={{ marginTop: 16, backgroundColor: '#f0f9ff' }}>
+                  <AntCard size="small" style={{ marginTop: 16, backgroundColor: '#f0f9ff' }}>
                     <Row gutter={16}>
                       <Col span={12}>
                         <div><strong>상품명:</strong> {barcodeSearchResult.product_name}</div>
@@ -1183,229 +1287,17 @@ const PurchaseFormPage: React.FC = () => {
                     >
                       이 상품으로 추가
                     </Button>
-                  </Card>
+                  </AntCard>
                 )}
-              </Card>
+              </AntCard>
 
-              {/* 상품 추가 */}
-              <Card
-                title="상품 추가"
+
+              {/* 추가된 상품 목록 */}
+              <AntCard
+                title={`추가된 상품 (${items.length}건)`}
                 size="small"
                 style={{ marginBottom: 24 }}
               >
-                <div style={{ marginBottom: 16 }}>
-                  <div style={{ marginBottom: 8 }}>
-                    <label>상품 선택</label>
-                  </div>
-                  <Select
-                    showSearch
-                    placeholder="상품을 선택하세요"
-                    style={{ width: '100%' }}
-                    value={selectedProductId || undefined}
-                    onChange={handleProductChange}
-                    labelInValue={false}
-                    optionLabelProp="label"
-                    filterOption={(input, option) => {
-                      const product = products.find(p => p.id === option?.value);
-                      if (!product) return false;
-                      const searchText = `${product.product_code} ${product.brand_name || ''} ${product.product_name}`.toLowerCase();
-                      return searchText.includes(input.toLowerCase());
-                    }}
-                    optionRender={(option) => {
-                      const product = products.find(p => p.id === option.value);
-                      if (!product) return null;
-
-                      const imageUrl = product.brand_name && product.product_code
-                        ? getFileUrl(`/uploads/products/${product.brand_name}/${product.product_code}.png`)
-                        : null;
-
-                      return (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          {imageUrl ? (
-                            <img
-                              src={imageUrl}
-                              alt={product.product_name}
-                              style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 4 }}
-                              onError={(e) => {
-                                (e.target as HTMLImageElement).style.display = 'none';
-                              }}
-                            />
-                          ) : (
-                            <div style={{
-                              width: 40,
-                              height: 40,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              backgroundColor: '#f0f0f0',
-                              borderRadius: 4,
-                              fontSize: 16
-                            }}>
-                              📦
-                            </div>
-                          )}
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontSize: 12, color: '#666' }}>
-                              {product.product_code}
-                            </div>
-                            <div>
-                              <span style={{ fontWeight: 500 }}>[{product.brand_name}]</span> {product.product_name}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    }}
-                    options={[
-                      // 바코드로 선택된 상품 (products 배열에 없을 수 있음)
-                      ...(selectedProduct && !products.find(p => p.id === selectedProductId) ? [{
-                        label: `[${selectedProduct.brand_name || '-'}] ${selectedProduct.product_name}`,
-                        value: selectedProduct.id,
-                      }] : []),
-                      // 기존 상품 목록
-                      ...products.map(product => ({
-                        label: `[${product.brand_name}] ${product.product_name}`,
-                        value: product.id,
-                      }))
-                    ]}
-                  />
-                </div>
-
-                {/* 선택된 상품 정보 및 사이즈 */}
-                {selectedProduct && Object.keys(sizeQuantityMap).length > 0 && (
-                  <Card size="small" style={{ marginBottom: 16, backgroundColor: '#fafafa' }}>
-                    <Row gutter={16}>
-                      <Col span={6}>
-                        {selectedProduct.brand_name && selectedProduct.product_code && (
-                          <img
-                            src={getFileUrl(`/uploads/products/${selectedProduct.brand_name}/${selectedProduct.product_code}.png`)}
-                            alt={selectedProduct.product_name}
-                            style={{ width: '100%', maxHeight: 120, objectFit: 'cover', borderRadius: 4 }}
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).style.display = 'none';
-                            }}
-                          />
-                        )}
-                      </Col>
-                      <Col span={18}>
-                        <div style={{ marginBottom: 8 }}>
-                          <div style={{ fontSize: '12px', color: '#999' }}>상품코드</div>
-                          <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#000' }}>
-                            {selectedProduct.product_code}
-                          </div>
-                        </div>
-                        <div style={{ marginBottom: 8 }}>
-                          <div style={{ fontSize: '12px', color: '#999' }}>상품명</div>
-                          <div style={{ fontSize: '14px', color: '#000' }}>
-                            {selectedProduct.product_name}
-                          </div>
-                        </div>
-                        <div>
-                          <div style={{ fontSize: '12px', color: '#999', marginBottom: 4 }}>선택된 사이즈</div>
-                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                            {Object.entries(sizeQuantityMap).map(([size, qty]) =>
-                              qty > 0 && (
-                                <Tag key={size} color="blue">
-                                  {getSizeDisplay(size)} (×{qty})
-                                </Tag>
-                              )
-                            )}
-                          </div>
-                        </div>
-                      </Col>
-                    </Row>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: 12 }}>
-                      {Object.entries(sizeQuantityMap).map(([size, qty]) => (
-                        qty > 0 && (
-                          <div key={size} style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            padding: '8px 12px',
-                            border: '1px solid #d9d9d9',
-                            borderRadius: '4px',
-                            backgroundColor: '#fff'
-                          }}>
-                            <div style={{ fontSize: '13px', color: '#666', minWidth: '60px' }}>
-                              {getSizeDisplay(size)}
-                            </div>
-                            <InputNumber
-                              min={1}
-                              value={qty}
-                              onChange={(val) => handleSizeQuantityChange(size, val || 1)}
-                              style={{ width: '50px' }}
-                              size="small"
-                            />
-                          </div>
-                        )
-                      ))}
-                    </div>
-                  </Card>
-                )}
-
-                {/* 구매가 입력 (필수) */}
-                {selectedProduct && Object.keys(sizeQuantityMap).length > 0 && (
-                  <div style={{
-                    marginBottom: 16,
-                    padding: '16px',
-                    backgroundColor: '#fff7e6',
-                    border: '2px solid #ff7a45',
-                    borderRadius: '6px'
-                  }}>
-                    <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: '16px', fontWeight: 'bold', color: '#ff7a45' }}>⚠</span>
-                      <label style={{ fontSize: '15px', fontWeight: 'bold', color: '#ff7a45', margin: 0 }}>
-                        구매가 입력 (필수)
-                      </label>
-                    </div>
-                    <InputNumber
-                      min={0}
-                      value={purchasePrice}
-                      onChange={(val) => setPurchasePrice(val || 0)}
-                      style={{ width: '100%' }}
-                      size="large"
-                      formatter={value => `₩${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                      placeholder="구매가를 입력하세요"
-                      status={purchasePrice === 0 ? 'error' : ''}
-                    />
-                  </div>
-                )}
-
-                {/* 등록 버튼 */}
-                {selectedProduct && Object.keys(sizeQuantityMap).length > 0 && (
-                  <div style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    padding: '12px',
-                    backgroundColor: '#f5f5f5',
-                    borderRadius: '4px',
-                    marginBottom: 16
-                  }}>
-                    <div style={{ fontSize: '16px', fontWeight: 500 }}>
-                      총 수량: <span style={{ color: '#1890ff', fontSize: '18px' }}>{getTotalQuantity()}</span>개
-                    </div>
-                    <Button
-                      type="primary"
-                      icon={<CheckCircleOutlined />}
-                      onClick={handleAddItems}
-                      disabled={Object.values(sizeQuantityMap).every(qty => qty === 0) || purchasePrice === 0}
-                      size="large"
-                      style={{ backgroundColor: '#ff7a45', borderColor: '#ff7a45' }}
-                    >
-                      추가
-                    </Button>
-                  </div>
-                )}
-              </Card>
-
-              {/* 추가된 상품 목록 */}
-              {items.length > 0 && (
-                <Card
-                  title={`추가된 상품 (${items.length}건)`}
-                  size="small"
-                  style={{ marginBottom: 24 }}
-                >
                   <Table
                     columns={columns}
                     dataSource={items}
@@ -1434,8 +1326,7 @@ const PurchaseFormPage: React.FC = () => {
                       구매 등록
                     </Button>
                   </div>
-                </Card>
-              )}
+                </AntCard>
           </Space>
         </div>
       </Form>
@@ -1605,7 +1496,7 @@ const PurchaseFormPage: React.FC = () => {
         onSuccess={handleNewProductRegistered}
         onCancel={() => setUnregisteredBarcodeModalVisible(false)}
       />
-    </Card>
+    </AntCard>
     </div>
   );
 };

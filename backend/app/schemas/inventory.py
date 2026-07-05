@@ -89,7 +89,6 @@ class InventoryAdjustmentList(BaseModel):
 class InventoryDetail(Inventory):
     product_name: str
     brand: Optional[str] = ''
-    category: Optional[str] = ''
     size: Optional[str] = None
     color: Optional[str] = None
     sku_code: Optional[str] = None

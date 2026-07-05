@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Card,
+  Card as AntCard,
   Form,
   Input,
   DatePicker,
@@ -32,6 +32,8 @@ import { barcodeService, BarcodeSearchResult } from '../../services/barcode';
 import { BarcodeInput } from '../../components/BarcodeInput';
 import { UnregisteredBarcodeModal } from '../../components/UnregisteredBarcodeModal';
 import { productService } from '../../services/product';
+import { cardService } from '../../services/card';
+import { Card as CardType, CARD_ISSUER_LABELS, CARD_TYPE_LABELS } from '../../types/card';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -73,6 +75,7 @@ const SaleFormPageNew: React.FC = () => {
   const [inventoryItems, setInventoryItems] = useState<InventoryDetail[]>([]);
   const [groupedInventory, setGroupedInventory] = useState<GroupedInventory[]>([]);
   const [selectedProducts, setSelectedProducts] = useState<SaleItemCreate[]>([]);
+  const [cards, setCards] = useState<CardType[]>([]);
 
   // 상품 추가 폼 상태
   const [selectedProductId, setSelectedProductId] = useState<string>('');
@@ -90,6 +93,7 @@ const SaleFormPageNew: React.FC = () => {
 
   useEffect(() => {
     fetchInventoryItems();
+    loadCards();
     if (isEditMode) {
       fetchSaleData();
     }
@@ -199,6 +203,15 @@ const SaleFormPageNew: React.FC = () => {
     // 재고 목록 새로고침
     fetchInventoryItems();
     message.success('새 상품이 등록되었습니다. 재고 목록이 새로고침됩니다.');
+  };
+
+  const loadCards = async () => {
+    try {
+      const response = await cardService.getCards({ limit: 1000, is_active: true });
+      setCards(response.items || []);
+    } catch (error) {
+      console.error('Failed to load cards:', error);
+    }
   };
 
   const fetchSaleData = async () => {
@@ -674,7 +687,7 @@ const SaleFormPageNew: React.FC = () => {
 
   return (
     <div style={{ padding: '16px' }}>
-      <Card bodyStyle={{ padding: '16px' }}>
+      <AntCard bodyStyle={{ padding: '16px' }}>
         <Form
           form={form}
           layout="vertical"
@@ -684,7 +697,7 @@ const SaleFormPageNew: React.FC = () => {
           }}
         >
           {/* 판매 기본 정보 */}
-          <Card
+          <AntCard
             title="판매 정보"
             size="small"
             style={{ marginBottom: 24 }}
@@ -709,6 +722,24 @@ const SaleFormPageNew: React.FC = () => {
               <Col span={8}>
                 <Form.Item name="customer_contact" label="연락처">
                   <Input placeholder="연락처를 입력하세요" />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            <Row gutter={16} style={{ marginTop: 8 }}>
+              <Col span={12}>
+                <Form.Item
+                  name="payment_card_id"
+                  label="결제 카드"
+                  rules={[{ required: true, message: '결제 카드를 선택해주세요' }]}
+                >
+                  <Select placeholder="카드를 선택하세요">
+                    {cards.map(card => (
+                      <Option key={card.id} value={card.id}>
+                        [{CARD_TYPE_LABELS[card.card_type]}] - [{CARD_ISSUER_LABELS[card.card_issuer]}] - [{card.owner_name}] - ****-****-****-{card.card_number}
+                      </Option>
+                    ))}
+                  </Select>
                 </Form.Item>
               </Col>
             </Row>
@@ -759,10 +790,10 @@ const SaleFormPageNew: React.FC = () => {
                 )}
               </Col>
             </Row>
-          </Card>
+          </AntCard>
 
           {/* 바코드 검색 */}
-          <Card
+          <AntCard
             title="바코드 스캔으로 상품 추가"
             size="small"
             style={{ marginBottom: 24 }}
@@ -773,7 +804,7 @@ const SaleFormPageNew: React.FC = () => {
               placeholder="바코드 리더기로 스캔하거나 수동으로 입력..."
             />
             {barcodeSearchResult && (
-              <Card size="small" style={{ marginTop: 16, backgroundColor: '#f0f9ff' }}>
+              <AntCard size="small" style={{ marginTop: 16, backgroundColor: '#f0f9ff' }}>
                 <Row gutter={16}>
                   <Col span={12}>
                     <div><strong>상품명:</strong> {barcodeSearchResult.product_name}</div>
@@ -792,12 +823,12 @@ const SaleFormPageNew: React.FC = () => {
                 >
                   이 상품으로 추가
                 </Button>
-              </Card>
+              </AntCard>
             )}
-          </Card>
+          </AntCard>
 
           {/* 상품 추가 */}
-          <Card
+          <AntCard
             title="상품 추가"
             size="small"
             style={{ marginBottom: 24 }}
@@ -944,9 +975,9 @@ const SaleFormPageNew: React.FC = () => {
                 </Col>
               </Row>
             )}
-          </Card>
+          </AntCard>
         </Form>
-      </Card>
+      </AntCard>
 
       {/* 확인 모달 */}
       <Modal

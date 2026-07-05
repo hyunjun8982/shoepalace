@@ -114,7 +114,6 @@ def search_by_barcode(
             product_code=product.product_code,
             product_name=product.product_name,
             brand_name=product.brand.name if product.brand else None,
-            category=product.category,
             image_url=product.image_url,
             available_qty=available_qty
         )

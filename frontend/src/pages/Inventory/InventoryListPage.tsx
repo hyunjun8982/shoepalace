@@ -62,7 +62,6 @@ interface GroupedInventory {
   product_id: string;
   product_name: string;
   brand: string;
-  category: string;
   sku_code: string;
   warehouse_name?: string;
   warehouse_location?: string;
@@ -100,7 +99,6 @@ const InventoryListPage: React.FC = () => {
   });
   const [filters, setFilters] = useState({
     search: '',
-    category: undefined as string | undefined,
     low_stock_only: false,
   });
   const [adjustModalVisible, setAdjustModalVisible] = useState(false);
@@ -195,7 +193,6 @@ const InventoryListPage: React.FC = () => {
             product_id: item.product_id,
             product_name: item.product_name,
             brand: item.brand,
-            category: item.category,
             sku_code: item.sku_code,
             warehouse_name: item.warehouse_name,
             warehouse_location: item.warehouse_location,
@@ -505,24 +502,6 @@ const InventoryListPage: React.FC = () => {
       },
     },
     {
-      title: '카테고리',
-      dataIndex: 'category',
-      key: 'category',
-      width: 100,
-      render: (category: string) => {
-        const categoryMap: Record<string, string> = {
-          'clothing': '의류',
-          'shoes': '신발',
-          'hats': '모자',
-          'socks': '양말',
-          'bags': '가방',
-          'accessories': '잡화',
-          'etc': '기타'
-        };
-        return categoryMap[category] || category || '-';
-      },
-    },
-    {
       title: '브랜드',
       dataIndex: 'brand',
       key: 'brand',
@@ -776,22 +755,6 @@ const InventoryListPage: React.FC = () => {
   }).slice(0, 7);
 
   // 카테고리별 재고 통계 (고정 순서)
-  const getCategoryInventory = (categoryName: string) => {
-    return allInventory
-      .filter(item => item.category === categoryName)
-      .reduce((sum, item) => sum + item.quantity, 0);
-  };
-
-  const categoryStats = [
-    { name: 'clothing', nameKr: '의류', count: getCategoryInventory('clothing') },
-    { name: 'shoes', nameKr: '신발', count: getCategoryInventory('shoes') },
-    { name: 'hats', nameKr: '모자', count: getCategoryInventory('hats') },
-    { name: 'socks', nameKr: '양말', count: getCategoryInventory('socks') },
-    { name: 'bags', nameKr: '가방', count: getCategoryInventory('bags') },
-    { name: 'accessories', nameKr: '잡화', count: getCategoryInventory('accessories') },
-    { name: 'etc', nameKr: '기타', count: getCategoryInventory('etc') },
-  ];
-
   // 통계 카드 스타일
   const cardStyle = {
     borderRadius: '8px',
@@ -897,40 +860,6 @@ const InventoryListPage: React.FC = () => {
               </Card>
             ))}
           </div>
-
-          {/* 카테고리별 재고 (하단) */}
-          <div style={{ display: 'flex', gap: '6px' }}>
-            {categoryStats.map((category) => (
-              <Card key={category.name} style={{
-                ...smallCardStyle,
-                flex: 1,
-                width: 0,
-                backgroundColor: '#ffffff'
-              }}>
-                <div style={{
-                  width: '100%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: '8px'
-                }}>
-                  <span style={{
-                    fontSize: 13,
-                    fontWeight: 500,
-                    color: '#0d1b2a',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis'
-                  }}>{category.nameKr}</span>
-                  <span style={{
-                    fontSize: 15,
-                    fontWeight: 'bold',
-                    color: '#0d1b2a'
-                  }}>{category.count}개</span>
-                </div>
-              </Card>
-            ))}
-          </div>
         </div>
       </div>
 
@@ -942,25 +871,13 @@ const InventoryListPage: React.FC = () => {
       >
         {/* 필터 영역 */}
         <Row gutter={16} style={{ marginBottom: 16 }}>
-          <Col span={8}>
+          <Col span={12}>
             <Search
               placeholder="상품명, 브랜드, SKU 검색"
               allowClear
               onSearch={(value) => setFilters({ ...filters, search: value })}
               style={{ width: '100%' }}
             />
-          </Col>
-          <Col span={4}>
-            <Select
-              placeholder="카테고리"
-              allowClear
-              style={{ width: '100%' }}
-              onChange={(value) => setFilters({ ...filters, category: value })}
-            >
-              <Option value="shoes">신발</Option>
-              <Option value="clothing">의류</Option>
-              <Option value="accessories">액세서리</Option>
-            </Select>
           </Col>
           <Col span={4}>
             <Select
@@ -1121,9 +1038,7 @@ const InventoryListPage: React.FC = () => {
                 <Button type="primary" icon={<EditOutlined />} onClick={() => {
                   setDetailEditMode(true);
                   const initialValues: any = {};
-                  const fixedSizes = selectedInventoryDetail.category === 'shoes'
-                    ? ['220', '225', '230', '235', '240', '245', '250', '255', '260', '265', '270', '275', '280', '285', '290', '295', '300', '305', '310', '315']
-                    : ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
+                  const fixedSizes = ['220', '225', '230', '235', '240', '245', '250', '255', '260', '265', '270', '275', '280', '285', '290', '295', '300', '305', '310', '315'];
 
                   const sizeMap = new Map();
                   selectedInventoryDetail.size_inventories?.forEach((item: any) => {
@@ -1160,9 +1075,7 @@ const InventoryListPage: React.FC = () => {
                 console.log('Form 제출 시작, values:', values);
                 console.log('selectedInventoryDetail:', selectedInventoryDetail);
 
-                const fixedSizes = selectedInventoryDetail.category === 'shoes'
-                  ? ['220', '225', '230', '235', '240', '245', '250', '255', '260', '265', '270', '275', '280', '285', '290', '295', '300', '305', '310', '315']
-                  : ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
+                const fixedSizes = ['220', '225', '230', '235', '240', '245', '250', '255', '260', '265', '270', '275', '280', '285', '290', '295', '300', '305', '310', '315'];
 
                 console.log('fixedSizes:', fixedSizes);
 
@@ -1288,10 +1201,6 @@ const InventoryListPage: React.FC = () => {
                           <strong style={{ color: '#595959' }}>브랜드:</strong>{' '}
                           <span style={{ fontSize: 15 }}>{selectedInventoryDetail.brand}</span>
                         </div>
-                        <div style={{ marginBottom: 12 }}>
-                          <strong style={{ color: '#595959' }}>카테고리:</strong>{' '}
-                          <span style={{ fontSize: 15 }}>{selectedInventoryDetail.category}</span>
-                        </div>
                         <div>
                           <strong style={{ color: '#595959' }}>상품코드:</strong>{' '}
                           <Tag color="geekblue" style={{ fontSize: 13 }}>{selectedInventoryDetail.sku_code}</Tag>
@@ -1318,12 +1227,8 @@ const InventoryListPage: React.FC = () => {
                   </h3>
                   {(() => {
                     // 카테고리 확인
-                    const isShoes = selectedInventoryDetail.category === 'shoes';
-
-                    // 고정 사이즈 정의
-                    const fixedSizes = isShoes
-                      ? ['220', '225', '230', '235', '240', '245', '250', '255', '260', '265', '270', '275', '280', '285', '290', '295', '300', '305', '310', '315']
-                      : ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
+                    // 고정 사이즈 정의 (신발 사이즈)
+                    const fixedSizes = ['220', '225', '230', '235', '240', '245', '250', '255', '260', '265', '270', '275', '280', '285', '290', '295', '300', '305', '310', '315'];
 
                     // 사이즈별 데이터 맵 생성
                     const sizeMap = new Map();
@@ -1335,9 +1240,9 @@ const InventoryListPage: React.FC = () => {
                     const locations = selectedInventoryDetail.size_inventories?.map((item: any) => item.location || '-') || [];
                     const uniqueLocations = Array.from(new Set(locations));
 
-                    // 신발은 10개씩 2행, 의류는 모두 1행
-                    const firstRow = isShoes ? fixedSizes.slice(0, 10) : fixedSizes;
-                    const secondRow = isShoes ? fixedSizes.slice(10) : [];
+                    // 신발 사이즈는 10개씩 2행으로 표시
+                    const firstRow = fixedSizes.slice(0, 10);
+                    const secondRow = fixedSizes.slice(10);
 
                     const renderSizeRow = (sizes: string[], rowIndex: number) => {
                       const locationForRow = uniqueLocations[rowIndex] || '-';

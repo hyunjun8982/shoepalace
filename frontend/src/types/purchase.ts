@@ -49,6 +49,14 @@ export interface PurchaseItem {
   created_at?: string;
 }
 
+export interface PaymentCard {
+  id: string;
+  card_type: 'corp' | 'personal';
+  card_issuer: string;
+  card_number: string;
+  owner_name: string;
+}
+
 export interface Purchase {
   id: string;
   transaction_no: string;
@@ -60,6 +68,8 @@ export interface Purchase {
   is_confirmed: boolean;
   confirmed_at?: string;
   payment_type: PaymentType;
+  payment_card_id?: string;  // 결제 카드 ID
+  payment_card?: PaymentCard | null;  // 결제 카드 정보
   supplier?: string;
   receipt_url?: string;
   receipt_urls?: string[];  // 다중 영수증 URL

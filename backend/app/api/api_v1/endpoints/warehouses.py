@@ -259,7 +259,6 @@ def get_warehouse_inventory(
                     'product_id': str(inv.product_id),
                     'product_name': inv.product.product_name,
                     'product_code': inv.product.product_code,
-                    'category': inv.product.category,
                     'brand': inv.product.brand.name if inv.product.brand else None,
                     'sizes': []
                 }

@@ -56,10 +56,9 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
 
       document.addEventListener('keydown', blockBarcodeInput, true); // 캡처 페이즈
 
-      // 바코드 값을 읽기 전용 필드로 설정 및 카테고리 기본값 설정
+      // 바코드 값을 읽기 전용 필드로 설정
       form.setFieldsValue({
         barcode,
-        category: 'shoes' // 기본값: 신발
       });
 
       // 브랜드 로드 후 포이즌 정보 로드
@@ -106,7 +105,6 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
         // 포이즌 정보로 필드 자동 채우기
         const formValues: any = {
           product_name: poizonData.title || result.title,
-          category: 'shoes', // 카테고리 기본값 명시적으로 설정
         };
 
         // 상품코드 설정 (article_number가 있으면)
@@ -220,7 +218,6 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
           brand_id: values.brand_id,
           product_code: values.product_code,
           product_name: values.product_name,
-          category: values.category,
           description: values.description,
           image_url: poizonInfo?.logo_url,  // 포이즌 이미지 URL
         });
@@ -240,7 +237,6 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
             product_name: values.product_name,
             product_code: values.product_code,
             brand_id: values.brand_id,
-            category: values.category,
             description: values.description,
             image_url: poizonInfo?.logo_url,  // 포이즌 이미지 URL
           });
@@ -391,47 +387,26 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
           />
         </Form.Item>
 
-        <Row gutter={16}>
-          <Col xs={24} sm={12}>
-            <Form.Item
-              label="브랜드"
-              name="brand_id"
-              rules={[{ required: true, message: '브랜드는 필수입니다' }]}
-            >
-              <Select
-                placeholder="브랜드 선택"
-                loading={brands_loading}
-                options={[
-                  ...brands.map(b => ({
-                    value: b.id,
-                    label: b.name,
-                  })),
-                  {
-                    value: 'etc',
-                    label: '기타',
-                  }
-                ]}
-              />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item
-              label="카테고리"
-              name="category"
-              rules={[{ required: true, message: '카테고리는 필수입니다' }]}
-            >
-              <Select placeholder="카테고리 선택">
-                <Select.Option value="shoes">👟 신발 (Shoes)</Select.Option>
-                <Select.Option value="clothing">👕 의류 (Clothing)</Select.Option>
-                <Select.Option value="bags">👜 가방 (Bags)</Select.Option>
-                <Select.Option value="hats">🎩 모자 (Hats)</Select.Option>
-                <Select.Option value="accessories">⌚ 악세서리 (Accessories)</Select.Option>
-                <Select.Option value="socks">🧦 양말 (Socks)</Select.Option>
-                <Select.Option value="other">📦 기타 (Other)</Select.Option>
-              </Select>
-            </Form.Item>
-          </Col>
-        </Row>
+        <Form.Item
+          label="브랜드"
+          name="brand_id"
+          rules={[{ required: true, message: '브랜드는 필수입니다' }]}
+        >
+          <Select
+            placeholder="브랜드 선택"
+            loading={brands_loading}
+            options={[
+              ...brands.map(b => ({
+                value: b.id,
+                label: b.name,
+              })),
+              {
+                value: 'etc',
+                label: '기타',
+              }
+            ]}
+          />
+        </Form.Item>
 
         <Form.Item
           label="설명 (선택사항)"

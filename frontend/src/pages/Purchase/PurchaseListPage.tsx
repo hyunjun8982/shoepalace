@@ -29,7 +29,9 @@ import {
   FileTextOutlined,
 } from '@ant-design/icons';
 import { Purchase, PaymentType, PurchaseStatus } from '../../types/purchase';
+import { Card as CardType, CARD_ISSUER_LABELS } from '../../types/card';
 import { purchaseService } from '../../services/purchase';
+import { cardService } from '../../services/card';
 import { getColumns } from './PurchaseListPageColumns';
 import { brandService, Brand } from '../../services/brand';
 import { userService } from '../../services/user';
@@ -58,6 +60,7 @@ const PurchaseListPage: React.FC = () => {
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [cards, setCards] = useState<CardType[]>([]);
   const [deliveryNoteModalVisible, setDeliveryNoteModalVisible] = useState(false);
 
   // 필터 상태
@@ -69,8 +72,8 @@ const PurchaseListPage: React.FC = () => {
     }
     return null;
   });
-  const [paymentType, setPaymentType] = useState<string[]>(() => {
-    const saved = localStorage.getItem('purchaseListPaymentType');
+  const [cardFilter, setCardFilter] = useState<string[]>(() => {
+    const saved = localStorage.getItem('purchaseListCardFilter');
     return saved ? JSON.parse(saved) : [];
   });
   const [brandFilter, setBrandFilter] = useState<string[]>(() => {
@@ -100,6 +103,16 @@ const PurchaseListPage: React.FC = () => {
     }
   };
 
+  // 카드 목록 로드
+  const loadCards = async () => {
+    try {
+      const data = await cardService.getCards({ limit: 1000, is_active: true });
+      setCards(data.items);
+    } catch (error) {
+      console.error('카드 목록 로드 실패:', error);
+    }
+  };
+
   // 데이터 로드
   const fetchPurchases = async () => {
     setLoading(true);
@@ -111,7 +124,6 @@ const PurchaseListPage: React.FC = () => {
           start_date: dateRange[0].format('YYYY-MM-DD'),
           end_date: dateRange[1].format('YYYY-MM-DD'),
         }),
-        ...(paymentType.length > 0 && { payment_type: paymentType }),
         ...(brandFilter.length > 0 && { brand_name: brandFilter }),
         ...(buyerFilter.length > 0 && { buyer_id: buyerFilter }),
         ...(searchText && { search: searchText }),
@@ -148,11 +160,12 @@ const PurchaseListPage: React.FC = () => {
     fetchBrands();
     fetchUsers();
     fetchAllPurchases(); // 통계용 전체 데이터 로드
+    loadCards(); // 카드 목록 로드
   }, []);
 
   useEffect(() => {
     fetchPurchases();
-  }, [pagination.current, pagination.pageSize, dateRange, paymentType, brandFilter, buyerFilter, searchText]);
+  }, [pagination.current, pagination.pageSize, dateRange, cardFilter, brandFilter, buyerFilter, searchText]);
 
   // 상태를 localStorage에 저장
   useEffect(() => {
@@ -171,8 +184,8 @@ const PurchaseListPage: React.FC = () => {
   }, [dateRange]);
 
   useEffect(() => {
-    localStorage.setItem('purchaseListPaymentType', JSON.stringify(paymentType));
-  }, [paymentType]);
+    localStorage.setItem('purchaseListCardFilter', JSON.stringify(cardFilter));
+  }, [cardFilter]);
 
   useEffect(() => {
     localStorage.setItem('purchaseListBrandFilter', JSON.stringify(brandFilter));
@@ -644,25 +657,29 @@ const PurchaseListPage: React.FC = () => {
               ))}
             </Select>
           </Col>
-          <Col span={3}>
+          <Col span={4}>
             <Select
               mode="multiple"
               style={{ width: '100%' }}
-              placeholder="결제방식"
+              placeholder="결제카드"
               allowClear
-              value={paymentType}
-              onChange={setPaymentType}
+              value={cardFilter}
+              onChange={setCardFilter}
+              showSearch
+              filterOption={(input, option) =>
+                String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
+              }
               maxTagCount={0}
-              maxTagPlaceholder={(omittedValues) => `결제방식 ${omittedValues.length}개`}
+              maxTagPlaceholder={(omittedValues) => `결제카드 ${omittedValues.length}개`}
             >
-              <Option value="corp_card">법인카드</Option>
-              <Option value="corp_account">법인계좌</Option>
-              <Option value="personal_card">개인카드</Option>
-              <Option value="personal_card_inser">개인카드(인서)</Option>
-              <Option value="personal_card_dahee">개인카드(다희)</Option>
+              {cards.map(card => (
+                <Option key={card.id} value={card.id}>
+                  {card.owner_name} - {CARD_ISSUER_LABELS[card.card_issuer] || card.card_issuer}
+                </Option>
+              ))}
             </Select>
           </Col>
-          <Col span={3}>
+          <Col span={2}>
             <Select
               mode="multiple"
               style={{ width: '100%' }}

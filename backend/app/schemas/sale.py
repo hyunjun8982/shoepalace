@@ -10,7 +10,6 @@ class SaleItemBase(BaseModel):
     product_name: Optional[str] = None
     product_code: Optional[str] = None
     brand_name: Optional[str] = None
-    category: Optional[str] = None
     size: Optional[str] = None
     quantity: int = 1
     seller_sale_price_original: Decimal
@@ -46,6 +45,7 @@ class SaleItem(SaleItemBase):
 
 class SaleBase(BaseModel):
     sale_date: date
+    payment_card_id: Optional[str] = None  # 결제 카드 ID
     customer_name: Optional[str] = None
     customer_contact: Optional[str] = None
     notes: Optional[str] = None
@@ -57,6 +57,7 @@ class SaleCreate(SaleBase):
 
 class SaleUpdate(BaseModel):
     sale_date: Optional[date] = None
+    payment_card_id: Optional[str] = None  # 결제 카드 ID
     customer_name: Optional[str] = None
     customer_contact: Optional[str] = None
     total_company_amount: Optional[Decimal] = None
@@ -78,6 +79,7 @@ class Sale(SaleBase):
     created_at: datetime
     updated_at: datetime
     items: List[SaleItem] = []
+    payment_card: Optional[dict] = None  # 결제 카드 정보
 
     @field_validator('id', 'seller_id', mode='before')
     @classmethod

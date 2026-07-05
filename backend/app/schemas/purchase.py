@@ -39,7 +39,6 @@ class ProductInfo(BaseModel):
     id: str
     product_code: str
     product_name: str
-    category: Optional[str] = None
     size: Optional[str] = None
     color: Optional[str] = None
     brand_name: Optional[str] = None
@@ -93,7 +92,8 @@ class PurchaseItem(PurchaseItemBase):
 class PurchaseBase(BaseModel):
     transaction_no: str
     purchase_date: date
-    payment_type: PaymentType
+    payment_type: Optional[PaymentType] = None
+    payment_card_id: Optional[str] = None  # 결제 카드 ID
     supplier: Optional[str] = None
     receipt_url: Optional[str] = None
     receipt_urls: Optional[List[str]] = []  # 영수증 이미지 URL 목록 (다중)
@@ -102,7 +102,8 @@ class PurchaseBase(BaseModel):
 class PurchaseCreate(BaseModel):
     transaction_no: Optional[str] = None  # 자동 생성을 위해 옵셔널로 변경
     purchase_date: date
-    payment_type: PaymentType
+    payment_type: Optional[PaymentType] = None
+    payment_card_id: Optional[str] = None  # 결제 카드 ID
     supplier: Optional[str] = None
     receipt_url: Optional[str] = None
     receipt_urls: Optional[List[str]] = []  # 영수증 이미지 URL 목록 (다중)
@@ -115,6 +116,7 @@ class PurchaseUpdate(BaseModel):
     transaction_no: Optional[str] = None
     purchase_date: Optional[date] = None
     payment_type: Optional[PaymentType] = None
+    payment_card_id: Optional[str] = None  # 결제 카드 ID
     supplier: Optional[str] = None
     receipt_url: Optional[str] = None
     receipt_urls: Optional[List[str]] = None  # 영수증 이미지 URL 목록 (다중)
@@ -135,6 +137,7 @@ class Purchase(PurchaseBase):
     created_at: datetime
     updated_at: datetime
     items: List[PurchaseItem] = []
+    payment_card: Optional[Dict[str, Any]] = None  # 결제 카드 정보
 
     @field_validator('id', 'buyer_id', 'receiver_id', mode='before')
     @classmethod

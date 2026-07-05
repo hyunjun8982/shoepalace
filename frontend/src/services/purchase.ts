@@ -3,8 +3,10 @@ import { Purchase, PurchaseCreate, PurchaseUpdate } from '../types/purchase';
 
 export const purchaseService = {
   // 다음 거래번호 가져오기
-  async getNextTransactionNo(): Promise<string> {
-    const response = await api.get('/purchases/next-transaction-no');
+  async getNextTransactionNo(cardType?: string): Promise<string> {
+    const response = await api.get('/purchases/next-transaction-no', {
+      params: { card_type: cardType }
+    });
     return response.data.transaction_no;
   },
 

@@ -35,7 +35,6 @@ import { useNavigate } from 'react-router-dom';
 import { Product } from '../../types/product';
 import { productService } from '../../services/product';
 import { brandService, Brand } from '../../services/brand';
-import { categoryService, Category } from '../../services/category';
 import { useAuth } from '../../contexts/AuthContext';
 import { getBrandIconUrl } from '../../utils/imageUtils';
 import BrandManagementModal from '../../components/BrandManagement/BrandManagementModal';
@@ -51,7 +50,6 @@ const ProductListPage: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [allProducts, setAllProducts] = useState<Product[]>([]); // 통계용 전체 상품
   const [brands, setBrands] = useState<Brand[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState(0);
   const [pagination, setPagination] = useState({
@@ -60,7 +58,6 @@ const ProductListPage: React.FC = () => {
   });
   const [filters, setFilters] = useState({
     search: '',
-    categories: [] as string[],
     brands: [] as string[],
   });
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
@@ -85,7 +82,6 @@ const ProductListPage: React.FC = () => {
 
   useEffect(() => {
     fetchBrands();
-    fetchCategories();
     fetchAllProductsForStats(); // 통계용 전체 상품 조회
     fetchProducts();
   }, [pagination.current, pagination.pageSize, filters]);
@@ -96,15 +92,6 @@ const ProductListPage: React.FC = () => {
       setBrands(response.items);
     } catch (error) {
       console.error('브랜드 목록 조회 실패:', error);
-    }
-  };
-
-  const fetchCategories = async () => {
-    try {
-      const response = await categoryService.getCategories();
-      setCategories(response.items);
-    } catch (error) {
-      console.error('카테고리 목록 조회 실패:', error);
     }
   };
 
@@ -129,7 +116,6 @@ const ProductListPage: React.FC = () => {
         limit: pagination.pageSize,
         search: filters.search || undefined,
         brand_ids: filters.brands.length > 0 ? filters.brands.join(',') : undefined,
-        categories: filters.categories.length > 0 ? filters.categories.join(',') : undefined,
       });
       setProducts(response.items);
       setTotal(response.total);
@@ -237,24 +223,6 @@ const ProductListPage: React.FC = () => {
   };
 
   const columns: ColumnsType<Product> = [
-    {
-      title: '카테고리',
-      dataIndex: 'category',
-      key: 'category',
-      width: 80,
-      render: (category: string) => {
-        const categoryMap: { [key: string]: string } = {
-          clothing: '의류',
-          shoes: '신발',
-          hats: '모자',
-          socks: '양말',
-          bags: '가방',
-          accessories: '액세서리',
-          'Men Shoes': '남성 신발',
-        };
-        return <Tag color="blue" style={{ fontSize: '14px', padding: '4px 10px' }}>{categoryMap[category] || category}</Tag>;
-      },
-    },
     {
       title: '브랜드',
       dataIndex: 'brand_name',
@@ -405,11 +373,6 @@ const ProductListPage: React.FC = () => {
     }).length;
   };
 
-  // 특정 카테고리별 상품 수 계산 (전체 상품 기준)
-  const getCategoryCount = (category: string) => {
-    return allProducts.filter(p => p.category === category).length;
-  };
-
   // 브랜드별 상품 수와 아이콘 정보 추출
   const getBrandInfo = (brandName: string) => {
     const filteredProducts = allProducts.filter(p =>
@@ -440,17 +403,6 @@ const ProductListPage: React.FC = () => {
     if (b.count !== a.count) return b.count - a.count;
     return a.nameKr.localeCompare(b.nameKr, 'ko');
   }).slice(0, 7);
-
-  // 카테고리 통계 계산 (고정 순서)
-  const categoryStats = [
-    { name: 'clothing', nameKr: '의류', count: getCategoryCount('clothing') },
-    { name: 'shoes', nameKr: '신발', count: getCategoryCount('shoes') },
-    { name: 'hats', nameKr: '모자', count: getCategoryCount('hats') },
-    { name: 'socks', nameKr: '양말', count: getCategoryCount('socks') },
-    { name: 'bags', nameKr: '가방', count: getCategoryCount('bags') },
-    { name: 'accessories', nameKr: '잡화', count: getCategoryCount('accessories') },
-    { name: 'etc', nameKr: '기타', count: getCategoryCount('etc') },
-  ];
 
   // 통계 카드 스타일
   const cardStyle = {
@@ -558,39 +510,6 @@ const ProductListPage: React.FC = () => {
             ))}
           </div>
 
-          {/* 카테고리 통계 카드 (하단) */}
-          <div style={{ display: 'flex', gap: '6px' }}>
-            {categoryStats.map((category) => (
-              <Card key={category.name} style={{
-                ...smallCardStyle,
-                flex: 1,
-                width: 0,
-                backgroundColor: '#ffffff'
-              }}>
-                <div style={{
-                  width: '100%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: '8px'
-                }}>
-                  <span style={{
-                    fontSize: 13,
-                    fontWeight: 500,
-                    color: '#0d1b2a',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis'
-                  }}>{category.nameKr}</span>
-                  <span style={{
-                    fontSize: 15,
-                    fontWeight: 'bold',
-                    color: '#0d1b2a'
-                  }}>{category.count}개</span>
-                </div>
-              </Card>
-            ))}
-          </div>
         </div>
       </div>
 
@@ -609,23 +528,6 @@ const ProductListPage: React.FC = () => {
               onSearch={(value) => setFilters({ ...filters, search: value })}
               style={{ width: '100%' }}
             />
-          </Col>
-          <Col span={5}>
-            <Select
-              mode="multiple"
-              placeholder="카테고리 선택"
-              allowClear
-              style={{ width: '100%' }}
-              value={filters.categories}
-              onChange={(value) => setFilters({ ...filters, categories: value })}
-              maxTagCount="responsive"
-            >
-              {categories.map((category) => (
-                <Option key={category.id} value={category.name}>
-                  {category.icon} {category.name_kr}
-                </Option>
-              ))}
-            </Select>
           </Col>
           <Col span={5}>
             <Select

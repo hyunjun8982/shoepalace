@@ -25,6 +25,7 @@ class Sale(BaseModel):
     sale_number = Column(String(50), unique=True, nullable=False)  # 판매번호
     sale_date = Column(Date, nullable=False)
     seller_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    payment_card_id = Column(UUID(as_uuid=True), ForeignKey("cards.id"), nullable=True)
     customer_name = Column(String(100))
     customer_contact = Column(String(100))
     total_seller_amount = Column(Numeric(12, 2), default=0)
@@ -38,6 +39,7 @@ class Sale(BaseModel):
 
     # 관계 설정
     seller = relationship("User", back_populates="sales")
+    payment_card = relationship("Card", foreign_keys=[payment_card_id], back_populates="sales", lazy="select")
     items = relationship("SaleItem", back_populates="sale", cascade="all, delete-orphan")
 
 class SaleItem(BaseModel):

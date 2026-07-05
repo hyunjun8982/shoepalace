@@ -36,18 +36,23 @@ def cleanup_expired_receipt_tokens():
 
 @router.get("/next-transaction-no")
 def get_next_transaction_no(
+    card_type: str = Query(None, description="카드 타입: personal 또는 corp"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """다음 구매번호 생성 (P 접두사)"""
+    """다음 구매번호 생성 (P + 구분코드 + 날짜)"""
     from datetime import datetime
 
     # 오늘 날짜로 시작하는 구매번호 개수 확인
     today = datetime.now().strftime('%Y%m%d')
 
-    # 오늘 날짜의 가장 큰 번호 찾기 (P 접두사 포함)
+    # 카드 타입에 따른 구분코드
+    type_code = 'B' if card_type == 'corp' else 'C'  # B: 법인카드(Business), C: 개인카드(Card)
+
+    # 오늘 날짜의 가장 큰 번호 찾기 (P+구분코드+날짜 접두사 포함)
+    prefix = f"P{type_code}{today}-"
     last_purchase = db.query(Purchase).filter(
-        Purchase.transaction_no.like(f"P{today}-%")
+        Purchase.transaction_no.like(f"{prefix}%")
     ).order_by(Purchase.transaction_no.desc()).first()
 
     if last_purchase:
@@ -57,7 +62,7 @@ def get_next_transaction_no(
     else:
         next_num = 1
 
-    next_no = f"P{today}-{next_num:04d}"
+    next_no = f"{prefix}{next_num:04d}"
 
     return {"transaction_no": next_no}
 
@@ -131,10 +136,14 @@ def get_purchases(
         joinedload(Purchase.items).joinedload(PurchaseItem.product).joinedload(Product.brand),
         joinedload(Purchase.items).joinedload(PurchaseItem.warehouse),
         joinedload(Purchase.buyer),
-        joinedload(Purchase.receiver)
+        joinedload(Purchase.receiver),
+        joinedload(Purchase.payment_card)
     ).order_by(Purchase.purchase_date.desc()).offset(skip).limit(limit).all()
 
-    # buyer_name, receiver_name 및 product의 brand_name 추가
+    # buyer_name, receiver_name 및 product의 brand_name 추가, 카드 정보 변환
+    from fastapi.encoders import jsonable_encoder
+
+    response_items = []
     for purchase in purchases:
         if purchase.buyer:
             purchase.buyer_name = purchase.buyer.full_name
@@ -145,9 +154,24 @@ def get_purchases(
             if item.product and item.product.brand:
                 item.product.brand_name = item.product.brand.name
 
-    return PurchaseList(total=total, items=purchases)
+        # ORM 객체를 dict로 변환
+        purchase_dict = jsonable_encoder(purchase)
 
-@router.get("/{purchase_id}", response_model=PurchaseSchema)
+        # 카드 정보를 dict로 변환
+        if purchase.payment_card:
+            purchase_dict['payment_card'] = {
+                'id': str(purchase.payment_card.id),
+                'card_type': purchase.payment_card.card_type,
+                'card_issuer': purchase.payment_card.card_issuer,
+                'card_number': purchase.payment_card.card_number,
+                'owner_name': purchase.payment_card.owner_name,
+            }
+
+        response_items.append(purchase_dict)
+
+    return {"total": total, "items": response_items}
+
+@router.get("/{purchase_id}")
 def get_purchase(
     purchase_id: str,
     db: Session = Depends(get_db),
@@ -158,7 +182,8 @@ def get_purchase(
         joinedload(Purchase.items).joinedload(PurchaseItem.product).joinedload(Product.brand),
         joinedload(Purchase.items).joinedload(PurchaseItem.warehouse),
         joinedload(Purchase.buyer),
-        joinedload(Purchase.receiver)
+        joinedload(Purchase.receiver),
+        joinedload(Purchase.payment_card)
     ).filter(Purchase.id == purchase_id).first()
     if not purchase:
         raise HTTPException(status_code=404, detail="Purchase not found")
@@ -178,9 +203,24 @@ def get_purchase(
         if item.product and item.product.brand:
             item.product.brand_name = item.product.brand.name
 
-    return purchase
+    # 응답 데이터 변환
+    from fastapi.encoders import jsonable_encoder
 
-@router.post("/", response_model=PurchaseSchema)
+    response_data = jsonable_encoder(purchase)
+
+    # 카드 정보를 dict로 변환
+    if purchase.payment_card:
+        response_data['payment_card'] = {
+            'id': str(purchase.payment_card.id),
+            'card_type': purchase.payment_card.card_type,
+            'card_issuer': purchase.payment_card.card_issuer,
+            'card_number': purchase.payment_card.card_number,
+            'owner_name': purchase.payment_card.owner_name,
+        }
+
+    return response_data
+
+@router.post("/")
 def create_purchase(
     purchase_data: PurchaseCreate,
     db: Session = Depends(get_db),
@@ -230,6 +270,7 @@ def create_purchase(
         buyer_id=buyer_id,
         receiver_id=purchase_data.receiver_id if purchase_data.receiver_id else None,
         payment_type=purchase_data.payment_type,
+        payment_card_id=purchase_data.payment_card_id if purchase_data.payment_card_id else None,
         supplier=purchase_data.supplier,
         receipt_url=purchase_data.receipt_url,
         receipt_urls=purchase_data.receipt_urls or [],  # 다중 영수증 URL
@@ -319,7 +360,27 @@ def create_purchase(
     db.commit()
     db.refresh(purchase)
 
-    return purchase
+    # 카드 정보 로드
+    purchase = db.query(Purchase).options(
+        joinedload(Purchase.payment_card)
+    ).filter(Purchase.id == purchase.id).first()
+
+    # 응답 데이터 변환
+    from fastapi.encoders import jsonable_encoder
+
+    response_data = jsonable_encoder(purchase)
+
+    # 카드 정보를 dict로 변환
+    if purchase and purchase.payment_card:
+        response_data['payment_card'] = {
+            'id': str(purchase.payment_card.id),
+            'card_type': purchase.payment_card.card_type,
+            'card_issuer': purchase.payment_card.card_issuer,
+            'card_number': purchase.payment_card.card_number,
+            'owner_name': purchase.payment_card.owner_name,
+        }
+
+    return response_data
 
 @router.put("/{purchase_id}", response_model=PurchaseSchema)
 def update_purchase(

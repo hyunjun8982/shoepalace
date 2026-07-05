@@ -42,7 +42,6 @@ class BarcodeSearchResult(BaseModel):
     product_code: str
     product_name: str
     brand_name: Optional[str] = None
-    category: Optional[str] = None
     image_url: Optional[str] = None
     available_qty: Optional[int] = 0
 

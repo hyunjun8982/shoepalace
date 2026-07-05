@@ -35,7 +35,9 @@ import { QRCodeSVG } from 'qrcode.react';
 import { useParams, useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { Purchase, PurchaseItem, PaymentType } from '../../types/purchase';
+import { CARD_ISSUER_LABELS, CARD_TYPE_LABELS, Card as CardType } from '../../types/card';
 import { purchaseService } from '../../services/purchase';
+import { cardService } from '../../services/card';
 import { getFileUrl } from '../../utils/urlUtils';
 import { warehouseService } from '../../services/warehouse';
 import { uploadService } from '../../services/upload';
@@ -57,6 +59,7 @@ const PurchaseDetailPage: React.FC = () => {
   const [editingSizePrices, setEditingSizePrices] = useState<{ [size: string]: number }>({});
   const [form] = Form.useForm();
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [cards, setCards] = useState<CardType[]>([]);
   const [uploadLoading, setUploadLoading] = useState(false);
 
   // QR 코드 영수증 업로드 관련 상태
@@ -69,8 +72,18 @@ const PurchaseDetailPage: React.FC = () => {
   useEffect(() => {
     if (id) {
       fetchPurchaseDetail();
+      loadCards();
     }
   }, [id]);
+
+  const loadCards = async () => {
+    try {
+      const data = await cardService.getCards({ limit: 1000, is_active: true });
+      setCards(data.items);
+    } catch (error) {
+      console.error('Failed to load cards:', error);
+    }
+  };
 
   const fetchPurchaseDetail = async () => {
     try {
@@ -391,11 +404,22 @@ const PurchaseDetailPage: React.FC = () => {
               {dayjs(purchase.purchase_date).format('YYYY-MM-DD')}
             </Descriptions.Item>
             <Descriptions.Item label="결제방식">
-              {getPaymentTypeText(purchase.payment_type)}
+              {purchase.payment_card && typeof purchase.payment_card === 'object' ? (
+                <div>
+                  <Tag color="blue" style={{ marginRight: '8px' }}>
+                    {CARD_TYPE_LABELS[(purchase.payment_card as any).card_type] || (purchase.payment_card as any).card_type}
+                  </Tag>
+                  <Tag color="cyan">
+                    {CARD_ISSUER_LABELS[(purchase.payment_card as any).card_issuer] || (purchase.payment_card as any).card_issuer} - {(purchase.payment_card as any).owner_name}
+                  </Tag>
+                </div>
+              ) : (
+                getPaymentTypeText(purchase.payment_type)
+              )}
             </Descriptions.Item>
-            <Descriptions.Item label="구매가">
+            <Descriptions.Item label="구매총액">
               {purchase.items && purchase.items.length > 0
-                ? `₩${Math.floor(purchase.items[0]?.purchase_price || 0).toLocaleString()}`
+                ? `₩${Math.floor(totalAmount).toLocaleString()}`
                 : '-'}
             </Descriptions.Item>
             <Descriptions.Item label="구매처">
@@ -427,19 +451,19 @@ const PurchaseDetailPage: React.FC = () => {
                 </Form.Item>
               </Descriptions.Item>
               <Descriptions.Item label="결제방식">
-                <Form.Item name="payment_type" style={{ margin: 0 }}>
-                  <Select style={{ width: '100%' }}>
-                    <Option value="corp_card">법인카드</Option>
-                    <Option value="corp_account">법인계좌</Option>
-                    <Option value="personal_card">개인카드</Option>
-                    <Option value="personal_card_inser">개인카드(인서)</Option>
-                    <Option value="personal_card_dahee">개인카드(다희)</Option>
+                <Form.Item name="payment_card_id" style={{ margin: 0 }}>
+                  <Select placeholder="카드를 선택하세요" style={{ width: '100%' }}>
+                    {cards.map(card => (
+                      <Option key={card.id} value={card.id}>
+                        [{CARD_TYPE_LABELS[card.card_type]}] - [{CARD_ISSUER_LABELS[card.card_issuer]}] - [{card.owner_name}] - ****-****-****-{card.card_number}
+                      </Option>
+                    ))}
                   </Select>
                 </Form.Item>
               </Descriptions.Item>
-              <Descriptions.Item label="구매가">
+              <Descriptions.Item label="구매총액">
                 {purchase.items && purchase.items.length > 0
-                  ? `₩${Math.floor(purchase.items[0]?.purchase_price || 0).toLocaleString()}`
+                  ? `₩${Math.floor(totalAmount).toLocaleString()}`
                   : '-'}
               </Descriptions.Item>
               <Descriptions.Item label="구매처">

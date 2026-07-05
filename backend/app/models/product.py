@@ -9,7 +9,6 @@ class Product(BaseModel):
     brand_id = Column(UUID(as_uuid=True), ForeignKey("brands.id"))
     product_code = Column(String(100), unique=True, nullable=False, index=True)
     product_name = Column(String(200), nullable=False)
-    category = Column(String(50))
     description = Column(Text)
     image_url = Column(String(500))
     barcode_id = Column(UUID(as_uuid=True), ForeignKey("barcodes.id"), nullable=True, index=True)

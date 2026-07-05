@@ -19,7 +19,6 @@ import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { ProductCreate, ProductUpdate } from '../../types/product';
 import { productService } from '../../services/product';
 import { brandService, Brand } from '../../services/brand';
-import { categoryService, Category } from '../../services/category';
 import { barcodeService } from '../../services/barcode';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { getFileUrl } from '../../utils/urlUtils';
@@ -35,7 +34,6 @@ const ProductFormPage: React.FC = () => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [brands, setBrands] = useState<Brand[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
   const [newBrandModalVisible, setNewBrandModalVisible] = useState(false);
   const [newBrandForm] = Form.useForm();
   const [imageFile, setImageFile] = useState<UploadFile | null>(null);
@@ -58,7 +56,6 @@ const ProductFormPage: React.FC = () => {
 
   useEffect(() => {
     fetchBrands();
-    fetchCategories();
     if (isEditMode) {
       fetchProductData();
     }
@@ -73,15 +70,6 @@ const ProductFormPage: React.FC = () => {
     }
   };
 
-  const fetchCategories = async () => {
-    try {
-      const response = await categoryService.getCategories();
-      setCategories(response.items);
-    } catch (error) {
-      message.error('카테고리 목록을 불러오는데 실패했습니다.');
-    }
-  };
-
   const fetchProductData = async () => {
     try {
       setLoading(true);
@@ -90,7 +78,6 @@ const ProductFormPage: React.FC = () => {
         brand_id: product.brand_id,
         product_code: product.product_code,
         product_name: product.product_name,
-        category: product.category,
         description: product.description,
       });
 
@@ -247,7 +234,6 @@ const ProductFormPage: React.FC = () => {
           brand_id: values.brand_id,
           product_code: values.product_code,
           product_name: values.product_name,
-          category: values.category,
           description: values.description,
         };
         savedProduct = await productService.updateProduct(productId!, updateData);
@@ -256,7 +242,6 @@ const ProductFormPage: React.FC = () => {
           brand_id: values.brand_id,
           product_code: values.product_code,
           product_name: values.product_name,
-          category: values.category,
           description: values.description,
         };
         savedProduct = await productService.createProduct(createData);
@@ -420,20 +405,6 @@ const ProductFormPage: React.FC = () => {
                       </Option>
                     ))}
                     <Option value="etc">기타</Option>
-                  </Select>
-                </Form.Item>
-
-                <Form.Item
-                  label="카테고리"
-                  name="category"
-                  rules={[{ required: true, message: '카테고리를 선택해주세요.' }]}
-                >
-                  <Select placeholder="카테고리 선택">
-                    {categories.map((category) => (
-                      <Option key={category.id} value={category.name}>
-                        {category.icon} {category.name_kr}
-                      </Option>
-                    ))}
                   </Select>
                 </Form.Item>
 

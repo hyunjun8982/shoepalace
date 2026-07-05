@@ -28,7 +28,6 @@ export interface Product {
   brand_icon_url?: string;
   product_code: string;
   product_name: string;
-  category?: string;
   description?: string;
   image_url?: string;
   inventory?: Inventory[];
@@ -41,7 +40,6 @@ export interface ProductCreate {
   brand_id: string;
   product_code: string;
   product_name: string;
-  category?: string;
   description?: string;
 }
 
@@ -49,6 +47,5 @@ export interface ProductUpdate {
   brand_id?: string;
   product_code?: string;
   product_name?: string;
-  category?: string;
   description?: string;
 }

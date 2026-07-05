@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { Modal, Button, message } from 'antd';
 import { PrinterOutlined } from '@ant-design/icons';
 import { Purchase } from '../types/purchase';
+import { CARD_ISSUER_LABELS, CARD_TYPE_LABELS } from '../types/card';
 
 interface DeliveryNoteModalProps {
   visible: boolean;
@@ -178,12 +179,18 @@ export const DeliveryNoteModal: React.FC<DeliveryNoteModalProps> = ({
                     <div style={{ fontWeight: 'bold' }}>{purchase.buyer_name}</div>
                   </div>
                 )}
-                {purchase.payment_type && (
-                  <div>
-                    <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>결제방식</div>
-                    <div style={{ fontWeight: 'bold' }}>{getPaymentTypeLabel(purchase.payment_type)}</div>
+                <div>
+                  <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>결제방식</div>
+                  <div style={{ fontWeight: 'bold' }}>
+                    {purchase.payment_card && typeof purchase.payment_card === 'object' ? (
+                      <>
+                        {CARD_TYPE_LABELS[(purchase.payment_card as any).card_type]} / {CARD_ISSUER_LABELS[(purchase.payment_card as any).card_issuer]} / {(purchase.payment_card as any).owner_name}
+                      </>
+                    ) : (
+                      getPaymentTypeLabel(purchase.payment_type || '')
+                    )}
                   </div>
-                )}
+                </div>
               </div>
             </div>
 

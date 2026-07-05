@@ -212,50 +212,66 @@ const ProductListPage: React.FC = () => {
     });
   };
 
-  // 성공 알림음 (깔끔한 음)
+  // 성공 알림음 (깔끔한 단일 비프음)
   const playSuccessSound = () => {
     try {
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
 
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
 
-      oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-      oscillator.frequency.setValueAtTime(1000, audioContext.currentTime + 0.15);
+      osc.type = 'sine';
+      osc.frequency.value = 1000;
 
-      gainNode.gain.setValueAtTime(0.5, audioContext.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+      gain.gain.setValueAtTime(0.7, ctx.currentTime);
+      gain.gain.setValueAtTime(0.7, ctx.currentTime + 0.25);
+      gain.gain.setValueAtTime(0, ctx.currentTime + 0.3);
 
-      oscillator.start(audioContext.currentTime);
-      oscillator.stop(audioContext.currentTime + 0.3);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.3);
+
+      console.log('성공음 재생');
     } catch (error) {
-      console.log('알림음 재생 실패:', error);
+      console.log('성공음 재생 실패:', error);
     }
   };
 
-  // 경고 알림음 (더 크고 잘 들리는 음)
+  // 경고 알림음 (두 번의 비프음 - 구분 명확)
   const playAlertSound = () => {
     try {
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
 
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
+      // 첫 번째 비프 (높음)
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.type = 'sine';
+      osc1.frequency.value = 1200;
+      gain1.gain.setValueAtTime(0.8, ctx.currentTime);
+      gain1.gain.setValueAtTime(0.8, ctx.currentTime + 0.2);
+      gain1.gain.setValueAtTime(0, ctx.currentTime + 0.25);
+      osc1.start(ctx.currentTime);
+      osc1.stop(ctx.currentTime + 0.25);
 
-      // 높은 음으로 시작해서 낮은 음으로 끝나는 경고음
-      oscillator.frequency.setValueAtTime(1200, audioContext.currentTime);
-      oscillator.frequency.setValueAtTime(900, audioContext.currentTime + 0.3);
+      // 두 번째 비프 (낮음) - 200ms 후
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.type = 'sine';
+      osc2.frequency.value = 600;
+      gain2.gain.setValueAtTime(0.8, ctx.currentTime + 0.3);
+      gain2.gain.setValueAtTime(0.8, ctx.currentTime + 0.5);
+      gain2.gain.setValueAtTime(0, ctx.currentTime + 0.55);
+      osc2.start(ctx.currentTime + 0.3);
+      osc2.stop(ctx.currentTime + 0.55);
 
-      gainNode.gain.setValueAtTime(0.4, audioContext.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
-
-      oscillator.start(audioContext.currentTime);
-      oscillator.stop(audioContext.currentTime + 0.4);
+      console.log('경고음 재생');
     } catch (error) {
-      console.log('알림음 재생 실패:', error);
+      console.log('경고음 재생 실패:', error);
     }
   };
 

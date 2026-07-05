@@ -474,16 +474,51 @@ const PurchaseDetailPage: React.FC = () => {
             <Table
               columns={[
                 {
+                  title: '이미지',
+                  dataIndex: ['product'],
+                  key: 'image',
+                  width: 60,
+                  render: (product: any) => {
+                    if (product?.brand_name && product?.product_code) {
+                      return (
+                        <img
+                          src={getFileUrl(`/uploads/products/${product.brand_name}/${product.product_code}.png`) || ''}
+                          alt={product.product_name}
+                          style={{
+                            width: 50,
+                            height: 50,
+                            objectFit: 'cover',
+                            borderRadius: 4,
+                          }}
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = 'none';
+                          }}
+                        />
+                      );
+                    }
+                    return <div style={{ fontSize: 24 }}>📦</div>;
+                  },
+                },
+                {
                   title: '상품명',
                   dataIndex: ['product', 'product_name'],
                   key: 'product_name',
-                  render: (text) => text || '-',
+                  render: (text, record: PurchaseItem) => {
+                    return (
+                      <div>
+                        <div>{text || '-'}</div>
+                        <div style={{ fontSize: '12px', color: '#999' }}>
+                          {record.product?.product_code || '-'}
+                        </div>
+                      </div>
+                    );
+                  },
                 },
                 {
                   title: '사이즈',
                   dataIndex: 'size',
                   key: 'size',
-                  width: 100,
+                  width: 80,
                 },
                 {
                   title: '수량',

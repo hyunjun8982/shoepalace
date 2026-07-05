@@ -312,6 +312,8 @@ const ProductListPage: React.FC = () => {
       setUnregisteredBarcodeVisible(true);
     } finally {
       setBarcodeLoading(false);
+      // 바코드 입력 완료 후 스캔 비활성화
+      setBarcodeInputActive(false);
     }
   };
 

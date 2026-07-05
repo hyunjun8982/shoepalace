@@ -510,6 +510,7 @@ const PurchaseFormPage: React.FC = () => {
       purchase_price: purchasePrice,
       product_name: selectedProduct.product_name,
       product_code: selectedProduct.product_code,
+      brand_name: selectedProduct.brand_name,
     }));
 
     // 기존 items에 새로운 상품 추가
@@ -762,15 +763,41 @@ const PurchaseFormPage: React.FC = () => {
   // 테이블 컬럼 정의
   const columns: ColumnsType<PurchaseItem> = [
     {
-      title: '상품번호',
-      dataIndex: 'product_code',
-      key: 'product_code',
-      width: 120,
+      title: '이미지',
+      key: 'image',
+      width: 60,
+      render: (_, record: any) => {
+        if (record.brand_name && record.product_code) {
+          return (
+            <img
+              src={getFileUrl(`/uploads/products/${record.brand_name}/${record.product_code}.png`) || ''}
+              alt={record.product_name}
+              style={{
+                width: 50,
+                height: 50,
+                objectFit: 'cover',
+                borderRadius: 4,
+              }}
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none';
+              }}
+            />
+          );
+        }
+        return <div style={{ fontSize: 20 }}>📦</div>;
+      },
     },
     {
-      title: '상품명',
-      dataIndex: 'product_name',
-      key: 'product_name',
+      title: '상품',
+      key: 'product',
+      render: (_, record: any) => (
+        <div>
+          <div style={{ fontWeight: 500 }}>{record.product_name}</div>
+          <div style={{ fontSize: '12px', color: '#999' }}>
+            [{record.brand_name || '-'}] {record.product_code}
+          </div>
+        </div>
+      ),
     },
     {
       title: '사이즈',

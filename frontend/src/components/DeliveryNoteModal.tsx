@@ -53,6 +53,17 @@ export const DeliveryNoteModal: React.FC<DeliveryNoteModalProps> = ({
     }, 0);
   };
 
+  const getPaymentTypeLabel = (type: string) => {
+    const paymentTypes: { [key: string]: string } = {
+      corp_card: '법인카드',
+      corp_account: '법인계좌',
+      personal_card: '개인카드',
+      personal_card_inser: '개인카드(인서)',
+      personal_card_dahee: '개인카드(다희)',
+    };
+    return paymentTypes[type] || type;
+  };
+
   return (
     <Modal
       title="입고명세서 추출"
@@ -144,15 +155,34 @@ export const DeliveryNoteModal: React.FC<DeliveryNoteModalProps> = ({
                 borderLeft: '4px solid #1890ff',
               }}
             >
-              <div>
-                <strong>구매 거래번호: {purchase.transaction_no}</strong>
-                <span style={{ marginLeft: 20, color: '#666' }}>
-                  입고일: {new Date(purchase.purchase_date).toLocaleDateString('ko-KR')}
-                </span>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div>
+                  <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>거래번호</div>
+                  <div style={{ fontWeight: 'bold' }}>{purchase.transaction_no}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>입고일</div>
+                  <div style={{ fontWeight: 'bold' }}>
+                    {new Date(purchase.purchase_date).toLocaleDateString('ko-KR')}
+                  </div>
+                </div>
                 {purchase.supplier && (
-                  <span style={{ marginLeft: 20, color: '#666' }}>
-                    공급자: {purchase.supplier}
-                  </span>
+                  <div>
+                    <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>구매처</div>
+                    <div style={{ fontWeight: 'bold' }}>{purchase.supplier}</div>
+                  </div>
+                )}
+                {purchase.buyer_name && (
+                  <div>
+                    <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>구매자</div>
+                    <div style={{ fontWeight: 'bold' }}>{purchase.buyer_name}</div>
+                  </div>
+                )}
+                {purchase.payment_type && (
+                  <div>
+                    <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>결제방식</div>
+                    <div style={{ fontWeight: 'bold' }}>{getPaymentTypeLabel(purchase.payment_type)}</div>
+                  </div>
                 )}
               </div>
             </div>

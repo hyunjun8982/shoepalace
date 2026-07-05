@@ -31,39 +31,27 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
   const [poizonError, setPoizonError] = useState(false);
   const [sizeInputMode, setSizeInputMode] = useState(false);
 
-  // 알림 소리 재생 (경고음 - 상품 조회 페이지와 동일)
+  // 알림 소리 재생 (2톤 알림음)
   const playNotificationSound = () => {
     try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
 
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
 
-      osc.connect(gain);
-      gain.connect(ctx.destination);
+      // 2개 음톤으로 알림음 생성
+      oscillator.frequency.setValueAtTime(1000, audioContext.currentTime);
+      oscillator.frequency.setValueAtTime(1500, audioContext.currentTime + 0.15);
 
-      osc.type = 'sine';
-      osc.frequency.value = 1400; // 높은 음
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
 
-      // 진동 효과 (LFO)
-      const lfo = ctx.createOscillator();
-      const lfoGain = ctx.createGain();
-      lfo.connect(lfoGain);
-      lfoGain.connect(osc.frequency);
-      lfo.type = 'sine';
-      lfo.frequency.value = 6; // 6Hz 떨림
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.3);
 
-      gain.gain.setValueAtTime(0.5, ctx.currentTime);
-      gain.gain.setValueAtTime(0, ctx.currentTime + 0.5);
-
-      lfoGain.gain.setValueAtTime(100, ctx.currentTime);
-
-      osc.start(ctx.currentTime);
-      lfo.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.5);
-      lfo.stop(ctx.currentTime + 0.5);
-
-      console.log('⚠️ 경고음 재생');
+      console.log('🔔 알림음 재생');
     } catch (error) {
       console.log('알림 소리 재생 실패:', error);
     }

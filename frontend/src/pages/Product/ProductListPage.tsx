@@ -247,42 +247,27 @@ const ProductListPage: React.FC = () => {
     }
   };
 
-  // 경고 알림음 (긴 진동음 - 명확한 구분)
+  // 경고 알림음 (2톤 알림음 - 구매/판매와 동일)
   const playAlertSound = () => {
     try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
 
-      // 높은 음으로 진동하는 경고음
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
 
-      osc.connect(gain);
-      gain.connect(ctx.destination);
+      // 2개 음톤으로 알림음 생성
+      oscillator.frequency.setValueAtTime(1000, audioContext.currentTime);
+      oscillator.frequency.setValueAtTime(1500, audioContext.currentTime + 0.15);
 
-      osc.type = 'sine';
-      osc.frequency.value = 1400; // 매우 높은 음
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
 
-      // 진동 효과 (LFO)
-      const lfo = ctx.createOscillator();
-      const lfoGain = ctx.createGain();
-      lfo.connect(lfoGain);
-      lfoGain.connect(osc.frequency);
-      lfo.type = 'sine';
-      lfo.frequency.value = 6; // 6Hz 떨림
-      lfoGain.gain.setValueAtTime(80, ctx.currentTime); // 진동 폭
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.3);
 
-      // 음량
-      gain.gain.setValueAtTime(0.8, ctx.currentTime);
-      gain.gain.setValueAtTime(0.8, ctx.currentTime + 0.4);
-      gain.gain.setValueAtTime(0, ctx.currentTime + 0.5);
-
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.5);
-
-      lfo.start(ctx.currentTime);
-      lfo.stop(ctx.currentTime + 0.5);
-
-      console.log('⚠️ 경고음 재생');
+      console.log('🔔 경고음 재생');
     } catch (error) {
       console.log('경고음 재생 실패:', error);
     }

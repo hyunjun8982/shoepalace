@@ -100,13 +100,14 @@ const ProductListPage: React.FC = () => {
   }, [pagination.current, pagination.pageSize, filters]);
 
   // 바코드 입력 활성화/비활성화 시 focus 설정
+  // 모달이 열려있어도 바코드 스캔이 가능하도록 focus 유지
   useEffect(() => {
-    if (barcodeInputActive && barcodeInputRef.current) {
+    if ((barcodeInputActive || barcodeLookupModalVisible) && barcodeInputRef.current) {
       setTimeout(() => {
         barcodeInputRef.current?.focus();
       }, 100);
     }
-  }, [barcodeInputActive]);
+  }, [barcodeInputActive, barcodeLookupModalVisible]);
 
   const fetchBrands = async () => {
     try {

@@ -22,6 +22,13 @@ from io import BytesIO
 
 router = APIRouter()
 
+# 업로드 디렉토리 설정 (Docker 환경과 로컬 환경 구분)
+if os.path.exists('/app'):
+    UPLOAD_DIR = Path("/app/uploads")
+else:
+    UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def save_image_from_url(image_url: str, brand_name: str, product_code: str) -> bool:
     """포이즌 이미지 URL에서 이미지를 다운로드해서 저장"""
@@ -30,7 +37,7 @@ def save_image_from_url(image_url: str, brand_name: str, product_code: str) -> b
 
     try:
         # 업로드 디렉토리 생성
-        upload_dir = Path(f"uploads/products/{brand_name}")
+        upload_dir = UPLOAD_DIR / "products" / brand_name
         upload_dir.mkdir(parents=True, exist_ok=True)
 
         # 이미지 다운로드
@@ -413,7 +420,7 @@ async def upload_product_image(
         raise HTTPException(status_code=400, detail="Only image files are allowed")
 
     # 업로드 디렉토리 생성
-    upload_dir = Path("uploads/products") / brand_name
+    upload_dir = UPLOAD_DIR / "products" / brand_name
     print(f"[IMAGE UPLOAD] Upload directory: {upload_dir.absolute()}")
     upload_dir.mkdir(parents=True, exist_ok=True)
 

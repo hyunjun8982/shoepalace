@@ -214,7 +214,7 @@ const PurchaseFormPage: React.FC = () => {
     }, 200);
   }, []);
 
-  // 성공 알림음 (깔끔한 단일 비프음)
+  // 성공 알림음 (짧고 깔끔한 단일 비프음)
   const playSuccessSound = () => {
     try {
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -225,16 +225,15 @@ const PurchaseFormPage: React.FC = () => {
       gain.connect(ctx.destination);
 
       osc.type = 'sine';
-      osc.frequency.value = 1000;
+      osc.frequency.value = 800; // 낮은 음
 
-      gain.gain.setValueAtTime(0.7, ctx.currentTime);
-      gain.gain.setValueAtTime(0.7, ctx.currentTime + 0.25);
-      gain.gain.setValueAtTime(0, ctx.currentTime + 0.3);
+      gain.gain.setValueAtTime(0.6, ctx.currentTime);
+      gain.gain.setValueAtTime(0, ctx.currentTime + 0.12); // 매우 짧게
 
       osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.3);
+      osc.stop(ctx.currentTime + 0.12);
 
-      console.log('성공음 재생');
+      console.log('✓ 성공음 재생');
     } catch (error) {
       console.log('성공음 재생 실패:', error);
     }

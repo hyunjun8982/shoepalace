@@ -238,38 +238,42 @@ const ProductListPage: React.FC = () => {
     }
   };
 
-  // 경고 알림음 (두 번의 비프음 - 구분 명확)
+  // 경고 알림음 (긴 진동음 - 명확한 구분)
   const playAlertSound = () => {
     try {
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
 
-      // 첫 번째 비프 (높음)
-      const osc1 = ctx.createOscillator();
-      const gain1 = ctx.createGain();
-      osc1.connect(gain1);
-      gain1.connect(ctx.destination);
-      osc1.type = 'sine';
-      osc1.frequency.value = 1200;
-      gain1.gain.setValueAtTime(0.8, ctx.currentTime);
-      gain1.gain.setValueAtTime(0.8, ctx.currentTime + 0.2);
-      gain1.gain.setValueAtTime(0, ctx.currentTime + 0.25);
-      osc1.start(ctx.currentTime);
-      osc1.stop(ctx.currentTime + 0.25);
+      // 높은 음으로 진동하는 경고음
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
 
-      // 두 번째 비프 (낮음) - 200ms 후
-      const osc2 = ctx.createOscillator();
-      const gain2 = ctx.createGain();
-      osc2.connect(gain2);
-      gain2.connect(ctx.destination);
-      osc2.type = 'sine';
-      osc2.frequency.value = 600;
-      gain2.gain.setValueAtTime(0.8, ctx.currentTime + 0.3);
-      gain2.gain.setValueAtTime(0.8, ctx.currentTime + 0.5);
-      gain2.gain.setValueAtTime(0, ctx.currentTime + 0.55);
-      osc2.start(ctx.currentTime + 0.3);
-      osc2.stop(ctx.currentTime + 0.55);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
 
-      console.log('경고음 재생');
+      osc.type = 'sine';
+      osc.frequency.value = 1400; // 매우 높은 음
+
+      // 진동 효과 (LFO)
+      const lfo = ctx.createOscillator();
+      const lfoGain = ctx.createGain();
+      lfo.connect(lfoGain);
+      lfoGain.connect(osc.frequency);
+      lfo.type = 'sine';
+      lfo.frequency.value = 6; // 6Hz 떨림
+      lfoGain.gain.setValueAtTime(80, ctx.currentTime); // 진동 폭
+
+      // 음량
+      gain.gain.setValueAtTime(0.8, ctx.currentTime);
+      gain.gain.setValueAtTime(0.8, ctx.currentTime + 0.4);
+      gain.gain.setValueAtTime(0, ctx.currentTime + 0.5);
+
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.5);
+
+      lfo.start(ctx.currentTime);
+      lfo.stop(ctx.currentTime + 0.5);
+
+      console.log('⚠️ 경고음 재생');
     } catch (error) {
       console.log('경고음 재생 실패:', error);
     }

@@ -283,7 +283,6 @@ def create_purchase(
 
     # 구매 아이템 생성 및 총액 계산
     total_amount = 0.0
-    inventory_cache = {}  # 이번 구매 내에서 생성한 inventory를 추적
 
     for item_data in purchase_data.items:
         # 상품 확인
@@ -326,33 +325,6 @@ def create_purchase(
 
         db.add(item)
         total_amount += item_data.purchase_price * item_data.quantity
-
-        # 재고 업데이트 (사이즈별로 관리)
-        inventory_key = (str(item_data.product_id), item_data.size)
-
-        # 메모리 캐시에서 확인 (같은 구매 내에서 생성한 inventory)
-        if inventory_key in inventory_cache:
-            inventory_cache[inventory_key].quantity += item_data.quantity
-        else:
-            # DB에서 조회
-            inventory = db.query(Inventory).filter(
-                Inventory.product_id == item_data.product_id,
-                Inventory.size == item_data.size
-            ).first()
-
-            if inventory:
-                inventory.quantity += item_data.quantity
-                inventory_cache[inventory_key] = inventory
-            else:
-                inventory = Inventory(
-                    id=uuid.uuid4(),
-                    product_id=item_data.product_id,
-                    size=item_data.size,
-                    quantity=item_data.quantity,
-                    reserved_quantity=0
-                )
-                db.add(inventory)
-                inventory_cache[inventory_key] = inventory
 
     # 총액 업데이트
     purchase.total_amount = total_amount
@@ -595,6 +567,25 @@ def confirm_purchase(
     purchase.receiver_id = current_user.id  # 확인한 사람을 입고확인자로 설정
     purchase.status = PurchaseStatus.completed  # 상태를 완료로 변경
 
+    # 재고 추가 (입고 확인 시에만 재고에 반영)
+    for item in purchase.items:
+        inventory = db.query(Inventory).filter(
+            Inventory.product_id == item.product_id,
+            Inventory.size == item.size
+        ).first()
+
+        if inventory:
+            inventory.quantity += item.quantity
+        else:
+            inventory = Inventory(
+                id=uuid.uuid4(),
+                product_id=item.product_id,
+                size=item.size,
+                quantity=item.quantity,
+                reserved_quantity=0
+            )
+            db.add(inventory)
+
     db.commit()
     db.refresh(purchase)
 
@@ -639,6 +630,19 @@ def unconfirm_purchase(
     purchase.is_confirmed = False
     purchase.confirmed_at = None
     purchase.status = PurchaseStatus.pending  # 상태를 대기로 변경
+
+    # 재고 제거 (입고 확인 취소 시 재고에서 제거)
+    for item in purchase.items:
+        inventory = db.query(Inventory).filter(
+            Inventory.product_id == item.product_id,
+            Inventory.size == item.size
+        ).first()
+
+        if inventory:
+            inventory.quantity -= item.quantity
+            # 재고가 0 이하가 되면 삭제
+            if inventory.quantity <= 0:
+                db.delete(inventory)
 
     db.commit()
     db.refresh(purchase)

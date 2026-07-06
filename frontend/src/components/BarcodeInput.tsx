@@ -22,63 +22,11 @@ export const BarcodeInput: React.FC<BarcodeInputProps> = ({
   const barcodeBufferRef = useRef('');
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // 전역 키보드 리스너 (바코드 스캐너 감지)
+  // 포커스 효과 (마운트 시 자동 포커스)
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // 모달 열려있으면 무시 (data-modal-open 체크) - 가장 먼저 체크
-      if (document.documentElement.getAttribute('data-modal-open') === 'true') {
-        console.log('[BarcodeInput] Modal is open, ignoring input');
-        return;
-      }
-
-      // disabled 상태면 무시
-      if (disabled) {
-        console.log('[BarcodeInput] Disabled, ignoring input');
-        return;
-      }
-
-      // 입력 필드에 포커스되어 있으면 무시 (사용자 입력)
-      const target = e.target as HTMLElement;
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
-        return;
-      }
-
-      // 수정자 키 무시
-      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) {
-        return;
-      }
-
-      // Enter 키: 버퍼 제출
-      if (e.key === 'Enter' && barcodeBufferRef.current) {
-        e.preventDefault();
-        console.log('[BarcodeInput] Searching barcode:', barcodeBufferRef.current);
-        handleBarcodeSearch(barcodeBufferRef.current.trim());
-        barcodeBufferRef.current = '';
-        return;
-      }
-
-      // 일반 문자 추가
-      if (e.key.length === 1) {
-        barcodeBufferRef.current += e.key;
-
-        // 타임아웃 초기화 (마지막 입력으로부터 150ms 후 처리)
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
-
-        timeoutRef.current = setTimeout(() => {
-          if (barcodeBufferRef.current) {
-            console.log('[BarcodeInput] Auto-searching barcode:', barcodeBufferRef.current);
-            handleBarcodeSearch(barcodeBufferRef.current.trim());
-            barcodeBufferRef.current = '';
-          }
-        }, 150);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
+    if (inputRef.current && !disabled) {
+      inputRef.current.focus();
+    }
   }, [disabled]);
 
   // 바코드 검색

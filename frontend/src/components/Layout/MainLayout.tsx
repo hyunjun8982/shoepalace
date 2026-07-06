@@ -292,16 +292,44 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       roles: ['admin', 'buyer', 'seller'],
       children: [
         {
-          key: '/purchases',
+          key: 'purchase-management',
           icon: <ShoppingCartOutlined />,
           label: '구매 관리',
           roles: ['admin', 'buyer'],
+          children: [
+            {
+              key: '/purchases',
+              icon: <ShoppingCartOutlined />,
+              label: '구매 목록',
+              roles: ['admin', 'buyer'],
+            },
+            {
+              key: '/purchases/new',
+              icon: <ShoppingCartOutlined />,
+              label: '구매 등록',
+              roles: ['admin', 'buyer'],
+            },
+          ],
         },
         {
-          key: '/sales',
+          key: 'sales-management',
           icon: <DollarOutlined />,
           label: '판매 관리',
           roles: ['admin', 'seller'],
+          children: [
+            {
+              key: '/sales',
+              icon: <DollarOutlined />,
+              label: '판매 목록',
+              roles: ['admin', 'seller'],
+            },
+            {
+              key: '/sales/new',
+              icon: <DollarOutlined />,
+              label: '판매 등록',
+              roles: ['admin', 'seller'],
+            },
+          ],
         },
         {
           key: '/cards',

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Card as AntCard,
   Form,
@@ -6,43 +6,32 @@ import {
   DatePicker,
   Button,
   Table,
-  Select,
-  Space,
   Row,
   Col,
-  Typography,
   App,
   InputNumber,
-  Divider,
-  Tag,
   Upload,
-  Modal,
 } from 'antd';
-import { PlusOutlined, DeleteOutlined, SaveOutlined, UploadOutlined } from '@ant-design/icons';
+import { DeleteOutlined, UploadOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useNavigate, useParams } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { SaleCreate, SaleItemCreate } from '../../types/sale';
 import { saleService } from '../../services/sale';
 import { inventoryService } from '../../services/inventory';
-import { ExchangeService } from '../../services/exchange';
 import { getFileUrl } from '../../utils/urlUtils';
 import { InventoryDetail } from '../../types/inventory';
 import { barcodeService, BarcodeSearchResult } from '../../services/barcode';
 import { BarcodeInput } from '../../components/BarcodeInput';
 import { UnregisteredBarcodeModal } from '../../components/UnregisteredBarcodeModal';
-import { productService } from '../../services/product';
-import { cardService } from '../../services/card';
-import { Card as CardType, CARD_ISSUER_LABELS, CARD_TYPE_LABELS } from '../../types/card';
 
-const { Option } = Select;
 const { TextArea } = Input;
-const { Title } = Typography;
 
 interface SaleFormData {
   sale_date: dayjs.Dayjs;
   customer_name?: string;
   customer_contact?: string;
+  tracking_number?: string;
   notes?: string;
 }
 
@@ -75,32 +64,72 @@ const SaleFormPageNew: React.FC = () => {
   const [inventoryItems, setInventoryItems] = useState<InventoryDetail[]>([]);
   const [groupedInventory, setGroupedInventory] = useState<GroupedInventory[]>([]);
   const [selectedProducts, setSelectedProducts] = useState<SaleItemCreate[]>([]);
-  const [cards, setCards] = useState<CardType[]>([]);
-
-  // 상품 추가 폼 상태
-  const [selectedProductId, setSelectedProductId] = useState<string>('');
-  const [sizeQuantityMap, setSizeQuantityMap] = useState<Record<string, number>>({});
-  const [sellerSalePriceOriginal, setSellerSalePriceOriginal] = useState<number>(0);
-  const [sellerSaleCurrency, setSellerSaleCurrency] = useState<string>('KRW');
-  const [confirmModalVisible, setConfirmModalVisible] = useState(false);
 
   // 바코드 검색 관련 상태
   const [barcodeSearchResult, setBarcodeSearchResult] = useState<BarcodeSearchResult | null>(null);
   const [unregisteredBarcodeModalVisible, setUnregisteredBarcodeModalVisible] = useState(false);
   const [scannedBarcode, setScannedBarcode] = useState<string>('');
 
+  // 바코드 스캔 관련 refs
+  const barcodeBufferRef = useRef('');
+  const barcodeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastProcessedBarcodeRef = useRef<string>(''); // 중복 처리 방지
+  const groupedInventoryRef = useRef<GroupedInventory[]>([]); // 항상 최신 재고 참조
+
   const isEditMode = !!saleId;
 
   useEffect(() => {
     fetchInventoryItems();
-    loadCards();
-    if (isEditMode) {
+    if (isEditMode && saleId) {
       fetchSaleData();
     }
     form.setFieldsValue({
       sale_date: dayjs(),
     });
-  }, [saleId]);
+  }, []);
+
+  // groupedInventory ref 항상 최신 상태 유지
+  useEffect(() => {
+    groupedInventoryRef.current = groupedInventory;
+  }, [groupedInventory]);
+
+  // 전역 바코드 스캔 리스너 (어디서든 바코드 스캔 감지)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // 입력 필드에 포커스되어 있으면 무시 (사용자 직접 입력)
+      const target = e.target as HTMLElement;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
+        return;
+      }
+
+      // 수정자 키 무시
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) {
+        return;
+      }
+
+      // Enter 키: 버퍼 제출
+      if (e.key === 'Enter' && barcodeBufferRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        // 타임아웃 clear (중복 처리 방지)
+        if (barcodeTimeoutRef.current) clearTimeout(barcodeTimeoutRef.current);
+        handleBarcodeSearchGlobal(barcodeBufferRef.current.trim());
+        barcodeBufferRef.current = '';
+        return;
+      }
+
+      // 일반 문자 추가
+      if (e.key.length === 1) {
+        barcodeBufferRef.current += e.key;
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeyDown);
+      if (barcodeTimeoutRef.current) clearTimeout(barcodeTimeoutRef.current);
+    };
+  }, []);
 
   const fetchInventoryItems = async () => {
     try {
@@ -177,43 +206,158 @@ const SaleFormPageNew: React.FC = () => {
     }
   };
 
-  // 바코드 검색 성공 핸들러
-  const handleBarcodeFound = (result: BarcodeSearchResult) => {
-    console.log('[SaleFormPage] Barcode found:', result);
-    console.log('[SaleFormPage] Searching for product_id:', result.product_id);
-    console.log('[SaleFormPage] Available products:', groupedInventory.map(p => p.product_id));
+  // 바코드 검색 함수 (전역 리스너용)
+  const handleBarcodeSearchGlobal = useCallback(async (barcodeValue: string) => {
+    if (!barcodeValue) return;
 
-    const product = groupedInventory.find(p => p.product_id === result.product_id);
+    // 중복 처리 방지: 이미 처리 중이면 무시
+    if (lastProcessedBarcodeRef.current === barcodeValue) {
+      console.log('[Duplicate barcode ignored]', barcodeValue);
+      return;
+    }
+
+    // 처리 중 표시
+    lastProcessedBarcodeRef.current = barcodeValue;
+    console.log('[Processing barcode]', barcodeValue);
+
+    try {
+      const result = await barcodeService.searchByBarcode(barcodeValue);
+      console.log('[Search result]', result.product_name);
+      message.success(`상품 검색됨: ${result.product_name}`);
+      handleBarcodeFound(result);
+    } catch (error: any) {
+      if (error.message.includes('등록되지 않았습니다')) {
+        // 미등록 바코드
+        handleBarcodeNotFound(barcodeValue);
+      } else {
+        message.error(error.message || '바코드 검색에 실패했습니다.');
+      }
+    }
+
+    // 200ms 후에 캐시 초기화 (같은 상품 연속 스캔 가능하도록)
+    setTimeout(() => {
+      if (lastProcessedBarcodeRef.current === barcodeValue) {
+        lastProcessedBarcodeRef.current = '';
+        console.log('[Cache cleared]', barcodeValue);
+      }
+    }, 200);
+  }, [groupedInventory]);
+
+  // 성공 알림음 (짧고 깔끔한 단일 비프음)
+  const playSuccessSound = () => {
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.type = 'sine';
+      osc.frequency.value = 800; // 낮은 음
+
+      gain.gain.setValueAtTime(0.6, ctx.currentTime);
+      gain.gain.setValueAtTime(0, ctx.currentTime + 0.12); // 매우 짧게
+
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.12);
+
+      console.log('✓ 성공음 재생');
+    } catch (error) {
+      console.log('성공음 재생 실패:', error);
+    }
+  };
+
+  // 바코드 검색 성공 핸들러
+  const handleBarcodeFound = useCallback((result: BarcodeSearchResult) => {
+    console.log('[SaleFormPage] Barcode found:', result);
+
+    // 포이즌 정보만 있는 경우 (product_id가 빈 문자열)
+    if (!result.product_id || result.product_id === '') {
+      console.log('[SaleFormPage] Poizon Info Only, opening modal');
+      // 알림음은 UnregisteredBarcodeModal에서 재생
+      setScannedBarcode(result.barcode_value);
+      setUnregisteredBarcodeModalVisible(true);
+      return;
+    }
+
+    // 등록된 상품인 경우만 성공음 재생
+    playSuccessSound();
+
+    // DB에 등록된 상품 - product_id로 매칭
+    console.log('[Debug] Searching for product_id:', result.product_id);
+    console.log('[Debug] Available product_ids:', groupedInventoryRef.current.map(p => p.product_id));
+
+    const product = groupedInventoryRef.current.find(p => p.product_id === result.product_id);
 
     if (!product) {
-      message.error(`재고 목록에서 해당 상품을 찾을 수 없습니다. (ID: ${result.product_id})`);
+      message.error(`재고 목록에서 해당 상품을 찾을 수 없습니다. (코드: ${result.product_code})`);
       return;
     }
 
-    // 바코드의 사이즈로 재고 확인
-    const sizeInventory = product.sizes.find(s => s.size === result.size);
-    if (!sizeInventory || sizeInventory.available_quantity === 0) {
-      message.error(`재고가 없습니다. (${product.product_name} / ${result.size})`);
-      return;
-    }
-
-    // selectedProducts에 자동으로 추가 (수량 1)
-    const newItem: SaleItemCreate = {
+    console.log('[SaleFormPage] Adding to selectedProducts directly', {
       product_id: result.product_id,
       size: result.size,
-      quantity: 1,
-      seller_sale_price_original: 0,
-      seller_sale_currency: 'KRW',
-      seller_sale_price_krw: 0,
-      product_name: product.product_name,
-      product_code: product.product_code,
-      brand_name: product.brand_name,
-      product_image_url: product.product_image_url || '',
-    };
+      product_name: product.product_name
+    });
 
-    setSelectedProducts(prev => [...prev, newItem]);
-    message.success(`${product.product_name} (${result.size})이 추가되었습니다.`);
-  };
+    // 해당 size의 재고 찾기
+    const sizeStock = product.sizes.find(s => s.size === result.size);
+    if (!sizeStock) {
+      message.error(`${result.size} 사이즈의 재고 정보를 찾을 수 없습니다.`);
+      return;
+    }
+
+    // 같은 상품+사이즈는 수량 증가, 없으면 새로운 행 추가
+    setSelectedProducts(prev => {
+      const existingItemIndex = prev.findIndex(item =>
+        item.product_id === result.product_id && item.size === result.size
+      );
+
+      if (existingItemIndex >= 0) {
+        // 기존 항목 수량 증가 전 재고 확인
+        const existingItem = prev[existingItemIndex];
+        const currentQty = existingItem.quantity || 1;
+        if (currentQty >= sizeStock.available_quantity) {
+          message.warning(`재고 부족 (최대: ${sizeStock.available_quantity}개, 현재: ${currentQty}개)`);
+          return prev;
+        }
+        const newItems = [...prev];
+        newItems[existingItemIndex].quantity = currentQty + 1;
+        console.log('[SaleFormPage] Quantity increased', {
+          product_id: result.product_id,
+          size: result.size,
+          new_quantity: newItems[existingItemIndex].quantity
+        });
+        return newItems;
+      } else {
+        // 새 항목은 재고가 1개 이상이면 추가
+        if (sizeStock.available_quantity < 1) {
+          message.warning(`재고 부족 (현재: 0개)`);
+          return prev;
+        }
+        // 새로운 항목 추가
+        console.log('[SaleFormPage] New item added', {
+          product_id: result.product_id,
+          size: result.size
+        });
+        return [...prev, {
+          product_id: result.product_id,
+          size: result.size,
+          quantity: 1,
+          seller_sale_price_original: 0,
+          seller_sale_currency: 'KRW',
+          seller_sale_price_krw: 0,
+          product_name: product.product_name,
+          product_code: product.product_code,
+          brand_name: product.brand_name,
+          product_image_url: product.product_image_url || '',
+        }];
+      }
+    });
+
+    message.success(`${result.product_name} (${result.size}) +1 추가됨`);
+  }, [groupedInventory]);
 
   // 바코드 검색 실패 핸들러 (미등록 상품)
   const handleBarcodeNotFound = (barcode: string) => {
@@ -221,30 +365,38 @@ const SaleFormPageNew: React.FC = () => {
     setUnregisteredBarcodeModalVisible(true);
   };
 
-  // 자동 선택된 상품을 추가
-  const handleAutoSelectProduct = (productId: string) => {
-    const product = groupedInventory.find(p => p.product_id === productId);
-    if (product) {
-      setSelectedProductId(productId);
-      setBarcodeSearchResult(null);
-      message.success(`${product.product_name}이(가) 선택되었습니다.`);
-    }
-  };
-
-  // 새로운 상품이 등록되었을 때
-  const handleNewProductRegistered = () => {
-    // 재고 목록 새로고침
+  // 새로운 상품이 등록되었을 때 - 바코드 상품을 바로 selectedProducts에 추가
+  const handleNewProductRegistered = (newProduct: any, barcodeInfo: { barcode_value: string; size: string; image_url?: string }) => {
+    // 상품 목록 새로고침
     fetchInventoryItems();
-    message.success('새 상품이 등록되었습니다. 재고 목록이 새로고침됩니다.');
-  };
 
-  const loadCards = async () => {
-    try {
-      const response = await cardService.getCards({ limit: 1000, is_active: true });
-      setCards(response.items || []);
-    } catch (error) {
-      console.error('Failed to load cards:', error);
-    }
+    // 바코드 상품을 바로 selectedProducts에 추가 (판매가는 나중에 입력하도록)
+    setTimeout(() => {
+      setSelectedProducts(prev => {
+        const newItems = [...prev];
+
+        // 새 바코드 상품을 selectedProducts에 추가
+        const newBarCodeItem = {
+          product_id: newProduct.id,
+          size: barcodeInfo.size,
+          quantity: 1,
+          seller_sale_price_original: 0,
+          seller_sale_currency: 'KRW',
+          seller_sale_price_krw: 0,
+          product_name: newProduct.product_name,
+          product_code: newProduct.product_code,
+          brand_name: newProduct.brand_name,
+          product_image_url: barcodeInfo.image_url || '',
+        };
+        newItems.push(newBarCodeItem);
+        console.log('Added new barcode item:', newBarCodeItem);
+        console.log('Total items now:', newItems);
+
+        return newItems;
+      });
+
+      message.success(`${newProduct.product_name} (${barcodeInfo.size}) +1 추가됨`);
+    }, 500);
   };
 
   const fetchSaleData = async () => {
@@ -286,212 +438,7 @@ const SaleFormPageNew: React.FC = () => {
     }
   };
 
-  const handleProductChange = (productId: string) => {
-    setSelectedProductId(productId);
-    setSizeQuantityMap({});
-  };
 
-  // 전체 사이즈 목록 (220-300)
-  const allSizes = [
-    '220', '225', '230', '235', '240', '245', '250', '255', '260', '265', '270', '275', '280', '285', '290', '295', '300'
-  ];
-
-  // 사이즈 매핑 (표시용)
-  const sizeMapping: { [key: string]: string } = {
-    '220': 'FREE',
-    '225': 'XXS',
-    '230': 'XS',
-    '235': 'S',
-    '240': 'M',
-    '245': 'L',
-    '250': 'XL',
-    '255': 'XXL',
-    '260': '170',
-    '265': '180',
-    '270': '190',
-    '275': '200',
-    '280': '210',
-    '285': '95',
-    '290': '100',
-    '295': '105',
-    '300': '110',
-  };
-
-  // 사이즈 표시 함수
-  const getSizeDisplay = (size: string): string => {
-    if (sizeMapping[size]) {
-      return `${size} (${sizeMapping[size]})`;
-    }
-    return size;
-  };
-
-  // 역매핑: 의류/신발 사이즈 -> mm 사이즈
-  const reverseSizeMapping: { [key: string]: string } = {
-    'FREE': '220',
-    'XXS': '225',
-    'XS': '230',
-    'S': '235',
-    'M': '240',
-    'L': '245',
-    'XL': '250',
-    'XXL': '255',
-    '170': '260',
-    '180': '265',
-    '190': '270',
-    '200': '275',
-    '210': '280',
-    '95': '285',
-    '100': '290',
-    '105': '295',
-    '110': '300',
-  };
-
-  // 카테고리별 전체 사이즈 목록 가져오기 (항상 220-300 반환)
-  const getSizesForCategory = (category?: string): string[] => {
-    return allSizes;
-  };
-
-  // 사이즈 정렬 함수
-  const sortSizes = (sizes: Array<{ size: string; available_quantity: number }>): Array<{ size: string; available_quantity: number }> => {
-    return [...sizes].sort((a, b) => {
-      const aNum = parseFloat(a.size);
-      const bNum = parseFloat(b.size);
-      if (!isNaN(aNum) && !isNaN(bNum)) {
-        return aNum - bNum;
-      }
-      const sizeOrder = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', 'XXXXL', 'FREE'];
-      return sizeOrder.indexOf(a.size) - sizeOrder.indexOf(b.size);
-    });
-  };
-
-  // 재고 수량에 따른 색상 반환
-  const getStockColor = (availableQty: number): string => {
-    if (availableQty === 0) return '#ff4d4f'; // 빨간색 - 품절
-    if (availableQty <= 3) return '#faad14'; // 노란색 - 품절 임박
-    return '#1890ff'; // 파란색 - 여유
-  };
-
-  // 사이즈별 수량 변경 핸들러
-  const handleSizeQuantityChange = (size: string, quantity: number) => {
-    if (quantity === 0) {
-      const newMap = { ...sizeQuantityMap };
-      delete newMap[size];
-      setSizeQuantityMap(newMap);
-    } else {
-      setSizeQuantityMap(prev => ({
-        ...prev,
-        [size]: quantity
-      }));
-    }
-  };
-
-  // 총 수량 계산
-  const getTotalQuantity = () => {
-    return Object.values(sizeQuantityMap).reduce((sum, qty) => sum + qty, 0);
-  };
-
-  // 상품 추가 버튼 클릭 시
-  const handleShowConfirmModal = () => {
-    if (!selectedProductId) {
-      message.warning('상품을 선택해주세요.');
-      return;
-    }
-
-    // 수량이 입력된 사이즈만 필터링
-    const validSizes = Object.entries(sizeQuantityMap).filter(([_, qty]) => qty > 0);
-
-    if (validSizes.length === 0) {
-      message.warning('최소 하나 이상의 사이즈 수량을 입력해주세요.');
-      return;
-    }
-
-    if (sellerSalePriceOriginal <= 0) {
-      message.warning('판매가를 입력해주세요.');
-      return;
-    }
-
-    const product = groupedInventory.find(p => p.product_id === selectedProductId);
-    if (!product) {
-      message.error('상품을 찾을 수 없습니다.');
-      return;
-    }
-
-    // 재고 검증
-    for (const [size, qty] of validSizes) {
-      const sizeInfo = product.sizes.find(s => s.size === size);
-      if (!sizeInfo) {
-        message.error(`사이즈 ${size}를 찾을 수 없습니다.`);
-        return;
-      }
-      if (qty > sizeInfo.available_quantity) {
-        message.error(`사이즈 ${size}의 재고가 부족합니다. 사용 가능한 재고: ${sizeInfo.available_quantity}개`);
-        return;
-      }
-    }
-
-    // 여러 사이즈를 selectedProducts에 추가
-    const krwPrice = ExchangeService.convertToKRW(sellerSalePriceOriginal, sellerSaleCurrency);
-    const newItems: SaleItemCreate[] = validSizes.map(([size, qty]) => ({
-      product_id: selectedProductId,
-      product_name: product.product_name,
-      size: size,
-      quantity: qty,
-      seller_sale_price_original: sellerSalePriceOriginal,
-      seller_sale_currency: sellerSaleCurrency,
-      seller_sale_price_krw: krwPrice,
-      product_image_url: product.product_image_url || '',
-    }));
-
-    // 기존 items에 새로운 상품들 추가
-    setSelectedProducts(prev => [...prev, ...newItems]);
-
-    // 상품 추가 폼 초기화 (다음 상품 추가를 위해)
-    setSelectedProductId('');
-    setSizeQuantityMap({});
-    setSellerSalePriceOriginal(0);
-    setSellerSaleCurrency('KRW');
-
-    message.success(`${product.product_name}이(가) 추가되었습니다.`);
-  };
-
-  // 최종 등록 확인 후 실행
-  const handleConfirmSale = async () => {
-    const formValues = form.getFieldsValue();
-
-    const product = groupedInventory.find(p => p.product_id === selectedProductId);
-    if (!product) return;
-
-    const validSizes = Object.entries(sizeQuantityMap).filter(([_, qty]) => qty > 0);
-    const krwPrice = ExchangeService.convertToKRW(sellerSalePriceOriginal, sellerSaleCurrency);
-
-    const saleItems: SaleItemCreate[] = validSizes.map(([size, qty]) => ({
-      product_id: selectedProductId,
-      product_name: product.product_name,
-      size: size,
-      quantity: qty,
-      seller_sale_price_original: sellerSalePriceOriginal,
-      seller_sale_currency: sellerSaleCurrency,
-      seller_sale_price_krw: krwPrice,
-      product_image_url: product.product_image_url || '',
-    }));
-
-    try {
-      setLoading(true);
-      await saleService.createSale({
-        ...formValues,
-        sale_date: formValues.sale_date.format('YYYY-MM-DD'),
-        items: saleItems
-      });
-
-      message.success('판매가 등록되었습니다.');
-      setConfirmModalVisible(false);
-      navigate('/sales');
-    } catch (error: any) {
-      message.error(error.message || '판매 등록에 실패했습니다.');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleRemoveItem = (index: number) => {
     setSelectedProducts(selectedProducts.filter((_, i) => i !== index));
@@ -618,51 +565,93 @@ const SaleFormPageNew: React.FC = () => {
     }
   };
 
+  // 테이블 컬럼 정의
   const selectedProductColumns: ColumnsType<SaleItemCreate> = [
     {
-      title: '브랜드',
-      key: 'brand',
-      width: 120,
-      render: (_, record) => {
-        const product = groupedInventory.find(p => p.product_id === record.product_id);
-        return product?.brand || '-';
+      title: '이미지',
+      key: 'image',
+      width: 60,
+      render: (_, record: any) => {
+        if (record.brand_name && record.product_code) {
+          return (
+            <img
+              src={getFileUrl(`/uploads/products/${record.brand_name}/${record.product_code}.png`) || ''}
+              alt={record.product_name}
+              style={{
+                width: 50,
+                height: 50,
+                objectFit: 'cover',
+                borderRadius: 4,
+              }}
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none';
+              }}
+            />
+          );
+        }
+        return <div style={{ fontSize: 20 }}>📦</div>;
       },
     },
     {
-      title: '상품명',
-      dataIndex: 'product_name',
-      key: 'product_name',
-      width: 200,
+      title: '상품',
+      key: 'product',
+      render: (_, record: any) => (
+        <div>
+          <div style={{ fontWeight: 500 }}>{record.product_name}</div>
+          <div style={{ fontSize: '12px', color: '#999' }}>
+            [{record.brand_name || '-'}] {record.product_code}
+          </div>
+        </div>
+      ),
     },
     {
       title: '사이즈',
       dataIndex: 'size',
       key: 'size',
-      width: 80,
-      align: 'center',
+      width: 100,
+      render: (size: string) => size || '-',
     },
     {
       title: '수량',
       dataIndex: 'quantity',
       key: 'quantity',
-      width: 80,
-      align: 'center',
-      render: (qty) => <Tag color="blue">{qty}개</Tag>,
-    },
-    {
-      title: '판매가(현지)',
-      key: 'seller_sale_price_original',
-      width: 140,
-      align: 'right',
-      render: (_, record) =>
-        `${record.seller_sale_currency} ${record.seller_sale_price_original?.toLocaleString() || '0'}`,
+      width: 100,
+      render: (quantity: number, record: any, index: number) => (
+        <InputNumber
+          min={1}
+          value={quantity || 1}
+          onChange={(value) => {
+            const newItems = [...selectedProducts];
+            newItems[index].quantity = value || 1;
+            setSelectedProducts(newItems);
+          }}
+          size="small"
+          style={{ width: '100%' }}
+        />
+      ),
     },
     {
       title: '판매가(원화)',
+      dataIndex: 'seller_sale_price_krw',
       key: 'seller_sale_price_krw',
-      width: 120,
+      width: 160,
       align: 'right',
-      render: (_, record) => `₩${(record.seller_sale_price_krw || 0).toLocaleString()}`,
+      render: (price: number, record: any, index: number) => (
+        <InputNumber
+          value={price || 0}
+          onChange={(value) => {
+            const newItems = [...selectedProducts];
+            newItems[index].seller_sale_price_krw = value || 0;
+            setSelectedProducts(newItems);
+          }}
+          formatter={(value) => `₩${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+          parser={(value) => value!.replace(/₩\s?|(,*)/g, '') as any}
+          min={0}
+          step={1000}
+          size="large"
+          style={{ width: '100%', height: '36px' }}
+        />
+      ),
     },
     {
       title: '소계',
@@ -675,7 +664,6 @@ const SaleFormPageNew: React.FC = () => {
       title: '작업',
       key: 'action',
       width: 80,
-      align: 'center',
       render: (_, __, index) => (
         <Button
           size="small"
@@ -687,36 +675,6 @@ const SaleFormPageNew: React.FC = () => {
     },
   ];
 
-  const selectedProduct = groupedInventory.find(p => p.product_id === selectedProductId);
-
-  // 전체 사이즈 목록 생성 (재고 0개 포함)
-  const getAllSizesWithStock = (): Array<{ size: string; available_quantity: number }> => {
-    if (!selectedProduct) return [];
-
-    const category = selectedProduct.category;
-    const allSizes = getSizesForCategory(category);
-
-    // 재고 정보와 병합 (역매핑 적용)
-    const sizesWithStock = allSizes.map(size => {
-      // 재고에서 찾을 때는 원본 사이즈(220) 또는 매핑된 사이즈(FREE, XXS 등) 모두 확인
-      let stockInfo = selectedProduct.sizes.find(s => s.size === size);
-      if (!stockInfo && sizeMapping[size]) {
-        // mm 사이즈로 재고를 찾지 못하면 매핑된 사이즈로도 찾아봄
-        const mappedSize = sizeMapping[size];
-        stockInfo = selectedProduct.sizes.find(s => s.size === mappedSize);
-      }
-
-      return {
-        size,
-        available_quantity: stockInfo?.available_quantity || 0
-      };
-    });
-
-    // 이미 220-300 순서대로 되어 있으므로 정렬 불필요
-    return sizesWithStock;
-  };
-
-  const availableSizes = getAllSizesWithStock();
 
   return (
     <div style={{ padding: '16px' }}>
@@ -757,22 +715,10 @@ const SaleFormPageNew: React.FC = () => {
                   <Input placeholder="연락처를 입력하세요" />
                 </Form.Item>
               </Col>
-            </Row>
 
-            <Row gutter={16} style={{ marginTop: 8 }}>
-              <Col span={12}>
-                <Form.Item
-                  name="payment_card_id"
-                  label="결제 카드"
-                  rules={[{ required: true, message: '결제 카드를 선택해주세요' }]}
-                >
-                  <Select placeholder="카드를 선택하세요">
-                    {cards.map(card => (
-                      <Option key={card.id} value={card.id}>
-                        [{CARD_TYPE_LABELS[card.card_type]}] - [{CARD_ISSUER_LABELS[card.card_issuer]}] - [{card.owner_name}] - ****-****-****-{card.card_number}
-                      </Option>
-                    ))}
-                  </Select>
+              <Col span={8}>
+                <Form.Item name="tracking_number" label="송장번호">
+                  <Input placeholder="송장번호를 입력하세요" />
                 </Form.Item>
               </Col>
             </Row>
@@ -836,350 +782,68 @@ const SaleFormPageNew: React.FC = () => {
               onBarcodeNotFound={handleBarcodeNotFound}
               placeholder="바코드 리더기로 스캔하거나 수동으로 입력..."
             />
-            {barcodeSearchResult && (
-              <AntCard size="small" style={{ marginTop: 16, backgroundColor: '#f0f9ff' }}>
-                <Row gutter={16}>
-                  <Col span={12}>
-                    <div><strong>상품명:</strong> {barcodeSearchResult.product_name}</div>
-                    <div><strong>상품코드:</strong> {barcodeSearchResult.product_code}</div>
-                    <div><strong>브랜드:</strong> {barcodeSearchResult.brand_name || '-'}</div>
-                  </Col>
-                  <Col span={12}>
-                    <div><strong>가용 재고:</strong> {barcodeSearchResult.available_qty}개</div>
-                    <div><strong>바코드:</strong> {barcodeSearchResult.barcode_value}</div>
-                  </Col>
-                </Row>
-                <Button
-                  type="primary"
-                  style={{ marginTop: 12 }}
-                  onClick={() => handleAutoSelectProduct(barcodeSearchResult.product_id)}
-                >
-                  이 상품으로 추가
-                </Button>
-              </AntCard>
-            )}
           </AntCard>
 
-          {/* 상품 추가 */}
+          {/* 추가된 상품 목록 */}
           <AntCard
-            title="상품 추가"
+            title={`추가된 상품 (${selectedProducts.length}건)`}
             size="small"
             style={{ marginBottom: 24 }}
           >
-            <Row gutter={16}>
-              <Col span={24}>
-                <div style={{ marginBottom: 8 }}>
-                  <label>상품 선택</label>
-                </div>
-                <Select
-                  showSearch
-                  placeholder="상품을 선택하세요"
-                  style={{ width: '100%' }}
-                  value={selectedProductId || undefined}
-                  onChange={handleProductChange}
-                  filterOption={(input, option) => {
-                    const product = groupedInventory.find(p => p.product_id === option?.value);
-                    if (!product) return false;
-                    const searchText = `${product.product_code} ${product.brand} ${product.product_name}`.toLowerCase();
-                    return searchText.includes(input.toLowerCase());
-                  }}
-                  optionRender={(option) => {
-                    const product = groupedInventory.find(p => p.product_id === option.value);
-                    if (!product) return null;
-
-                    return (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        {product.product_image_url && (
-                          <img
-                            src={product.product_image_url}
-                            alt={product.product_name}
-                            style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 4 }}
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).style.display = 'none';
-                            }}
-                          />
-                        )}
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 12, color: '#666' }}>
-                            {product.product_code}
-                          </div>
-                          <div>
-                            <span style={{ fontWeight: 500 }}>[{product.brand}]</span> {product.product_name}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  }}
-                  options={groupedInventory.map(product => ({
-                    label: `[${product.brand}] ${product.product_name}`,
-                    value: product.product_id,
-                  }))}
+            {selectedProducts.length > 0 ? (
+              <>
+                <Table
+                  columns={selectedProductColumns}
+                  dataSource={selectedProducts}
+                  pagination={false}
+                  bordered
+                  rowKey={(_, index) => index}
+                  summary={() => (
+                    <Table.Summary.Row>
+                      <Table.Summary.Cell index={0} colSpan={5} align="right">
+                        <strong>합계</strong>
+                      </Table.Summary.Cell>
+                      <Table.Summary.Cell index={1} align="right">
+                        <strong>₩{calculateTotal().toLocaleString()}</strong>
+                      </Table.Summary.Cell>
+                      <Table.Summary.Cell index={2} />
+                    </Table.Summary.Row>
+                  )}
                 />
-              </Col>
-            </Row>
-
-            {/* 선택된 상품의 사이즈별 재고 및 수량 입력 */}
-            {selectedProductId && availableSizes.length > 0 && (
-              <div style={{ marginTop: 16 }}>
-                <div style={{ marginBottom: 12, fontWeight: 600 }}>사이즈별 재고 및 판매 수량</div>
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
-                  gap: '12px',
-                  marginBottom: 16
-                }}>
-                  {availableSizes.map(sizeInfo => {
-                    const stockColor = getStockColor(sizeInfo.available_quantity);
-                    return (
-                      <div key={sizeInfo.size} style={{
-                        border: `1px solid ${stockColor}`,
-                        borderRadius: 4,
-                        padding: '8px',
-                        backgroundColor: '#fafafa'
-                      }}>
-                        <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>
-                          사이즈: <span style={{ fontWeight: 600, color: '#000' }}>{getSizeDisplay(sizeInfo.size)}</span>
-                        </div>
-                        <div style={{ fontSize: 12, color: stockColor, marginBottom: 6, fontWeight: 600 }}>
-                          재고: {sizeInfo.available_quantity}개
-                        </div>
-                        <InputNumber
-                          min={0}
-                          max={sizeInfo.available_quantity}
-                          value={sizeQuantityMap[sizeInfo.size] || 0}
-                          onChange={(val) => handleSizeQuantityChange(sizeInfo.size, val || 0)}
-                          style={{ width: '100%' }}
-                          placeholder="수량"
-                          disabled={sizeInfo.available_quantity === 0}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* 판매가 입력 */}
-            {selectedProductId && (
-              <Row gutter={16} style={{ marginTop: 16 }}>
-                <Col span={6}>
-                  <div style={{ marginBottom: 8 }}>
-                    <label>통화</label>
-                  </div>
-                  <Select
-                    value={sellerSaleCurrency}
-                    onChange={setSellerSaleCurrency}
-                    style={{ width: '100%' }}
-                  >
-                    <Option value="KRW">KRW (한국)</Option>
-                    <Option value="USD">USD (미국)</Option>
-                    <Option value="EUR">EUR (유럽)</Option>
-                    <Option value="JPY">JPY (일본)</Option>
-                    <Option value="CNY">CNY (중국)</Option>
-                  </Select>
-                </Col>
-
-                <Col span={8}>
-                  <div style={{ marginBottom: 8 }}>
-                    <label>판매가</label>
-                  </div>
-                  <InputNumber
-                    min={0}
-                    value={sellerSalePriceOriginal}
-                    onChange={(val) => setSellerSalePriceOriginal(val || 0)}
-                    style={{ width: '100%' }}
-                    formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                  />
-                </Col>
-
-                <Col span={10} style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
-                  <div style={{ fontSize: 16, fontWeight: 600, color: '#1890ff' }}>
-                    총 수량: {getTotalQuantity()}개
-                  </div>
+                <div style={{ marginTop: 16 }}>
                   <Button
                     type="primary"
-                    icon={<SaveOutlined />}
-                    onClick={handleShowConfirmModal}
                     size="large"
-                    style={{ backgroundColor: '#0d1117', borderColor: '#0d1117' }}
+                    style={{ width: '100%', backgroundColor: '#1890ff', height: 44, fontSize: 16 }}
+                    htmlType="submit"
                   >
-                    등록
+                    판매 등록
                   </Button>
-                </Col>
-              </Row>
+                </div>
+              </>
+            ) : (
+              <div style={{
+                border: '2px dashed #d9d9d9',
+                borderRadius: 8,
+                padding: '32px 24px',
+                backgroundColor: '#fafafa',
+                color: '#999',
+                textAlign: 'center'
+              }}>
+                바코드를 스캔하여 상품을 추가하세요
+              </div>
             )}
           </AntCard>
+
         </Form>
       </AntCard>
 
-      {/* 확인 모달 */}
-      <Modal
-        title="판매 정보 확인"
-        open={confirmModalVisible}
-        onOk={handleConfirmSale}
-        onCancel={() => setConfirmModalVisible(false)}
-        okText="확인"
-        cancelText="취소"
-        width={700}
-        confirmLoading={loading}
-        centered={false}
-        style={{ top: 20 }}
-      >
-        <div style={{ marginBottom: 20 }}>
-          <h4 style={{ marginBottom: 12, borderBottom: '2px solid #1890ff', paddingBottom: 8 }}>기본 정보</h4>
-          <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '8px', fontSize: '14px' }}>
-            <div style={{ color: '#666' }}>판매일:</div>
-            <div style={{ fontWeight: 500 }}>{form.getFieldValue('sale_date')?.format('YYYY-MM-DD')}</div>
-
-            {form.getFieldValue('customer_name') && (
-              <>
-                <div style={{ color: '#666' }}>고객명:</div>
-                <div style={{ fontWeight: 500 }}>{form.getFieldValue('customer_name')}</div>
-              </>
-            )}
-
-            {form.getFieldValue('customer_contact') && (
-              <>
-                <div style={{ color: '#666' }}>연락처:</div>
-                <div style={{ fontWeight: 500 }}>{form.getFieldValue('customer_contact')}</div>
-              </>
-            )}
-
-            <div style={{ color: '#666' }}>통화:</div>
-            <div style={{ fontWeight: 500 }}>{sellerSaleCurrency}</div>
-
-            <div style={{ color: '#666' }}>판매가:</div>
-            <div style={{ fontWeight: 500, color: '#1890ff' }}>
-              {sellerSaleCurrency} {sellerSalePriceOriginal.toLocaleString()}
-            </div>
-
-            <div style={{ color: '#666' }}>판매가(원화):</div>
-            <div style={{ fontWeight: 500, color: '#1890ff' }}>
-              ₩{ExchangeService.convertToKRW(sellerSalePriceOriginal, sellerSaleCurrency).toLocaleString()}
-            </div>
-          </div>
-        </div>
-
-        <div style={{ marginBottom: 20 }}>
-          <h4 style={{ marginBottom: 12, borderBottom: '2px solid #1890ff', paddingBottom: 8 }}>판매 상품</h4>
-          <div style={{
-            display: 'flex',
-            gap: '16px',
-            backgroundColor: '#f5f5f5',
-            padding: '12px',
-            borderRadius: '8px',
-            marginBottom: 12
-          }}>
-            {selectedProduct?.product_image_url ? (
-              <img
-                src={selectedProduct.product_image_url}
-                alt={selectedProduct.product_name}
-                style={{
-                  width: 80,
-                  height: 80,
-                  objectFit: 'cover',
-                  borderRadius: 8,
-                  border: '1px solid #d9d9d9',
-                  backgroundColor: '#fff'
-                }}
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = 'none';
-                }}
-              />
-            ) : (
-              <div style={{
-                width: 80,
-                height: 80,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: '#fff',
-                borderRadius: 8,
-                border: '1px solid #d9d9d9',
-                fontSize: 32
-              }}>
-                📦
-              </div>
-            )}
-
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600, fontSize: '16px', marginBottom: 4 }}>
-                {selectedProduct?.product_name}
-              </div>
-              <div style={{ fontSize: '13px', color: '#666' }}>
-                상품코드: {selectedProduct?.product_code}
-              </div>
-              <div style={{ fontSize: '13px', color: '#666' }}>
-                브랜드: {selectedProduct?.brand_name}
-              </div>
-            </div>
-          </div>
-
-          <Table
-            size="small"
-            dataSource={Object.entries(sizeQuantityMap)
-              .filter(([_, qty]) => qty > 0)
-              .map(([size, qty]) => ({ size, quantity: qty }))}
-            columns={[
-              {
-                title: '사이즈',
-                dataIndex: 'size',
-                key: 'size',
-                align: 'center',
-                width: 120,
-              },
-              {
-                title: '수량',
-                dataIndex: 'quantity',
-                key: 'quantity',
-                align: 'center',
-                width: 120,
-                render: (qty) => `${qty}개`,
-              },
-              {
-                title: '금액',
-                key: 'amount',
-                align: 'right',
-                render: (_, record) => {
-                  const krwPrice = ExchangeService.convertToKRW(sellerSalePriceOriginal, sellerSaleCurrency);
-                  return `₩${(krwPrice * record.quantity).toLocaleString()}`;
-                },
-              },
-            ]}
-            pagination={false}
-            bordered
-            rowKey="size"
-          />
-        </div>
-
-        <div style={{
-          padding: '16px',
-          backgroundColor: '#e6f7ff',
-          borderRadius: '8px',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center'
-        }}>
-          <div>
-            <div style={{ fontSize: '14px', color: '#666' }}>총 수량</div>
-            <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#1890ff' }}>
-              {getTotalQuantity()}개
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: '14px', color: '#666', textAlign: 'right' }}>총 금액</div>
-            <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#1890ff' }}>
-              ₩{(ExchangeService.convertToKRW(sellerSalePriceOriginal, sellerSaleCurrency) * getTotalQuantity()).toLocaleString()}
-            </div>
-          </div>
-        </div>
-      </Modal>
 
       {/* 미등록 바코드 팝업 */}
       <UnregisteredBarcodeModal
         barcode={scannedBarcode}
         visible={unregisteredBarcodeModalVisible}
-        onSuccess={() => handleNewProductRegistered()}
+        onSuccess={handleNewProductRegistered}
         onCancel={() => setUnregisteredBarcodeModalVisible(false)}
       />
     </div>

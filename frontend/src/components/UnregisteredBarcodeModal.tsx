@@ -9,7 +9,7 @@ import { Brand } from '../types';
 interface UnregisteredBarcodeModalProps {
   barcode: string;
   visible: boolean;
-  onSuccess: (newProduct: Product, barcodeInfo: { barcode_value: string; size: string }) => void;
+  onSuccess: (newProduct: Product, barcodeInfo: { barcode_value: string; size: string; image_url?: string }) => void;
   onCancel: () => void;
 }
 
@@ -330,10 +330,17 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
       setImageFile(null);
       setImagePreview('');
       setProductName('');
-      onSuccess(targetProduct, {
+
+      // 포이즌 이미지 URL 포함해서 전달
+      const barcodeInfo: any = {
         barcode_value: barcode,
         size: values.size,
-      });
+      };
+      if (poizonInfo && (poizonInfo as any).logo_url) {
+        barcodeInfo.image_url = (poizonInfo as any).logo_url;
+      }
+
+      onSuccess(targetProduct, barcodeInfo);
       onCancel();
     } catch (error: any) {
       console.error('Failed to register product:', error);

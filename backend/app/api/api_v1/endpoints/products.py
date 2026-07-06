@@ -157,7 +157,7 @@ def get_product_by_code(
     """상품코드로 상품 조회"""
     product = db.query(Product).options(
         joinedload(Product.brand),
-        joinedload(Product.barcode)
+        joinedload(Product.barcodes)
     ).filter(Product.product_code == product_code).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -178,7 +178,7 @@ def get_product(
     """상품 상세 조회"""
     product = db.query(Product).options(
         joinedload(Product.brand),
-        joinedload(Product.barcode)
+        joinedload(Product.barcodes)
     ).filter(Product.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -201,8 +201,17 @@ def create_product(
     if current_user.role.value not in ["admin", "buyer"]:
         raise HTTPException(status_code=403, detail="Not authorized")
 
+    # "etc" 브랜드 처리
+    brand_id = product_data.brand_id
+    if brand_id == "etc":
+        # "기타" 브랜드 자동 조회
+        brand = db.query(Brand).filter(Brand.name == "기타").first()
+        if not brand:
+            raise HTTPException(status_code=400, detail="'기타' 브랜드를 찾을 수 없습니다")
+        brand_id = str(brand.id)
+
     # 브랜드 확인
-    brand = db.query(Brand).filter(Brand.id == product_data.brand_id).first()
+    brand = db.query(Brand).filter(Brand.id == brand_id).first()
     if not brand:
         raise HTTPException(status_code=400, detail="Brand not found")
 
@@ -215,7 +224,7 @@ def create_product(
 
     product = Product(
         id=uuid.uuid4(),
-        brand_id=product_data.brand_id,
+        brand_id=brand_id,
         product_code=product_data.product_code,
         product_name=product_data.product_name,
         description=product_data.description

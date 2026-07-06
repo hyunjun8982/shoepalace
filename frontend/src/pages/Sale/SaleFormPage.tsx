@@ -375,6 +375,12 @@ const SaleFormPageNew: React.FC = () => {
       setSelectedProducts(prev => {
         const newItems = [...prev];
 
+        // 이미지 URL: 업로드된 이미지 URL 또는 자동 생성 경로
+        const imageUrl = barcodeInfo.image_url ||
+          (newProduct.brand_name && newProduct.product_code
+            ? getFileUrl(`/uploads/products/${newProduct.brand_name}/${newProduct.product_code}.png`)
+            : '');
+
         // 새 바코드 상품을 selectedProducts에 추가
         const newBarCodeItem = {
           product_id: newProduct.id,
@@ -386,7 +392,7 @@ const SaleFormPageNew: React.FC = () => {
           product_name: newProduct.product_name,
           product_code: newProduct.product_code,
           brand_name: newProduct.brand_name,
-          product_image_url: barcodeInfo.image_url || '',
+          product_image_url: imageUrl,
         };
         newItems.push(newBarCodeItem);
         console.log('Added new barcode item:', newBarCodeItem);

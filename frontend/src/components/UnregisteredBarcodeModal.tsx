@@ -171,9 +171,9 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
         form.setFieldsValue(formValues);
         setProductName(poizonData.title || result.title);
 
-        // 이미지 미리보기 설정
+        // 포이즌 이미지 다운로드하여 로컬 저장
         if (poizonData.logo_url) {
-          setImagePreview(poizonData.logo_url);
+          downloadPoizonImage(poizonData.logo_url);
         }
       } else {
         setPoizonError(true);
@@ -183,6 +183,21 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
       setPoizonError(true);
     } finally {
       setPoizonLoading(false);
+    }
+  };
+
+  // 포이즌 이미지 다운로드 및 로컬 저장
+  const downloadPoizonImage = async (imageUrl: string) => {
+    try {
+      const response = await fetch(imageUrl);
+      const blob = await response.blob();
+      const file = new File([blob], 'poizon-image.png', { type: blob.type || 'image/png' });
+      setImageFile(file);
+      setImagePreview(imageUrl); // 미리보기는 외부 URL 사용 (빠른 표시)
+      console.log('Poizon image downloaded and converted to File');
+    } catch (error) {
+      console.warn('Failed to download Poizon image:', error);
+      setImagePreview(imageUrl); // 실패해도 미리보기는 설정
     }
   };
 
@@ -292,6 +307,7 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
       }
 
       // 3. 이미지 업로드
+      let uploadedImageUrl: string | undefined;
       if (imageFile) {
         try {
           const brandName = brands.find(b => b.id === values.brand_id)?.name || '';
@@ -317,6 +333,7 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
               console.warn('Image upload failed:', errorData);
             } else {
               const result = await response.json();
+              uploadedImageUrl = result.image_url;
               console.log('Image upload success:', result);
             }
           }
@@ -331,16 +348,11 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
       setImagePreview('');
       setProductName('');
 
-      // 포이즌 이미지 URL 포함해서 전달
-      const barcodeInfo: any = {
+      onSuccess(targetProduct, {
         barcode_value: barcode,
         size: values.size,
-      };
-      if (poizonInfo && (poizonInfo as any).logo_url) {
-        barcodeInfo.image_url = (poizonInfo as any).logo_url;
-      }
-
-      onSuccess(targetProduct, barcodeInfo);
+        image_url: uploadedImageUrl,
+      });
       onCancel();
     } catch (error: any) {
       console.error('Failed to register product:', error);

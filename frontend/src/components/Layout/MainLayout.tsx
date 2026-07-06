@@ -292,7 +292,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       roles: ['admin', 'buyer', 'seller'],
       children: [
         {
-          key: 'purchase-management',
+          key: '/purchases',
           icon: <ShoppingCartOutlined />,
           label: '구매 관리',
           roles: ['admin', 'buyer'],
@@ -312,7 +312,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           ],
         },
         {
-          key: 'sales-management',
+          key: '/sales',
           icon: <DollarOutlined />,
           label: '판매 관리',
           roles: ['admin', 'seller'],

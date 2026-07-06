@@ -18,12 +18,11 @@ class Product(BaseModel):
     purchase_items = relationship("PurchaseItem", back_populates="product", cascade="all, delete-orphan")
     sale_items = relationship("SaleItem", back_populates="product", cascade="all, delete-orphan")
     inventory = relationship("Inventory", back_populates="product", cascade="all, delete-orphan")
-    # Barcode는 barcodes.product_id로 관계 설정
-    barcode = relationship(
+    # Barcodes는 1:N 관계 (하나의 상품이 여러 바코드를 가짐)
+    barcodes = relationship(
         "Barcode",
         primaryjoin="Product.id == foreign(Barcode.product_id)",
         foreign_keys="[Barcode.product_id]",
-        uselist=False,
         viewonly=True,
-        lazy="joined"
+        lazy="select"
     )

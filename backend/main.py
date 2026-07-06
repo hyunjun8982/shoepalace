@@ -1,5 +1,4 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 import logging
@@ -20,16 +19,6 @@ app = FastAPI(
     version=settings.VERSION,
     description="슈팔라스 입출고 관리시스템 API",
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
-)
-
-# CORS 설정
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # 개발 환경에서는 모든 origin 허용
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
 )
 
 # 정적 파일 서빙 (업로드된 이미지 등)

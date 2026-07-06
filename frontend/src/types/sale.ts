@@ -29,6 +29,8 @@ export interface SaleItem {
 export interface SaleItemCreate {
   product_id: string;
   product_name?: string;
+  product_code?: string;
+  brand_name?: string;
   size?: string;
   quantity: number;
   seller_sale_price_original: number;

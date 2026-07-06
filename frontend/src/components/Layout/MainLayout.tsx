@@ -277,6 +277,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     label: string;
     roles?: string[];
     children?: MenuItem[];
+    emphasized?: boolean;
   }
 
   const menuItems: MenuItem[] = [
@@ -308,6 +309,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               icon: <ShoppingCartOutlined />,
               label: '구매 등록',
               roles: ['admin', 'buyer'],
+              emphasized: true,
             },
           ],
         },
@@ -328,6 +330,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               icon: <DollarOutlined />,
               label: '판매 등록',
               roles: ['admin', 'seller'],
+              emphasized: true,
             },
           ],
         },
@@ -502,6 +505,15 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             if (child.key === pathname) {
               return child.key;
             }
+
+            // 손자 메뉴 검색 (3단계)
+            if (child.children) {
+              for (const grandchild of child.children) {
+                if (grandchild.key === pathname) {
+                  return grandchild.key;
+                }
+              }
+            }
           }
         }
       }
@@ -630,6 +642,22 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 key: child.key,
                 icon: child.icon,
                 label: child.label,
+                ...(child.children ? {
+                  children: child.children.map(grandchild => ({
+                    key: grandchild.key,
+                    icon: grandchild.icon,
+                    label: grandchild.label,
+                    style: {
+                      borderRadius: 6,
+                      margin: '2px 0',
+                      ...(grandchild.emphasized ? {
+                        background: 'rgba(24, 144, 255, 0.1)',
+                        fontWeight: 600,
+                        color: '#1890ff',
+                      } : {}),
+                    },
+                  }))
+                } : {}),
                 style: {
                   borderRadius: 6,
                   margin: '2px 0',

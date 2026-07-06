@@ -139,11 +139,23 @@ class Purchase(PurchaseBase):
     items: List[PurchaseItem] = []
     payment_card: Optional[Dict[str, Any]] = None  # 결제 카드 정보
 
-    @field_validator('id', 'buyer_id', 'receiver_id', mode='before')
+    @field_validator('id', 'buyer_id', 'receiver_id', 'payment_card_id', mode='before')
     @classmethod
     def convert_uuid_to_str(cls, v):
         if isinstance(v, UUID):
             return str(v)
+        return v
+
+    @field_validator('payment_card', mode='before')
+    @classmethod
+    def convert_card_to_dict(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, dict):
+            return v
+        # SQLAlchemy 객체를 dict로 변환
+        if hasattr(v, '__dict__'):
+            return {k: getattr(v, k) for k in ['id', 'card_type', 'card_issuer', 'card_number', 'owner_name', 'is_active', 'notes'] if hasattr(v, k)}
         return v
 
     @field_validator('total_amount', mode='before')

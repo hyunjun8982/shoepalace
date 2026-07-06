@@ -292,7 +292,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       roles: ['admin', 'buyer', 'seller'],
       children: [
         {
-          key: '/purchases',
+          key: 'purchase-mgmt',
           icon: <ShoppingCartOutlined />,
           label: '구매 관리',
           roles: ['admin', 'buyer'],
@@ -312,7 +312,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           ],
         },
         {
-          key: '/sales',
+          key: 'sales-mgmt',
           icon: <DollarOutlined />,
           label: '판매 관리',
           roles: ['admin', 'seller'],
@@ -471,8 +471,15 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   }).filter(Boolean) as MenuItem[];
 
   const handleMenuClick = ({ key }: { key: string }) => {
-    // '/' 로 시작하는 경로만 네비게이션 (서브메뉴 부모는 무시)
-    if (key && key.startsWith('/')) {
+    // 특수 부모 메뉴 키 → 첫 번째 자식으로 이동
+    const parentKeyMap: { [key: string]: string } = {
+      'purchase-mgmt': '/purchases',
+      'sales-mgmt': '/sales',
+    };
+
+    if (parentKeyMap[key]) {
+      navigate(parentKeyMap[key]);
+    } else if (key && key.startsWith('/')) {
       navigate(key);
     }
   };

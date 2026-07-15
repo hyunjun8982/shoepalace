@@ -28,6 +28,8 @@ const MobileReceiptCapturePage: React.FC = () => {
   const [uploadedUrls, setUploadedUrls] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   // 토큰 검증
   useEffect(() => {
@@ -140,9 +142,14 @@ const MobileReceiptCapturePage: React.FC = () => {
     }
   };
 
-  // 사진 촬영 버튼 클릭
-  const handleCaptureClick = () => {
-    fileInputRef.current?.click();
+  // 카메라 촬영 버튼 클릭
+  const handleCameraClick = () => {
+    cameraInputRef.current?.click();
+  };
+
+  // 갤러리 선택 버튼 클릭
+  const handleGalleryClick = () => {
+    galleryInputRef.current?.click();
   };
 
   // API URL 가져오기
@@ -294,32 +301,57 @@ const MobileReceiptCapturePage: React.FC = () => {
         </div>
       )}
 
-      {/* 사진 촬영 버튼 */}
+      {/* 파일 입력 */}
       <input
-        ref={fileInputRef}
+        ref={cameraInputRef}
         type="file"
         accept="image/*"
         capture="environment"
         onChange={handleFileSelect}
         style={{ display: 'none' }}
       />
+      <input
+        ref={galleryInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleFileSelect}
+        style={{ display: 'none' }}
+      />
 
-      <Button
-        type="primary"
-        size="large"
-        icon={uploading ? undefined : (uploadedUrls.length > 0 ? <PlusOutlined /> : <CameraOutlined />)}
-        onClick={handleCaptureClick}
-        loading={uploading}
-        block
-        style={{
-          height: 56,
-          fontSize: 18,
-          borderRadius: 8,
-          marginBottom: 16
-        }}
-      >
-        {uploading ? '업로드 중...' : (uploadedUrls.length > 0 ? '영수증 추가 촬영' : '영수증 촬영하기')}
-      </Button>
+      {/* 버튼 그룹 */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <Button
+          type="primary"
+          size="large"
+          icon={<CameraOutlined />}
+          onClick={handleCameraClick}
+          loading={uploading}
+          block
+          style={{
+            height: 56,
+            fontSize: 16,
+            borderRadius: 8,
+            flex: 1
+          }}
+        >
+          {uploading ? '업로드 중...' : '촬영'}
+        </Button>
+        <Button
+          size="large"
+          icon={<PlusOutlined />}
+          onClick={handleGalleryClick}
+          loading={uploading}
+          block
+          style={{
+            height: 56,
+            fontSize: 16,
+            borderRadius: 8,
+            flex: 1
+          }}
+        >
+          갤러리
+        </Button>
+      </div>
 
       {/* 안내 메시지 */}
       <div style={{

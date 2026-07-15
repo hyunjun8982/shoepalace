@@ -54,9 +54,9 @@ jobs:
             echo "card_app=false" >> $GITHUB_OUTPUT
           fi
 
-          # Dockerfile, docker-compose.yml, nginx, workflow 변경 시만 전체 빌드
-          # docker-compose.prod.yml은 환경 설정만 변경되므로 제외 (배포는 진행하되 재빌드 X)
-          if echo "$changed" | grep -qE "(^backend/Dockerfile|^frontend/Dockerfile|^card-app/Dockerfile|^docker-compose\.yml$|^nginx/|^\.github/)"; then
+          # Dockerfile, docker-compose.yml, nginx 변경 시만 전체 빌드
+          # workflow/docker-compose.prod.yml 변경은 감지 제외 (배포 시간 단축)
+          if echo "$changed" | grep -qE "(^backend/Dockerfile|^frontend/Dockerfile|^card-app/Dockerfile|^docker-compose\.yml$|^nginx/)"; then
             echo "backend=true" >> $GITHUB_OUTPUT
             echo "frontend=true" >> $GITHUB_OUTPUT
             echo "card_app=true" >> $GITHUB_OUTPUT

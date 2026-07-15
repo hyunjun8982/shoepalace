@@ -37,6 +37,10 @@ RUN apt-get update && apt-get install -y \
     # Xvfb 가상 디스플레이 및 X11 관련 패키지
     xvfb \
     x11-utils \
+    # weasyprint 의존성
+    libffi-dev \
+    libssl-dev \
+    ghostscript \
     # wkhtmltopdf
     wkhtmltopdf \
     && rm -rf /var/lib/apt/lists/*

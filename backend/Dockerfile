@@ -35,6 +35,11 @@ RUN apt-get update && apt-get install -y \
     libx11-xcb1 \
     libxcb-dri3-0 \
     xdg-utils \
+    # weasyprint 의존성
+    libffi-dev \
+    libssl-dev \
+    ghostscript \
+    fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 # Google Chrome 설치 (undetected-chromedriver용)

@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict
 from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from app.api.deps import get_db, get_current_user
 from app.core.file_storage import file_storage
@@ -320,7 +320,8 @@ def create_purchase(
             margin_rate=margin_rate,
             receipt_image_url=item_data.receipt_image_url,
             product_image_url=item_data.product_image_url,
-            notes=item_data.notes
+            notes=item_data.notes,
+            payment_card_id=item_data.payment_card_id if item_data.payment_card_id else None
         )
 
         db.add(item)
@@ -540,6 +541,85 @@ def download_receipt(
         media_type='application/octet-stream'
     )
 
+def _get_purchase_pdf_buffer(purchase: Purchase) -> bytes:
+    """구매 입고명세서 PDF 생성 (공통 함수)"""
+    from app.utils.pdf_service import generate_purchase_receipt_pdf
+    from io import BytesIO
+
+    # PDF 데이터 준비
+    items_data = []
+    for item in purchase.items:
+        items_data.append({
+            "product_name": item.product.product_name if item.product else "Unknown",
+            "size": item.size or "-",
+            "quantity": item.quantity,
+            "purchase_price": float(item.purchase_price),
+        })
+
+    # 카드 타입과 발급사 한글 변환
+    CARD_TYPE_LABELS = {
+        "corp": "법인카드",
+        "personal": "개인카드",
+    }
+    CARD_ISSUER_LABELS = {
+        "shinhan": "신한",
+        "kb": "KB국민",
+        "hyundai": "현대",
+        "samsung": "삼성",
+        "lotte": "롯데",
+        "hana": "하나",
+        "nh": "NH농협",
+        "woori": "우리",
+        "sc": "SC제일",
+        "citi": "씨티",
+        "other": "기타",
+    }
+
+    payment_card_info = ""
+    if purchase.payment_card:
+        card_type_label = CARD_TYPE_LABELS.get(purchase.payment_card.card_type, purchase.payment_card.card_type)
+        card_issuer_label = CARD_ISSUER_LABELS.get(purchase.payment_card.card_issuer, purchase.payment_card.card_issuer)
+        payment_card_info = f"[{card_type_label}] {card_issuer_label} - {purchase.payment_card.owner_name}"
+
+    purchase_data = {
+        "transaction_no": purchase.transaction_no,
+        "buyer_name": purchase.buyer.full_name if purchase.buyer else "Unknown",
+        "purchase_date": purchase.purchase_date.strftime("%Y-%m-%d") if purchase.purchase_date else "",
+        "confirmed_at": purchase.confirmed_at.strftime("%Y-%m-%d %H:%M") if purchase.confirmed_at else "",
+        "supplier": purchase.supplier or "-",
+        "payment_card_info": payment_card_info,
+        "total_amount": float(purchase.total_amount),
+        "notes": purchase.notes or "없음",
+    }
+
+    return generate_purchase_receipt_pdf(purchase_data, items_data)
+
+
+@router.get("/{purchase_id}/statement")
+def download_purchase_statement(
+    purchase_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """입고명세서 PDF 다운로드"""
+    purchase = db.query(Purchase).options(
+        joinedload(Purchase.items).joinedload(PurchaseItem.product),
+        joinedload(Purchase.buyer),
+        joinedload(Purchase.payment_card)
+    ).filter(Purchase.id == purchase_id).first()
+
+    if not purchase:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+
+    pdf_buffer = _get_purchase_pdf_buffer(purchase)
+    filename = f"입고명세서_{purchase.transaction_no}.pdf"
+
+    return StreamingResponse(
+        pdf_buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"}
+    )
+
 @router.post("/{purchase_id}/confirm", response_model=PurchaseSchema)
 def confirm_purchase(
     purchase_id: str,
@@ -547,10 +627,10 @@ def confirm_purchase(
     current_user: User = Depends(get_current_user)
 ):
     """입고 확인 처리"""
+    # statement 엔드포인트와 동일한 방식으로 로드
     purchase = db.query(Purchase).options(
-        joinedload(Purchase.items).joinedload(PurchaseItem.product).joinedload(Product.brand),
+        joinedload(Purchase.items).joinedload(PurchaseItem.product),
         joinedload(Purchase.buyer),
-        joinedload(Purchase.receiver),
         joinedload(Purchase.payment_card)
     ).filter(Purchase.id == purchase_id).first()
 
@@ -600,7 +680,108 @@ def confirm_purchase(
         if item.product and item.product.brand:
             item.product.brand_name = item.product.brand.name
 
+    # 입고명세서 메일 발송 (별도 스레드에서 실행하여 응답 지연 방지)
+    try:
+        import threading
+        email_thread = threading.Thread(target=_send_purchase_confirmation_email, args=(purchase.id, db))
+        email_thread.daemon = True
+        email_thread.start()
+    except Exception as e:
+        # 메일 발송 실패는 로그만 기록하고 계속 진행
+        import logging
+        logging.error(f"Failed to start email thread: {str(e)}")
+
     return purchase
+
+
+def _send_purchase_confirmation_email(purchase_id: str, db: Session):
+    """입고명세서 메일 발송 (PDF 첨부)"""
+    from app.utils.email_service import email_service
+    import logging
+
+    logger = logging.getLogger(__name__)
+    logger.info(f"[EMAIL] Starting email process for purchase {purchase_id}")
+
+    try:
+        purchase = db.query(Purchase).options(
+            joinedload(Purchase.items).joinedload(PurchaseItem.product),
+            joinedload(Purchase.buyer),
+            joinedload(Purchase.payment_card)
+        ).filter(Purchase.id == purchase_id).first()
+
+        if not purchase:
+            logger.error(f"[EMAIL] Purchase {purchase_id}: not found")
+            return
+
+        if not purchase.buyer or not purchase.buyer.email:
+            logger.info(f"[EMAIL] Purchase {purchase.id}: buyer email not found, skipping email")
+            return
+
+        logger.info(f"[EMAIL] Generating PDF for {purchase_id}")
+        pdf_buffer = _get_purchase_pdf_buffer(purchase)
+        logger.info(f"[EMAIL] PDF generated successfully for {purchase_id}")
+
+        items_data = [
+            {
+                "product_name": item.product.product_name if item.product else "Unknown",
+                "size": item.size or "-",
+                "quantity": item.quantity,
+                "purchase_price": float(item.purchase_price),
+            }
+            for item in purchase.items
+        ]
+
+        CARD_TYPE_LABELS = {
+            "corp": "법인카드",
+            "personal": "개인카드",
+        }
+        CARD_ISSUER_LABELS = {
+            "shinhan": "신한",
+            "kb": "KB국민",
+            "hyundai": "현대",
+            "samsung": "삼성",
+            "lotte": "롯데",
+            "hana": "하나",
+            "nh": "NH농협",
+            "woori": "우리",
+            "sc": "SC제일",
+            "citi": "씨티",
+            "other": "기타",
+        }
+
+        payment_card_info = ""
+        if purchase.payment_card:
+            card_type_label = CARD_TYPE_LABELS.get(purchase.payment_card.card_type, purchase.payment_card.card_type)
+            card_issuer_label = CARD_ISSUER_LABELS.get(purchase.payment_card.card_issuer, purchase.payment_card.card_issuer)
+            payment_card_info = f"[{card_type_label}] {card_issuer_label} - {purchase.payment_card.owner_name}"
+
+        purchase_data = {
+            "transaction_no": purchase.transaction_no,
+            "buyer_name": purchase.buyer.full_name,
+            "purchase_date": purchase.purchase_date.strftime("%Y-%m-%d") if purchase.purchase_date else "",
+            "confirmed_at": purchase.confirmed_at.strftime("%Y-%m-%d %H:%M") if purchase.confirmed_at else "",
+            "supplier": purchase.supplier or "-",
+            "payment_card_info": payment_card_info,
+            "total_amount": float(purchase.total_amount),
+        }
+
+        logger.info(f"[EMAIL] Sending email to {purchase.buyer.email}")
+        pdf_buffer.seek(0)
+        success = email_service.send_purchase_confirmation(
+            recipient_email=purchase.buyer.email,
+            recipient_name=purchase.buyer.full_name,
+            purchase_data=purchase_data,
+            items_data=items_data,
+            pdf_content=pdf_buffer
+        )
+
+        if success:
+            logger.info(f"[EMAIL] Email sent successfully to {purchase.buyer.email}")
+        else:
+            logger.error(f"[EMAIL] Failed to send email to {purchase.buyer.email}")
+
+    except Exception as e:
+        logger.error(f"[EMAIL] Error in email process: {str(e)}", exc_info=True)
 
 @router.post("/{purchase_id}/unconfirm", response_model=PurchaseSchema)
 def unconfirm_purchase(
@@ -668,7 +849,11 @@ def generate_receipt_upload_token(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """영수증 모바일 업로드용 임시 토큰 생성 (10분 유효)"""
+    """영수증 모바일 업로드용 임시 토큰 생성 (10분 유효)
+
+    현재 로그인한 사용자 정보로 토큰을 생성합니다.
+    모바일에서 QR 스캔 후 업로드한 파일은 이 사용자로 저장됩니다.
+    """
     # buyer나 admin만 가능
     if current_user.role.value not in ["buyer", "admin"]:
         raise HTTPException(status_code=403, detail="Not authorized")
@@ -680,17 +865,19 @@ def generate_receipt_upload_token(
     token = uuid.uuid4().hex
     expires_at = datetime.utcnow() + timedelta(minutes=10)
 
-    # 토큰 저장
+    # 토큰 저장 (현재 로그인한 사용자 정보 포함)
     receipt_upload_tokens[token] = {
         'user_id': str(current_user.id),
         'user_name': current_user.full_name,
+        'user_role': current_user.role.value,
         'expires_at': expires_at,
         'uploaded_urls': []  # 업로드된 이미지 URL 목록
     }
 
     return {
         "token": token,
-        "expires_at": expires_at.isoformat()
+        "expires_at": expires_at.isoformat(),
+        "user_name": current_user.full_name  # 모바일에서 확인용
     }
 
 
@@ -743,9 +930,10 @@ async def upload_receipt_with_token(
     upload_dir = "uploads/receipts"
     os.makedirs(upload_dir, exist_ok=True)
 
-    # 파일명 생성 (토큰_순번_uuid)
+    # 파일명 생성 (사용자명_순번_uuid) - 누가 업로드했는지 추적 가능
     upload_count = len(token_data['uploaded_urls']) + 1
-    filename = f"{token[:8]}_{upload_count}_{uuid.uuid4().hex[:8]}{file_ext}"
+    user_name_safe = token_data['user_name'].replace(' ', '_')[:20]  # 공백 제거, 길이 제한
+    filename = f"{user_name_safe}_{upload_count}_{uuid.uuid4().hex[:8]}{file_ext}"
     file_path = os.path.join(upload_dir, filename)
 
     # 파일 저장

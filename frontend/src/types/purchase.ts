@@ -46,6 +46,7 @@ export interface PurchaseItem {
   receipt_image_url?: string;
   product_image_url?: string;
   notes?: string;
+  payment_card_id?: string;
   created_at?: string;
 }
 

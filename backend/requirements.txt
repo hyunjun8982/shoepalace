@@ -28,3 +28,7 @@ undetected-chromedriver==3.5.5
 selenium==4.16.0
 # CODEF API RSA 암호화
 pycryptodome==3.20.0
+# PDF 생성 및 이메일 발송
+reportlab==4.0.9
+weasyprint==60.1
+email-validator==2.1.0

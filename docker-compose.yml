@@ -54,6 +54,11 @@ services:
       - LOCAL_WEB_SERVER_URL=http://host.docker.internal:8002
       # DEVICE_UDID는 자동 감지됨. 수동 지정 필요시 아래 주석 해제
       # - DEVICE_UDID=ce081718b5285b27017e
+      # 이메일 설정 (Gmail 예시)
+      - SMTP_SERVER=smtp.gmail.com
+      - SMTP_PORT=587
+      - SENDER_EMAIL=hyunjunpyo@gmail.com
+      - SENDER_PASSWORD=wwdfhgzhgderjfkr
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

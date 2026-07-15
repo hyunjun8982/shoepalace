@@ -16,6 +16,7 @@ class PurchaseItemBase(BaseModel):
     receipt_image_url: Optional[str] = None
     product_image_url: Optional[str] = None
     notes: Optional[str] = None
+    payment_card_id: Optional[str] = None
 
     @validator('product_id')
     def validate_product_id(cls, v):
@@ -79,7 +80,7 @@ class PurchaseItem(PurchaseItemBase):
     product: Optional[ProductInfo] = None  # 상품 정보 포함
     warehouse: Optional[WarehouseInfo] = None  # 창고 정보 포함
 
-    @field_validator('id', 'purchase_id', 'product_id', 'warehouse_id', mode='before')
+    @field_validator('id', 'purchase_id', 'product_id', 'warehouse_id', 'payment_card_id', mode='before')
     @classmethod
     def convert_uuid_to_str(cls, v):
         if isinstance(v, UUID):

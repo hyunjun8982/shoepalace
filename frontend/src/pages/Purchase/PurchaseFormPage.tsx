@@ -61,6 +61,17 @@ const PurchaseFormPage: React.FC = () => {
   const [uploadLoading, setUploadLoading] = useState(false);
   const [fileList, setFileList] = useState<any[]>([]);
 
+  // 입고 사진 업로드 관련 상태
+  const [warehousePhotoUrl, setWarehousePhotoUrl] = useState<string | null>(null);
+  const [warehouseUploadLoading, setWarehouseUploadLoading] = useState(false);
+  const [warehouseFileList, setWarehouseFileList] = useState<any[]>([]);
+  const [warehouseQrCodeToken, setWarehouseQrCodeToken] = useState<string | null>(null);
+  const [warehouseQrCodeUserName, setWarehouseQrCodeUserName] = useState<string | null>(null);
+  const [warehouseQrCodeLoading, setWarehouseQrCodeLoading] = useState(false);
+  const [warehouseQrCodePolling, setWarehouseQrCodePolling] = useState(false);
+  const [warehouseMobileUploadedUrls, setWarehouseMobileUploadedUrls] = useState<string[]>([]);
+  const warehousePollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
   // 상품 추가 폼 상태
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [purchasePrice, setPurchasePrice] = useState<number>(0);
@@ -72,6 +83,7 @@ const PurchaseFormPage: React.FC = () => {
 
   // QR 코드 영수증 업로드 관련 상태
   const [qrCodeToken, setQrCodeToken] = useState<string | null>(null);
+  const [qrCodeUserName, setQrCodeUserName] = useState<string | null>(null);  // 업로드할 사용자명
   const [qrCodeLoading, setQrCodeLoading] = useState(false);
   const [qrCodePolling, setQrCodePolling] = useState(false);
   const [mobileUploadedUrls, setMobileUploadedUrls] = useState<string[]>([]);
@@ -432,9 +444,10 @@ const PurchaseFormPage: React.FC = () => {
     try {
       const response = await purchaseService.generateReceiptUploadToken();
       setQrCodeToken(response.token);
+      setQrCodeUserName(response.user_name);  // 사용자명 저장
       setMobileUploadedUrls([]);
       startPolling(response.token);
-      message.success('QR 코드가 생성되었습니다. 모바일로 스캔해주세요.');
+      message.success(`QR 코드가 생성되었습니다. (업로드: ${response.user_name}) 모바일로 스캔해주세요.`);
     } catch (error: any) {
       console.error('QR code generation failed:', error);
       message.error('QR 코드 생성에 실패했습니다.');
@@ -475,6 +488,7 @@ const PurchaseFormPage: React.FC = () => {
   const handleCloseQrCode = () => {
     cleanupPolling();
     setQrCodeToken(null);
+    setQrCodeUserName(null);
     // 업로드된 이미지가 있으면 fileList에 반영
     if (mobileUploadedUrls.length > 0) {
       const newFileList = mobileUploadedUrls.map((url, index) => ({
@@ -489,6 +503,70 @@ const PurchaseFormPage: React.FC = () => {
     }
   };
 
+  // 입고 사진 QR 코드 생성
+  const handleWarehouseGenerateQrCode = async () => {
+    setWarehouseQrCodeLoading(true);
+    try {
+      const response = await purchaseService.generateReceiptUploadToken();
+      setWarehouseQrCodeToken(response.token);
+      setWarehouseQrCodeUserName(response.user_name);
+      setWarehouseMobileUploadedUrls([]);
+      startWarehousePolling(response.token);
+      message.success('입고 사진 QR 코드가 생성되었습니다. 모바일로 스캔해주세요.');
+    } catch (error: any) {
+      console.error('QR code generation failed:', error);
+      message.error('QR 코드 생성에 실패했습니다.');
+    } finally {
+      setWarehouseQrCodeLoading(false);
+    }
+  };
+
+  // 입고 사진 폴링 시작
+  const startWarehousePolling = useCallback((token: string) => {
+    setWarehouseQrCodePolling(true);
+
+    const poll = async () => {
+      try {
+        const status = await purchaseService.checkReceiptUploadStatus(token);
+        if (status.valid && status.uploaded_urls.length > 0) {
+          setWarehouseMobileUploadedUrls(status.uploaded_urls);
+        }
+      } catch (error) {
+        console.error('Polling error:', error);
+      }
+    };
+
+    poll();
+    warehousePollingIntervalRef.current = setInterval(poll, 2000);
+
+    setTimeout(() => {
+      if (warehousePollingIntervalRef.current) {
+        clearInterval(warehousePollingIntervalRef.current);
+      }
+      setWarehouseQrCodeToken(null);
+    }, 10 * 60 * 1000);
+  }, []);
+
+  // 입고 사진 QR 코드 닫기
+  const handleWarehouseCloseQrCode = () => {
+    if (warehousePollingIntervalRef.current) {
+      clearInterval(warehousePollingIntervalRef.current);
+    }
+    setWarehouseQrCodeToken(null);
+    setWarehouseQrCodeUserName(null);
+    if (warehouseMobileUploadedUrls.length > 0) {
+      const newFileList = warehouseMobileUploadedUrls.map((url, index) => ({
+        uid: `warehouse-mobile-${index}`,
+        name: `입고 사진 ${index + 1}`,
+        status: 'done',
+        url: url,
+        thumbUrl: getFileUrl(url),
+      }));
+      setWarehouseFileList(newFileList);
+      setWarehousePhotoUrl(warehouseMobileUploadedUrls[0]);
+    }
+  };
+
   const loadNextTransactionNo = async (cardType?: string) => {
     try {
       const nextNo = await purchaseService.getNextTransactionNo(cardType);
@@ -500,12 +578,18 @@ const PurchaseFormPage: React.FC = () => {
     }
   };
 
-  // 카드 선택 시 거래번호 재생성
+  // 카드 선택 시 거래번호 재생성 및 모든 항목에 카드 적용
   const handleFormValuesChange = (changedValues: any) => {
     if (changedValues.payment_card_id) {
       const selectedCard = cards.find(c => c.id === changedValues.payment_card_id);
       if (selectedCard) {
         loadNextTransactionNo(selectedCard.card_type);
+        // 모든 항목에 결제 카드 적용
+        const newItems = items.map(item => ({
+          ...item,
+          payment_card_id: changedValues.payment_card_id
+        }));
+        setItems(newItems);
       }
     }
   };
@@ -656,6 +740,7 @@ const PurchaseFormPage: React.FC = () => {
       product_name: selectedProduct.product_name,
       product_code: selectedProduct.product_code,
       brand_name: selectedProduct.brand_name,
+      payment_card_id: form.getFieldValue('payment_card_id'),
     }));
 
     // 기존 items에 새로운 상품 추가
@@ -805,6 +890,7 @@ const PurchaseFormPage: React.FC = () => {
               purchase_price: item.purchase_price,
               selling_price: item.selling_price || null,
               notes: item.notes || null,
+              payment_card_id: item.payment_card_id || values.payment_card_id || null,
             }],
           };
 
@@ -846,6 +932,7 @@ const PurchaseFormPage: React.FC = () => {
           purchase_price: item.purchase_price,
           selling_price: item.selling_price || null,
           notes: item.notes || null,
+          payment_card_id: item.payment_card_id || values.payment_card_id || null,
         };
       });
 
@@ -927,7 +1014,7 @@ const PurchaseFormPage: React.FC = () => {
     {
       title: '이미지',
       key: 'image',
-      width: 60,
+      width: 120,
       render: (_, record: any) => {
         if (record.brand_name && record.product_code) {
           return (
@@ -935,8 +1022,8 @@ const PurchaseFormPage: React.FC = () => {
               src={getFileUrl(`/uploads/products/${record.brand_name}/${record.product_code}.png`) || ''}
               alt={record.product_name}
               style={{
-                width: 50,
-                height: 50,
+                width: 80,
+                height: 80,
                 objectFit: 'cover',
                 borderRadius: 4,
               }}
@@ -952,6 +1039,7 @@ const PurchaseFormPage: React.FC = () => {
     {
       title: '상품',
       key: 'product',
+      width: 240,
       render: (_, record: any) => (
         <div>
           <div style={{ fontWeight: 500 }}>{record.product_name}</div>
@@ -1005,8 +1093,8 @@ const PurchaseFormPage: React.FC = () => {
           parser={(value) => value!.replace(/₩\s?|(,*)/g, '') as any}
           min={0}
           step={1000}
-          size="large"
-          style={{ width: '100%', height: '36px' }}
+          size="small"
+          style={{ width: '100%' }}
         />
       ),
     },
@@ -1024,6 +1112,30 @@ const PurchaseFormPage: React.FC = () => {
       width: 120,
       align: 'right',
       render: (_, record) => `₩${(record.purchase_price * record.quantity).toLocaleString()}`,
+    },
+    {
+      title: '결제 카드',
+      key: 'payment_card',
+      width: 200,
+      render: (_, record: any, index: number) => (
+        <Select
+          size="small"
+          value={record.payment_card_id}
+          onChange={(value) => {
+            const newItems = [...items];
+            newItems[index].payment_card_id = value;
+            setItems(newItems);
+          }}
+          placeholder="카드 선택"
+          style={{ width: '100%' }}
+        >
+          {cards.map(card => (
+            <Option key={card.id} value={card.id}>
+              [{CARD_TYPE_LABELS[card.card_type]}] - [{CARD_ISSUER_LABELS[card.card_issuer]}] - {card.owner_name}
+            </Option>
+          ))}
+        </Select>
+      ),
     },
     {
       title: '작업',
@@ -1132,8 +1244,10 @@ const PurchaseFormPage: React.FC = () => {
                 </Form.Item>
               </div>
 
-              {/* 셋째 줄: 영수증 (가로 스크롤) */}
-              <div style={{ marginTop: 8 }}>
+              {/* 셋째 줄: 영수증 & 입고 사진 (좌우 절반) */}
+              <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                {/* 왼쪽: 영수증 */}
+                <div>
                 <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <label style={{ fontWeight: 500 }}>영수증</label>
                   <Space size="small">
@@ -1182,9 +1296,22 @@ const PurchaseFormPage: React.FC = () => {
                       <QRCodeSVG value={getQrCodeUrl(qrCodeToken)} size={120} level="H" />
                     </div>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 500, marginBottom: 8 }}>
+                      <div style={{ fontWeight: 500, marginBottom: 12 }}>
                         <MobileOutlined style={{ marginRight: 8 }} />
                         모바일로 QR 코드를 스캔하세요
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                        <span style={{ fontSize: 12, color: '#666' }}>또는</span>
+                        <Upload
+                          customRequest={handleUpload}
+                          accept="image/*"
+                          multiple
+                          showUploadList={false}
+                        >
+                          <Button size="small" type="dashed" icon={<UploadOutlined />} loading={uploadLoading}>
+                            파일 선택
+                          </Button>
+                        </Upload>
                       </div>
                       {qrCodePolling && (
                         <Tag icon={<SyncOutlined spin />} color="processing">
@@ -1278,6 +1405,175 @@ const PurchaseFormPage: React.FC = () => {
                     영수증을 업로드하세요 (선택사항)
                   </div>
                 )}
+                </div>
+
+                {/* 오른쪽: 입고 사진 */}
+                <div>
+                <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <label style={{ fontWeight: 500 }}>입고 사진</label>
+                  <Space size="small">
+                    {!warehouseQrCodeToken && (
+                      <>
+                        <Upload
+                          customRequest={(file: any) => {
+                            // 입고 사진 업로드 (임시: 영수증과 같은 로직 사용)
+                            const newFile = {
+                              uid: `warehouse-${Date.now()}-${Math.random()}`,
+                              name: (file.file as File).name,
+                              status: 'done',
+                              url: '/uploads/sample.jpg',
+                              thumbUrl: '/uploads/sample.jpg',
+                            };
+                            setWarehouseFileList([...warehouseFileList, newFile]);
+                            file.onSuccess({});
+                          }}
+                          accept="image/*"
+                          multiple
+                          showUploadList={false}
+                        >
+                          <Button size="small" icon={<UploadOutlined />} loading={warehouseUploadLoading}>
+                            PC 업로드
+                          </Button>
+                        </Upload>
+                        <Button size="small" icon={<QrcodeOutlined />} onClick={handleWarehouseGenerateQrCode} loading={warehouseQrCodeLoading}>
+                          모바일 촬영
+                        </Button>
+                        {warehouseFileList.length > 0 && (
+                          <Button size="small" danger icon={<DeleteOutlined />} onClick={() => setWarehouseFileList([])}>
+                            전체삭제
+                          </Button>
+                        )}
+                      </>
+                    )}
+                  </Space>
+                </div>
+
+                {/* 입고 사진 QR 코드 모달 */}
+                {warehouseQrCodeToken ? (
+                  <div style={{
+                    border: '1px solid #1890ff',
+                    borderRadius: 8,
+                    padding: 16,
+                    backgroundColor: '#e6f7ff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 24
+                  }}>
+                    <div style={{
+                      backgroundColor: 'white',
+                      padding: 12,
+                      borderRadius: 8,
+                      flexShrink: 0
+                    }}>
+                      <QRCodeSVG value={`${window.location.origin}/mobile/receipt/${warehouseQrCodeToken}`} size={120} level="H" />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 500, marginBottom: 12 }}>
+                        <MobileOutlined style={{ marginRight: 8 }} />
+                        모바일로 QR 코드를 스캔하세요
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                        <span style={{ fontSize: 12, color: '#666' }}>또는</span>
+                        <Upload
+                          customRequest={handleUpload}
+                          accept="image/*"
+                          multiple
+                          showUploadList={false}
+                        >
+                          <Button size="small" type="dashed" icon={<UploadOutlined />} loading={uploadLoading}>
+                            파일 선택
+                          </Button>
+                        </Upload>
+                      </div>
+                      {warehouseQrCodePolling && (
+                        <Tag icon={<SyncOutlined spin />} color="processing">
+                          대기 중...
+                        </Tag>
+                      )}
+                      {warehouseMobileUploadedUrls.length > 0 && (
+                        <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                          {warehouseMobileUploadedUrls.map((url, index) => (
+                            <Image
+                              key={index}
+                              src={getFileUrl(url) || ''}
+                              width={50}
+                              height={50}
+                              style={{ objectFit: 'cover', borderRadius: 4 }}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <Button onClick={handleWarehouseCloseQrCode} type={warehouseMobileUploadedUrls.length > 0 ? 'primary' : 'default'}>
+                      {warehouseMobileUploadedUrls.length > 0 ? '완료' : '취소'}
+                    </Button>
+                  </div>
+                ) : warehouseFileList.length > 0 ? (
+                  <div style={{
+                    border: '1px solid #d9d9d9',
+                    borderRadius: 8,
+                    padding: 12,
+                    backgroundColor: '#fafafa',
+                    overflowX: 'auto',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    <Image.PreviewGroup>
+                      <div style={{ display: 'inline-flex', gap: 12 }}>
+                        {warehouseFileList.map((file, index) => (
+                          <div key={file.uid} style={{
+                            position: 'relative',
+                            flexShrink: 0,
+                            width: 150,
+                            height: 150
+                          }}>
+                            <Image
+                              src={file.thumbUrl || getFileUrl(file.url) || ''}
+                              width={150}
+                              height={150}
+                              style={{ objectFit: 'cover', borderRadius: 4, border: '1px solid #d9d9d9' }}
+                            />
+                            <Tag style={{ position: 'absolute', bottom: 4, left: 4, margin: 0 }}>
+                              #{index + 1}
+                            </Tag>
+                            <Button
+                              type="primary"
+                              danger
+                              size="small"
+                              icon={<DeleteOutlined />}
+                              onClick={() => {
+                                setWarehouseFileList(warehouseFileList.filter((_, i) => i !== index));
+                              }}
+                              style={{
+                                position: 'absolute',
+                                top: 4,
+                                right: 4,
+                                borderRadius: '50%',
+                                width: 24,
+                                height: 24,
+                                padding: 0,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                              }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </Image.PreviewGroup>
+                  </div>
+                ) : (
+                  <div style={{
+                    border: '2px dashed #d9d9d9',
+                    borderRadius: 8,
+                    padding: '16px 24px',
+                    backgroundColor: '#fafafa',
+                    color: '#999',
+                    textAlign: 'center'
+                  }}>
+                    입고 사진을 업로드하세요 (선택사항)
+                  </div>
+                )}
+                </div>
               </div>
 
               {/* 바코드 검색 */}

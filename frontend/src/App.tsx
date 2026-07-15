@@ -43,6 +43,7 @@ import CardTransactionListPage from './pages/CardTransaction/CardTransactionList
 import BankTransactionListPage from './pages/BankTransaction/BankTransactionListPage';
 import CardManagePage from './pages/Card/CardManagePage';
 import CodefSettingsPage from './pages/Admin/CodefSettingsPage';
+import ProfilePage from './pages/Profile/ProfilePage';
 
 // Ant Design 한국어 설정
 const antdConfig = {
@@ -241,7 +242,7 @@ const App: React.FC = () => {
                       />
 
                       {/* 프로필 */}
-                      <Route path="/profile" element={<div>프로필 페이지 (개발 예정)</div>} />
+                      <Route path="/profile" element={<ProfilePage />} />
 
                       {/* 도움말 */}
                       <Route path="/help" element={<HelpPage />} />

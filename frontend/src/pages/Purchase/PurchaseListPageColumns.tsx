@@ -1,5 +1,5 @@
 import { ColumnsType } from 'antd/es/table';
-import { Button, Tag, Image, Tooltip, Modal } from 'antd';
+import { Button, Tag, Image, Tooltip, Modal, Space } from 'antd';
 import { CheckCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { Purchase, PaymentType } from '../../types/purchase';
 import { CARD_ISSUER_LABELS, CARD_TYPE_LABELS } from '../../types/card';
@@ -284,36 +284,37 @@ export const getColumns = (
       if (record.is_confirmed) {
         const isAdmin = currentUserRole === 'admin';
         return (
-          <Tooltip title={isAdmin ? '클릭하여 입고확인 취소' : `${record.receiver_name || '확인자'} (${record.confirmed_at ? dayjs(record.confirmed_at).format('MM/DD HH:mm') : ''})`}>
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 2,
-                cursor: isAdmin ? 'pointer' : 'default',
-                minHeight: 40,
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (isAdmin && handleUnconfirm) {
-                  Modal.confirm({
-                    title: '입고확인 취소',
-                    icon: <ExclamationCircleOutlined />,
-                    content: '입고확인을 취소하시겠습니까?',
-                    okText: '취소하기',
-                    cancelText: '닫기',
-                    okButtonProps: { danger: true },
-                    onOk: () => handleUnconfirm(record.id),
-                  });
-                }
-              }}
-            >
-              <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 16 }} />
-              <span style={{ fontSize: 11, color: '#52c41a' }}>{record.receiver_name || '완료'}</span>
-            </div>
-          </Tooltip>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, minHeight: 40, justifyContent: 'center' }}>
+            <Tooltip title={isAdmin ? '클릭하여 입고확인 취소' : `${record.receiver_name || '확인자'} (${record.confirmed_at ? dayjs(record.confirmed_at).format('MM/DD HH:mm') : ''})`}>
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 2,
+                  cursor: isAdmin ? 'pointer' : 'default',
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (isAdmin && handleUnconfirm) {
+                    Modal.confirm({
+                      title: '입고확인 취소',
+                      icon: <ExclamationCircleOutlined />,
+                      content: '입고확인을 취소하시겠습니까?',
+                      okText: '취소하기',
+                      cancelText: '닫기',
+                      okButtonProps: { danger: true },
+                      onOk: () => handleUnconfirm(record.id),
+                    });
+                  }
+                }}
+              >
+                <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 16 }} />
+                <span style={{ fontSize: 11, color: '#52c41a' }}>{record.receiver_name || '완료'}</span>
+              </div>
+            </Tooltip>
+          </div>
         );
       } else {
         return (

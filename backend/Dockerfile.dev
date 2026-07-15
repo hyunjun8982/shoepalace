@@ -30,12 +30,15 @@ RUN apt-get update && apt-get install -y \
     libcairo2 \
     libatspi2.0-0 \
     fonts-liberation \
+    fonts-noto-cjk \
     libx11-xcb1 \
     libxcb-dri3-0 \
     xdg-utils \
     # Xvfb 가상 디스플레이 및 X11 관련 패키지
     xvfb \
     x11-utils \
+    # wkhtmltopdf
+    wkhtmltopdf \
     && rm -rf /var/lib/apt/lists/*
 
 # Google Chrome 설치 (undetected-chromedriver용)
@@ -44,6 +47,9 @@ RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearm
     && apt-get update \
     && apt-get install -y google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
+
+# 폰트 설치 확인
+RUN fc-list | grep -i noto || echo "폰트 설치 확인 완료"
 
 # Chrome 환경 변수 설정
 ENV CHROME_BIN=/usr/bin/google-chrome

@@ -54,8 +54,10 @@ class PurchaseItem(BaseModel):
     receipt_image_url = Column(String(500))
     product_image_url = Column(String(500))
     notes = Column(Text)
+    payment_card_id = Column(UUID(as_uuid=True), ForeignKey("cards.id"), nullable=True)
 
     # 관계 설정
     purchase = relationship("Purchase", back_populates="items")
     product = relationship("Product", back_populates="purchase_items")
     warehouse = relationship("Warehouse")
+    payment_card = relationship("Card", foreign_keys=[payment_card_id])

@@ -76,7 +76,7 @@ export const purchaseService = {
   // ============ 영수증 QR 코드 업로드 관련 ============
 
   // 영수증 업로드 토큰 생성
-  async generateReceiptUploadToken(): Promise<{ token: string; expires_at: string }> {
+  async generateReceiptUploadToken(): Promise<{ token: string; expires_at: string; user_name: string }> {
     const response = await api.post('/purchases/receipt-upload-token/generate');
     return response.data;
   },

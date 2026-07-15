@@ -35,6 +35,11 @@ services:
       - ENVIRONMENT=production
       - APPIUM_URL=https://9c6ae1ba8c79.ngrok-free.app
       - CF_WORKER_URL=https://shoepalace-pxos.onrender.com/proxy
+      # 이메일 설정 (Gmail)
+      - SMTP_SERVER=smtp.gmail.com
+      - SMTP_PORT=587
+      - SENDER_EMAIL=hyunjunpyo@gmail.com
+      - SENDER_PASSWORD=wwdfhgzhgderjfkr
     depends_on:
       db:
         condition: service_healthy

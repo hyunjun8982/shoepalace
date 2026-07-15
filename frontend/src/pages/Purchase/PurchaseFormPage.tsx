@@ -1296,22 +1296,9 @@ const PurchaseFormPage: React.FC = () => {
                       <QRCodeSVG value={getQrCodeUrl(qrCodeToken)} size={120} level="H" />
                     </div>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 500, marginBottom: 12 }}>
+                      <div style={{ fontWeight: 500, marginBottom: 8 }}>
                         <MobileOutlined style={{ marginRight: 8 }} />
                         모바일로 QR 코드를 스캔하세요
-                      </div>
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-                        <span style={{ fontSize: 12, color: '#666' }}>또는</span>
-                        <Upload
-                          customRequest={handleUpload}
-                          accept="image/*"
-                          multiple
-                          showUploadList={false}
-                        >
-                          <Button size="small" type="dashed" icon={<UploadOutlined />} loading={uploadLoading}>
-                            파일 선택
-                          </Button>
-                        </Upload>
                       </div>
                       {qrCodePolling && (
                         <Tag icon={<SyncOutlined spin />} color="processing">
@@ -1468,22 +1455,9 @@ const PurchaseFormPage: React.FC = () => {
                       <QRCodeSVG value={`${window.location.origin}/mobile/receipt/${warehouseQrCodeToken}`} size={120} level="H" />
                     </div>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 500, marginBottom: 12 }}>
+                      <div style={{ fontWeight: 500, marginBottom: 8 }}>
                         <MobileOutlined style={{ marginRight: 8 }} />
                         모바일로 QR 코드를 스캔하세요
-                      </div>
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-                        <span style={{ fontSize: 12, color: '#666' }}>또는</span>
-                        <Upload
-                          customRequest={handleUpload}
-                          accept="image/*"
-                          multiple
-                          showUploadList={false}
-                        >
-                          <Button size="small" type="dashed" icon={<UploadOutlined />} loading={uploadLoading}>
-                            파일 선택
-                          </Button>
-                        </Upload>
                       </div>
                       {warehouseQrCodePolling && (
                         <Tag icon={<SyncOutlined spin />} color="processing">

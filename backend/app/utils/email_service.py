@@ -1,5 +1,6 @@
 import smtplib
 import os
+import socket
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
@@ -7,6 +8,9 @@ from email import encoders
 from datetime import datetime
 from io import BytesIO
 import logging
+
+# IPv6 비활성화 (운영 서버에서 IPv6이 차단된 경우 대응)
+socket.has_ipv6 = False
 
 logger = logging.getLogger(__name__)
 

@@ -200,7 +200,8 @@ def find_voucher_offer(offers: list, coupon_value: str) -> dict:
         rewards = offer.get('rewards', [])
         for reward in rewards:
             reward_value = reward.get('value', '')
-            if reward_value == coupon_value:
+            # 문자열과 정수 모두 비교 (API 응답이 정수일 수도 있음)
+            if str(reward_value) == str(coupon_value):
                 return {
                     'offerId': offer.get('id'),
                     'rewardId': reward.get('id'),

@@ -372,7 +372,7 @@ def delete_sale(
 
     return {"message": "Sale deleted successfully"}
 
-@router.patch("/items/{item_id}")
+@router.patch("/items/{item_id}", response_model=SaleSchema)
 def update_sale_item(
     item_id: str,
     item_update: SaleItemUpdate,
@@ -393,7 +393,33 @@ def update_sale_item(
     db.commit()
     db.refresh(item)
 
-    return {"message": "Sale item updated successfully"}
+    # 전체 sale 객체 반환 (관련된 items 포함)
+    from sqlalchemy.orm import selectinload
+    from app.models.brand import Brand
+
+    sale = db.query(Sale)\
+        .options(
+            selectinload(Sale.items).selectinload(SaleItem.product).selectinload(Product.brand),
+            selectinload(Sale.seller)
+        )\
+        .filter(Sale.id == item.sale_id).first()
+
+    if sale and sale.seller:
+        sale.seller_name = sale.seller.full_name
+
+    for sale_item in sale.items if sale else []:
+        if sale_item.product:
+            setattr(sale_item, 'product_code', sale_item.product.product_code)
+            if not sale_item.product_name:
+                sale_item.product_name = sale_item.product.product_name
+            if sale_item.product.brand:
+                setattr(sale_item, 'brand_name', sale_item.product.brand.name)
+            if not sale_item.product_image_url and sale_item.product.brand and sale_item.product.product_code:
+                brand_name = sale_item.product.brand.name
+                product_code = sale_item.product.product_code
+                sale_item.product_image_url = f"/uploads/products/{brand_name}/{product_code}.png"
+
+    return sale
 
 @router.post("/{sale_id}/upload-transaction-statement")
 async def upload_transaction_statement(

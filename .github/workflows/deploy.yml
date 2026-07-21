@@ -26,37 +26,32 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       # 변경된 컴포넌트 감지
       - name: Detect changes
         id: changes
         run: |
-          changed=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+          # 이전 커밋이 없으면 모든 파일이 변경된 것으로 간주
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            changed=$(git diff --name-only HEAD~1 HEAD)
+          else
+            changed=$(git ls-files)
+          fi
+
           echo "Changed files:"
           echo "$changed"
 
-          if echo "$changed" | grep -q "^backend/"; then
-            echo "backend=true" >> $GITHUB_OUTPUT
-          else
-            echo "backend=false" >> $GITHUB_OUTPUT
-          fi
+          backend_changed=$(echo "$changed" | grep -q "^backend/" && echo "true" || echo "false")
+          frontend_changed=$(echo "$changed" | grep -q "^frontend/" && echo "true" || echo "false")
+          card_app_changed=$(echo "$changed" | grep -q "^card-app/" && echo "true" || echo "false")
 
-          if echo "$changed" | grep -q "^frontend/"; then
-            echo "frontend=true" >> $GITHUB_OUTPUT
-          else
-            echo "frontend=false" >> $GITHUB_OUTPUT
-          fi
-
-          if echo "$changed" | grep -q "^card-app/"; then
-            echo "card_app=true" >> $GITHUB_OUTPUT
-          else
-            echo "card_app=false" >> $GITHUB_OUTPUT
-          fi
+          echo "backend=$backend_changed" >> $GITHUB_OUTPUT
+          echo "frontend=$frontend_changed" >> $GITHUB_OUTPUT
+          echo "card_app=$card_app_changed" >> $GITHUB_OUTPUT
 
           # Dockerfile, docker-compose.yml, nginx 변경 시만 전체 빌드
-          # workflow/docker-compose.prod.yml 변경은 감지 제외 (배포 시간 단축)
-          if echo "$changed" | grep -qE "(^backend/Dockerfile|^frontend/Dockerfile|^card-app/Dockerfile|^docker-compose\.yml$|^nginx/)"; then
+          if echo "$changed" | grep -qE "(Dockerfile|docker-compose|nginx)"; then
             echo "backend=true" >> $GITHUB_OUTPUT
             echo "frontend=true" >> $GITHUB_OUTPUT
             echo "card_app=true" >> $GITHUB_OUTPUT

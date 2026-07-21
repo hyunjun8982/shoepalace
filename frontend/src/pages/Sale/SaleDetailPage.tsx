@@ -451,16 +451,18 @@ const SaleDetailPage: React.FC = () => {
                         total_company_amount: totalCompanyAmount,
                       });
 
-                      // 아이템별 회사 판매가 개별 업데이트
-                      const updatePromises = sale!.items?.map(item => {
-                        const newPrice = editingPrices[item.id!];
-                        if (newPrice !== undefined && newPrice !== item.company_sale_price) {
+                      // 사이즈별 판매자 판매가 업데이트
+                      const updatePromises = (sale!.items || []).map(item => {
+                        const newPrice = editingSizeSellerPrices[item.size!];
+                        console.log(`Item ${item.id} size ${item.size}: newPrice=${newPrice}, current=${item.seller_sale_price_krw}`);
+                        if (newPrice !== undefined && newPrice !== item.seller_sale_price_krw) {
+                          console.log(`Updating item ${item.id} size ${item.size} with seller price ${newPrice}`);
                           return saleService.updateSaleItem(item.id!, {
-                            company_sale_price: newPrice,
+                            seller_sale_price_krw: newPrice,
                           });
                         }
                         return Promise.resolve();
-                      }) ?? [];
+                      });
 
                       await Promise.all(updatePromises);
 

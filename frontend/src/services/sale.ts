@@ -35,6 +35,7 @@ export const saleService = {
   async updateSaleItem(itemId: string, data: {
     company_sale_price?: number;
     seller_margin?: number;
+    seller_sale_price_krw?: number;
   }): Promise<void> {
     await api.patch(`/sales/items/${itemId}`, data);
   },

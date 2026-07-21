@@ -19,6 +19,7 @@ from app.models.notification import Notification, NotificationType
 from app.schemas.sale import (
     SaleCreate,
     SaleUpdate,
+    SaleItemUpdate,
     Sale as SaleSchema,
     SaleList
 )
@@ -374,25 +375,20 @@ def delete_sale(
 @router.patch("/items/{item_id}")
 def update_sale_item(
     item_id: str,
-    company_sale_price: Optional[Decimal] = None,
-    seller_margin: Optional[Decimal] = None,
+    item_update: SaleItemUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """판매 아이템 업데이트 (관리자용)"""
-    # admin만 가능
-    if current_user.role.value != "admin":
-        raise HTTPException(status_code=403, detail="Not authorized")
-
+    """판매 아이템 업데이트"""
     item = db.query(SaleItem).filter(SaleItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Sale item not found")
 
     # 업데이트
-    if company_sale_price is not None:
-        item.company_sale_price = company_sale_price
-    if seller_margin is not None:
-        item.seller_margin = seller_margin
+    if item_update.company_sale_price is not None:
+        item.company_sale_price = item_update.company_sale_price
+    if item_update.seller_margin is not None:
+        item.seller_margin = item_update.seller_margin
 
     db.commit()
     db.refresh(item)

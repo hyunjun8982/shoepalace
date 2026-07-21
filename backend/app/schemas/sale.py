@@ -24,6 +24,8 @@ class SaleItemUpdate(SaleItemBase):
     product_id: Optional[str] = None
     quantity: Optional[int] = None
     seller_sale_price_krw: Optional[Decimal] = None
+    company_sale_price: Optional[Decimal] = None
+    seller_margin: Optional[Decimal] = None
 
 class SaleItem(SaleItemBase):
     id: str

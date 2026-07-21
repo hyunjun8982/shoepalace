@@ -734,6 +734,37 @@ const SaleDetailPage: React.FC = () => {
               </div>
             </div>
 
+            {/* 회사 판매가 입력 (편집 모드) */}
+            {editMode && (
+              <div style={{ marginBottom: 16, padding: '12px', backgroundColor: '#fff7e6', borderRadius: '4px', border: '1px solid #ffc069' }}>
+                <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '8px', color: '#ad6800' }}>
+                  회사 판매가 (개당)
+                </div>
+                {sale?.items?.map(item => (
+                  <div key={item.id} style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '13px', minWidth: '80px', color: '#666' }}>
+                      {item.size || 'FREE'}:
+                    </span>
+                    <InputNumber
+                      min={0}
+                      value={editingPrices[item.id!] ?? item.company_sale_price ?? 0}
+                      onChange={(value) => {
+                        if (value !== null) {
+                          setEditingPrices(prev => ({
+                            ...prev,
+                            [item.id!]: value
+                          }));
+                        }
+                      }}
+                      size="small"
+                      style={{ width: '120px' }}
+                      prefix="₩"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* 총계 */}
             <div style={{
               padding: '16px',

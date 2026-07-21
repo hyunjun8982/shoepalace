@@ -439,14 +439,30 @@ const SaleDetailPage: React.FC = () => {
                     try {
                       const values = await form.validateFields();
 
-                      // 판매 정보 업데이트
+                      // 수정된 판매가로 총액 계산
+                      const totalCompanyAmount = sale!.items?.reduce((sum, item) => {
+                        const companyPrice = editingPrices[item.id!] ?? item.company_sale_price ?? 0;
+                        return sum + (companyPrice * (item.quantity || 0));
+                      }, 0) ?? 0;
+
+                      // 판매 정보 업데이트 (total_company_amount만 전송)
                       await saleService.updateSale(sale!.id!, {
                         ...values,
-                        items: sale!.items?.map(item => ({
-                          ...item,
-                          company_sale_price: editingPrices[item.id!] || item.company_sale_price,
-                        })),
+                        total_company_amount: totalCompanyAmount,
                       });
+
+                      // 아이템별 회사 판매가 개별 업데이트
+                      const updatePromises = sale!.items?.map(item => {
+                        const newPrice = editingPrices[item.id!];
+                        if (newPrice !== undefined && newPrice !== item.company_sale_price) {
+                          return saleService.updateSaleItem(item.id!, {
+                            company_sale_price: newPrice,
+                          });
+                        }
+                        return Promise.resolve();
+                      }) ?? [];
+
+                      await Promise.all(updatePromises);
 
                       antMessage.success('저장되었습니다.');
                       setEditMode(false);

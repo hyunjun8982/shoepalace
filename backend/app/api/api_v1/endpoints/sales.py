@@ -385,6 +385,8 @@ def update_sale_item(
         raise HTTPException(status_code=404, detail="Sale item not found")
 
     # 업데이트
+    if item_update.seller_sale_price_krw is not None:
+        item.seller_sale_price_krw = item_update.seller_sale_price_krw
     if item_update.company_sale_price is not None:
         item.company_sale_price = item_update.company_sale_price
     if item_update.seller_margin is not None:

@@ -373,6 +373,7 @@ const SaleDetailPage: React.FC = () => {
                           sizeSellerPrices[size] = item.seller_sale_price_krw || 0;
                         });
 
+                        console.log('편집 모드 진입 - sizeSellerPrices:', sizeSellerPrices);
                         setEditingPrices(prices);
                         setEditingSizeQuantities(sizeQtys);
                         setEditingSizeSellerPrices(sizeSellerPrices);

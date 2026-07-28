@@ -165,28 +165,24 @@ export const getColumns = (
       // 반품 재입고 여부 (supplier로 판단)
       const isReturned = record.supplier === '반품 재입고';
 
-      // notes에서 판매번호 추출
-      const saleNumberMatch = record.notes?.match(/판매번호 (\w+)/);
-      const saleNumber = saleNumberMatch?.[1];
+      // notes에서 sale_id 추출
+      const saleId = record.notes?.replace('반품 반입: ', '').trim();
 
       return (
         <div style={{ fontSize: '12px', lineHeight: '1.5', color: '#333' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
             {displayNames[0] && <span>{displayNames[0]}</span>}
-            {isReturned && (
-              <Tag color="orange" style={{ margin: 0, fontSize: '11px' }}>반품건</Tag>
-            )}
-            {isReturned && saleNumber && (
+            {isReturned && saleId && (
               <Button
                 type="link"
                 size="small"
                 onClick={(e) => {
                   e.stopPropagation();
-                  window.open(`/sales/${saleNumber}`, '_blank');
+                  window.open(`/sales/${saleId}`, '_blank');
                 }}
                 style={{ padding: '0 4px', fontSize: '11px', height: 'auto' }}
               >
-                원본보기
+                반품내역 보기
               </Button>
             )}
           </div>

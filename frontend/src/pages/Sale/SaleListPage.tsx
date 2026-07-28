@@ -273,7 +273,7 @@ const SaleListPage: React.FC = () => {
               await purchaseService.createPurchaseFromReturn({
                 items: returnItems,
                 supplier: '반품 재입고',
-                notes: `반품 반입: 판매번호 ${sale.sale_number}`
+                notes: `반품 반입: ${sale.id}`
               });
 
               message.success('재입고 처리가 완료되었습니다.');

@@ -114,8 +114,8 @@ const PurchaseFormPage: React.FC = () => {
         form.setFieldsValue({ buyer_id: currentUser.id });
       }
 
-      // 기능 #2: localStorage에서 임시 저장된 구매 폼 데이터 복원
-      loadDraftPurchaseData();
+      // 기능 #2: localStorage에서 임시 저장된 구매 폼 데이터 복원 (모달 확인)
+      checkAndLoadDraft();
 
       // 기능 #3: 반품 데이터에서 재입고 항목 자동 추가
       loadReturnedItemsIfExists();
@@ -143,6 +143,43 @@ const PurchaseFormPage: React.FC = () => {
     }
   }, [items, id, form]);
 
+  // 기능 #2-0: 임시 저장 데이터 확인 후 모달로 선택
+  const checkAndLoadDraft = () => {
+    try {
+      const draftData = localStorage.getItem('purchaseFormDraft');
+      if (draftData) {
+        const parsed = JSON.parse(draftData);
+        if (parsed.formData || (parsed.items && parsed.items.length > 0)) {
+          Modal.confirm({
+            title: '이전 입력값 발견',
+            content: (
+              <div>
+                <p>이전에 작성 중이던 구매 등록 내용이 있습니다.</p>
+                <p style={{ marginBottom: 0, color: '#666', fontSize: '12px' }}>
+                  {parsed.items?.length > 0 && `상품 ${parsed.items.length}개 • `}
+                  {parsed.timestamp && `저장: ${dayjs(parsed.timestamp).format('YYYY-MM-DD HH:mm:ss')}`}
+                </p>
+              </div>
+            ),
+            okText: '계속 작성하기',
+            cancelText: '새로 시작',
+            onOk() {
+              loadDraftPurchaseData();
+            },
+            onCancel() {
+              // 임시 저장 데이터 삭제
+              localStorage.removeItem('purchaseFormDraft');
+              localStorage.removeItem('returnedItems');
+              message.info('이전 입력값이 삭제되었습니다.');
+            },
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Failed to check draft:', error);
+    }
+  };
+
   // 기능 #2: localStorage에서 임시 저장된 구매 폼 데이터 복원
   const loadDraftPurchaseData = () => {
     try {
@@ -161,6 +198,7 @@ const PurchaseFormPage: React.FC = () => {
         if (parsed.items && Array.isArray(parsed.items)) {
           setItems(parsed.items);
         }
+        message.success('이전 입력값이 복원되었습니다.');
       }
     } catch (error) {
       console.error('Failed to load draft purchase data:', error);

@@ -174,7 +174,12 @@ const SaleDetailPage: React.FC = () => {
       message.success('반품 처리가 완료되었습니다. 재고가 원복되었습니다.');
 
       // 기능 #3: 재입고 처리 확인 모달
+      console.log('🔵 After return, sale:', sale);
+      console.log('🔵 sale.items:', sale?.items);
+      console.log('🔵 sale.items.length:', sale?.items?.length);
+
       if (sale && sale.items && sale.items.length > 0) {
+        console.log('✅ Showing modal');
         Modal.confirm({
           title: '재입고 처리',
           content: (

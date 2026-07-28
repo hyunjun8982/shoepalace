@@ -31,6 +31,7 @@ import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { Sale, SaleStatus, SaleListParams } from '../../types/sale';
 import { saleService } from '../../services/sale';
+import { purchaseService } from '../../services/purchase';
 import { brandService, Brand } from '../../services/brand';
 import { useAuth } from '../../contexts/AuthContext';
 import './SaleListPage.css';
@@ -230,10 +231,68 @@ const SaleListPage: React.FC = () => {
   // 반품 처리
   const handleReturnSale = async (saleId: string) => {
     try {
+      // 판매 상세 정보 조회
+      const sale = await saleService.getSale(saleId);
+
+      // 반품 처리
       await saleService.processReturn(saleId);
-      message.success('반품 처리되었습니다.');
-      fetchSales();
-      fetchAllSales();
+      message.success('반품 처리가 완료되었습니다. 재고가 원복되었습니다.');
+
+      // 재입고 처리 확인 모달
+      if (sale && sale.items && sale.items.length > 0) {
+        Modal.confirm({
+          title: '재입고 처리',
+          content: (
+            <div>
+              <p>반품 항목을 재입고로 등록하시겠습니까?</p>
+              <div style={{
+                marginTop: '12px',
+                padding: '8px 12px',
+                backgroundColor: '#f5f5f5',
+                borderRadius: '4px',
+                fontSize: '12px',
+                color: '#666'
+              }}>
+                상품 {sale.items.length}개 • 판매번호: {sale.sale_number}
+              </div>
+            </div>
+          ),
+          okText: '재입고 처리',
+          cancelText: '취소',
+          okButtonProps: { type: 'primary' },
+          onOk: async () => {
+            try {
+              // 재입고 항목 생성
+              const returnItems = sale.items?.map((item: any) => ({
+                product_id: item.product_id,
+                size: item.size,
+                quantity: item.quantity,
+                purchase_price: item.company_sale_price || 0
+              })) || [];
+
+              await purchaseService.createPurchaseFromReturn({
+                items: returnItems,
+                supplier: '반품 재입고',
+                notes: `반품 반입: 판매번호 ${sale.sale_number}`
+              });
+
+              message.success('재입고 처리가 완료되었습니다.');
+              fetchSales();
+              fetchAllSales();
+            } catch (error: any) {
+              message.error('재입고 처리에 실패했습니다.');
+            }
+          },
+          onCancel() {
+            // 취소 - 목록 새로고침만
+            fetchSales();
+            fetchAllSales();
+          }
+        });
+      } else {
+        fetchSales();
+        fetchAllSales();
+      }
     } catch (error: any) {
       message.error(error.response?.data?.detail || '반품 처리에 실패했습니다.');
     }

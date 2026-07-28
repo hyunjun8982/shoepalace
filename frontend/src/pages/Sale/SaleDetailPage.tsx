@@ -36,6 +36,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { Sale, SaleItem, SaleStatus } from '../../types/sale';
 import { saleService } from '../../services/sale';
+import { purchaseService } from '../../services/purchase';
 import { useAuth } from '../../contexts/AuthContext';
 import { getFileUrl } from '../../utils/urlUtils';
 import type { ColumnsType } from 'antd/es/table';
@@ -172,28 +173,75 @@ const SaleDetailPage: React.FC = () => {
       await saleService.processReturn(id!);
       message.success('반품 처리가 완료되었습니다. 재고가 원복되었습니다.');
 
-      // 기능 #3: 반품 정보를 localStorage에 저장하여 PurchaseFormPage에서 자동 로드
-      if (sale) {
-        const returnedItems = sale.items?.map((item: SaleItem) => ({
-          product_id: item.product_id,
-          product_name: item.product?.product_name,
-          brand_name: item.product?.brand_name,
-          product_code: item.product?.product_code,
-          size: item.size,
-          quantity: item.quantity,
-          selling_price: item.selling_price,
-          purchase_price: item.selling_price, // 판매가를 구매가로 사용
-          reason: `${sale.buyer_name}님 반품`,
-          notes: `반품 반입: 판매번호 ${sale.transaction_no}`
-        })) || [];
+      // 기능 #3: 재입고 처리 확인 모달
+      if (sale && sale.items && sale.items.length > 0) {
+        Modal.confirm({
+          title: '재입고 처리',
+          content: (
+            <div>
+              <p>반품 항목을 재입고로 등록하시겠습니까?</p>
+              <div style={{
+                marginTop: '12px',
+                padding: '8px 12px',
+                backgroundColor: '#f5f5f5',
+                borderRadius: '4px',
+                fontSize: '12px',
+                color: '#666'
+              }}>
+                상품 {sale.items.length}개 • 판매번호: {sale.sale_number}
+              </div>
+            </div>
+          ),
+          okText: '재입고 처리',
+          cancelText: '취소',
+          okButtonProps: { type: 'primary' },
+          onOk: async () => {
+            try {
+              // 재입고 항목 생성
+              const returnItems = sale.items?.map((item: SaleItem) => ({
+                product_id: item.product_id,
+                size: item.size,
+                quantity: item.quantity,
+                purchase_price: item.company_sale_price || 0
+              })) || [];
 
-        localStorage.setItem('returnedItems', JSON.stringify({
-          items: returnedItems,
-          timestamp: new Date().toISOString()
-        }));
+              await purchaseService.createPurchaseFromReturn({
+                items: returnItems,
+                supplier: '반품 재입고',
+                notes: `반품 반입: 판매번호 ${sale.sale_number}`
+              });
+
+              message.success('재입고 처리가 완료되었습니다.');
+              fetchSaleDetail();
+            } catch (error: any) {
+              message.error('재입고 처리에 실패했습니다.');
+            }
+          },
+          onCancel() {
+            // 취소 - localStorage에만 저장 (나중에 수동으로 처리 가능)
+            if (sale) {
+              const returnedItems = sale.items?.map((item: SaleItem) => ({
+                product_id: item.product_id,
+                product_name: item.product_name,
+                brand_name: item.brand_name,
+                product_code: item.product_code,
+                size: item.size,
+                quantity: item.quantity,
+                selling_price: item.company_sale_price || 0,
+                purchase_price: item.company_sale_price || 0,
+                reason: `${sale.customer_name}님 반품`,
+                notes: `반품 반입: 판매번호 ${sale.sale_number}`
+              })) || [];
+
+              localStorage.setItem('returnedItems', JSON.stringify({
+                items: returnedItems,
+                timestamp: new Date().toISOString()
+              }));
+              message.info('재입고 데이터가 임시 저장되었습니다. 나중에 구매 등록에서 처리할 수 있습니다.');
+            }
+          }
+        });
       }
-
-      fetchSaleDetail();
     } catch (error: any) {
       message.error(error.response?.data?.detail || '반품 처리에 실패했습니다.');
     } finally {

@@ -101,12 +101,15 @@ const PurchaseFormPage: React.FC = () => {
 
   // 상품 목록 로드 및 거래번호 생성
   useEffect(() => {
+    console.log('🔵 PurchaseFormPage useEffect triggered, id:', id);
     loadProducts();
     loadUsers();
     loadCards();
     if (id && id !== 'new') {
+      console.log('📥 Loading existing purchase:', id);
       loadPurchase(id);
     } else {
+      console.log('🆕 New purchase mode');
       // 신규 등록일 때 거래번호 자동 생성
       loadNextTransactionNo();
       // 구매자 기본값을 현재 로그인한 사용자로 설정
@@ -118,6 +121,7 @@ const PurchaseFormPage: React.FC = () => {
       checkAndLoadDraft();
 
       // 기능 #3: 반품 데이터에서 재입고 항목 자동 추가
+      console.log('📦 Calling loadReturnedItemsIfExists');
       loadReturnedItemsIfExists();
     }
   }, [id, currentUser]);

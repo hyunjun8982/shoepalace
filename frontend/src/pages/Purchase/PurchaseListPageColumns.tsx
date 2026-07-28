@@ -155,22 +155,39 @@ export const getColumns = (
   {
     title: '상품명',
     key: 'product_names',
-    width: 200,
+    width: 240,
     render: (_, record) => {
       if (!record.items || record.items.length === 0) return '-';
       const names = record.items.map(item => item.product?.product_name || item.product_name || '-');
       const maxDisplay = 2;
       const displayNames = names.slice(0, maxDisplay);
       const hiddenCount = names.length - maxDisplay;
-      // 반품건 표시 여부 확인
-      const hasReturned = record.items.some((item: any) => item.is_returned);
+      // 반품 재입고 여부 (supplier로 판단)
+      const isReturned = record.supplier === '반품 재입고';
+
+      // notes에서 판매번호 추출
+      const saleNumberMatch = record.notes?.match(/판매번호 (\w+)/);
+      const saleNumber = saleNumberMatch?.[1];
 
       return (
         <div style={{ fontSize: '12px', lineHeight: '1.5', color: '#333' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
             {displayNames[0] && <span>{displayNames[0]}</span>}
-            {hasReturned && (
+            {isReturned && (
               <Tag color="orange" style={{ margin: 0, fontSize: '11px' }}>반품건</Tag>
+            )}
+            {isReturned && saleNumber && (
+              <Button
+                type="link"
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  window.open(`/sales/${saleNumber}`, '_blank');
+                }}
+                style={{ padding: '0 4px', fontSize: '11px', height: 'auto' }}
+              >
+                원본보기
+              </Button>
             )}
           </div>
           {displayNames.slice(1).map((name, idx) => (

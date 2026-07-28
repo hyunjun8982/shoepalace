@@ -739,8 +739,9 @@ const PurchaseListPage: React.FC = () => {
           rowKey="id"
           rowSelection={rowSelection}
           onRow={(record) => {
-            // 반품 재입고 항목은 배경색 추가
-            const isReturned = record.items?.some((item: any) => item.is_returned);
+            // 반품 재입고 항목은 supplier가 "반품 재입고"인지 확인
+            const isReturned = record.supplier === '반품 재입고';
+            console.log('🔍 Purchase row:', record.transaction_no, 'supplier:', record.supplier, 'isReturned:', isReturned);
             return {
               onClick: () => navigate(`/purchases/${record.id}`),
               style: {

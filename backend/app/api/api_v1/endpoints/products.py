@@ -576,12 +576,15 @@ def get_product_avg_price(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    # 해당 상품의 구매 이력에서 평균 구매가 계산
+    # 해당 상품의 구매 이력에서 평균 구매가 계산 (0원 제외)
     avg_price_result = db.query(
         func.avg(PurchaseItem.purchase_price).label('avg_price'),
         func.min(PurchaseItem.purchase_price).label('min_price'),
         func.max(PurchaseItem.purchase_price).label('max_price')
-    ).filter(PurchaseItem.product_id == product_id).first()
+    ).filter(
+        PurchaseItem.product_id == product_id,
+        PurchaseItem.purchase_price > 0  # 0원 제외
+    ).first()
 
     avg_price = avg_price_result.avg_price if avg_price_result and avg_price_result.avg_price else None
     min_price = avg_price_result.min_price if avg_price_result and avg_price_result.min_price else None

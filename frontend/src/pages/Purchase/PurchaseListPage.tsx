@@ -738,10 +738,18 @@ const PurchaseListPage: React.FC = () => {
           dataSource={purchases}
           rowKey="id"
           rowSelection={rowSelection}
-          onRow={(record) => ({
-            onClick: () => navigate(`/purchases/${record.id}`),
-            style: { cursor: 'pointer' }
-          })}
+          onRow={(record) => {
+            // 반품 재입고 항목은 배경색 추가
+            const isReturned = record.items?.some((item: any) => item.is_returned);
+            return {
+              onClick: () => navigate(`/purchases/${record.id}`),
+              style: {
+                cursor: 'pointer',
+                backgroundColor: isReturned ? '#fff7e6' : 'transparent',
+                borderLeft: isReturned ? '4px solid #ff7a45' : 'none'
+              }
+            };
+          }}
           scroll={{ x: 1200 }}
           pagination={{
             ...pagination,

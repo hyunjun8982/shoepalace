@@ -165,8 +165,23 @@ export const getColumns = (
       // 반품 재입고 여부 (supplier로 판단)
       const isReturned = record.supplier === '반품 재입고';
 
-      // notes에서 sale_id 추출
-      const saleId = record.notes?.replace('반품 반입: ', '').trim();
+      // notes에서 sale_id 추출 (UUID 형식만)
+      let saleId = '';
+      if (record.notes) {
+        // UUID 형식 (여러 하이픈) 추출: 반품 반입: {uuid}
+        const uuidMatch = record.notes.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/);
+        if (uuidMatch) {
+          saleId = uuidMatch[0];
+        }
+        // 판매번호 형식은 링크 생성 안 함 (기존 데이터)
+      }
+      console.log('🔍 Return item debug:', {
+        notes: record.notes,
+        isReturned,
+        saleId,
+        canShowLink: isReturned && !!saleId,
+        supplier: record.supplier
+      });
 
       return (
         <div style={{ fontSize: '12px', lineHeight: '1.5', color: '#333' }}>
@@ -178,6 +193,7 @@ export const getColumns = (
                 size="small"
                 onClick={(e) => {
                   e.stopPropagation();
+                  console.log('🔗 Opening sales page:', `/sales/${saleId}`);
                   window.open(`/sales/${saleId}`, '_blank');
                 }}
                 style={{ padding: '0 4px', fontSize: '11px', height: 'auto' }}

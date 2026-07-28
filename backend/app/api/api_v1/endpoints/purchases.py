@@ -1066,7 +1066,7 @@ def create_purchase_from_return(
         transaction_no=transaction_no,
         purchase_date=datetime.now().date(),
         buyer_id=current_user.id,
-        payment_type=PaymentType.PERSONAL_CARD,
+        payment_type=PaymentType.personal_card,
         supplier="반품 재입고",
         notes=return_data.get('notes', ''),
         status=PurchaseStatus.pending,

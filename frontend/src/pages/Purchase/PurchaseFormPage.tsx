@@ -127,16 +127,22 @@ const PurchaseFormPage: React.FC = () => {
     if (!id || id === 'new') {
       try {
         const formValues = form.getFieldsValue();
-        const draftData = {
-          formData: {
-            ...formValues,
-            purchase_date: formValues.purchase_date ? formValues.purchase_date.format('YYYY-MM-DD') : null
-          },
-          items: items,
-          timestamp: new Date().toISOString()
-        };
-        localStorage.setItem('purchaseFormDraft', JSON.stringify(draftData));
-        console.log('💾 Items saved to localStorage:', items.length, 'items');
+        // 의미있는 데이터가 있을 때만 저장 (items가 있거나, 폼에 입력값이 있을 때)
+        const hasItems = items && items.length > 0;
+        const hasFormData = formValues.supplier || formValues.transaction_no;
+
+        if (hasItems || hasFormData) {
+          const draftData = {
+            formData: {
+              ...formValues,
+              purchase_date: formValues.purchase_date ? formValues.purchase_date.format('YYYY-MM-DD') : null
+            },
+            items: items,
+            timestamp: new Date().toISOString()
+          };
+          localStorage.setItem('purchaseFormDraft', JSON.stringify(draftData));
+          console.log('💾 Items saved to localStorage:', items.length, 'items');
+        }
       } catch (error) {
         console.error('❌ Failed to save items:', error);
       }
@@ -150,19 +156,37 @@ const PurchaseFormPage: React.FC = () => {
       if (draftData) {
         const parsed = JSON.parse(draftData);
         if (parsed.formData || (parsed.items && parsed.items.length > 0)) {
+          const savedTime = parsed.timestamp ? dayjs(parsed.timestamp).format('YYYY-MM-DD HH:mm:ss') : '';
+          const itemCount = parsed.items?.length || 0;
+
           Modal.confirm({
-            title: '이전 입력값 발견',
+            title: '구매 등록 임시 저장됨',
             content: (
-              <div>
-                <p>이전에 작성 중이던 구매 등록 내용이 있습니다.</p>
-                <p style={{ marginBottom: 0, color: '#666', fontSize: '12px' }}>
-                  {parsed.items?.length > 0 && `상품 ${parsed.items.length}개 • `}
-                  {parsed.timestamp && `저장: ${dayjs(parsed.timestamp).format('YYYY-MM-DD HH:mm:ss')}`}
+              <div style={{ padding: '8px 0' }}>
+                <p style={{ margin: '12px 0 0 0', fontSize: '14px', lineHeight: '1.6' }}>
+                  이전에 작성 중인 구매 등록 내용이 있습니다.
                 </p>
+                <div style={{
+                  marginTop: '16px',
+                  padding: '12px',
+                  backgroundColor: '#f5f5f5',
+                  borderRadius: '4px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+                }}>
+                  <span style={{ fontSize: '13px', color: '#666' }}>
+                    {itemCount > 0 ? `상품 ${itemCount}개` : '상품 정보 없음'}
+                  </span>
+                  <span style={{ fontSize: '13px', color: '#999' }}>
+                    {savedTime}
+                  </span>
+                </div>
               </div>
             ),
             okText: '계속 작성하기',
             cancelText: '새로 시작',
+            okButtonProps: { type: 'primary' },
             onOk() {
               loadDraftPurchaseData();
             },

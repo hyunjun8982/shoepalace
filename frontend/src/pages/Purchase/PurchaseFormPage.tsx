@@ -258,8 +258,12 @@ const PurchaseFormPage: React.FC = () => {
       if (returnedData) {
         const parsed = JSON.parse(returnedData);
         if (parsed.items && Array.isArray(parsed.items) && parsed.items.length > 0) {
-          // 반품 항목들을 현재 items에 추가
-          setItems(prev => [...prev, ...parsed.items]);
+          // 반품 항목들을 현재 items에 추가 (is_returned 플래그 추가)
+          const returnedItemsWithFlag = parsed.items.map((item: any) => ({
+            ...item,
+            is_returned: true
+          }));
+          setItems(prev => [...prev, ...returnedItemsWithFlag]);
           // 자동 저장된 데이터 사용 (한 번만 처리)
           localStorage.removeItem('returnedItems');
           message.info(`${parsed.items.length}건의 반품 항목이 자동으로 추가되었습니다.`);

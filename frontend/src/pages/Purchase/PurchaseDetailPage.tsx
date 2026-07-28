@@ -557,8 +557,13 @@ const PurchaseDetailPage: React.FC = () => {
                   render: (text, record: PurchaseItem) => {
                     return (
                       <div>
-                        <div>{text || '-'}</div>
-                        <div style={{ fontSize: '12px', color: '#999' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span>{text || '-'}</span>
+                          {(record as any).is_returned && (
+                            <Tag color="orange" style={{ margin: 0 }}>반품건</Tag>
+                          )}
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#999', marginTop: '4px' }}>
                           {record.product?.product_code || '-'}
                         </div>
                       </div>

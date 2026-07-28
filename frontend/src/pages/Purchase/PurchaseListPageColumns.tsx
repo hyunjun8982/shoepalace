@@ -162,10 +162,18 @@ export const getColumns = (
       const maxDisplay = 2;
       const displayNames = names.slice(0, maxDisplay);
       const hiddenCount = names.length - maxDisplay;
+      // 반품건 표시 여부 확인
+      const hasReturned = record.items.some((item: any) => item.is_returned);
 
       return (
         <div style={{ fontSize: '12px', lineHeight: '1.5', color: '#333' }}>
-          {displayNames.map((name, idx) => (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+            {displayNames[0] && <span>{displayNames[0]}</span>}
+            {hasReturned && (
+              <Tag color="orange" style={{ margin: 0, fontSize: '11px' }}>반품건</Tag>
+            )}
+          </div>
+          {displayNames.slice(1).map((name, idx) => (
             <div key={idx} style={{ wordBreak: 'break-word' }}>{name}</div>
           ))}
           {hiddenCount > 0 && (

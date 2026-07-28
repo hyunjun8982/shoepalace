@@ -379,10 +379,12 @@ const PurchaseDetailPage: React.FC = () => {
 
                       await Promise.all(updatePromises);
 
-                      // 구매 정보의 가격 업데이트
+                      // 구매 정보의 가격 업데이트 (사이즈, 수량 포함)
                       const items = purchase.items?.map(item => ({
                         ...item,
                         purchase_price: editingPrices[item.id!] ?? item.purchase_price,
+                        size: editingSizes[item.id!] ?? item.size,
+                        quantity: editingSizeQuantities[item.id!] ?? item.quantity,
                       })) || [];
 
                       await purchaseService.updatePurchase(purchase.id!, {

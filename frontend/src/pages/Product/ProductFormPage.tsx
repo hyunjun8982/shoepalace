@@ -275,28 +275,10 @@ const ProductFormPage: React.FC = () => {
           console.log('[IMAGE UPLOAD] Starting image upload...');
           console.log('[IMAGE UPLOAD] Brand name:', brandName);
           console.log('[IMAGE UPLOAD] Product code:', values.product_code);
-          console.log('[IMAGE UPLOAD] File:', imageFile);
 
-          const token = localStorage.getItem('access_token');
-          // API URL은 상대 경로 사용
-          const response = await fetch('/api/v1/products/upload-image', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-            },
-            body: formData,
-          });
+          await productService.uploadProductImage(fileToUpload, brandName, values.product_code);
 
-          console.log('[IMAGE UPLOAD] Response status:', response.status);
-
-          if (!response.ok) {
-            const errorData = await response.json();
-            console.error('[IMAGE UPLOAD] Error response:', errorData);
-            throw new Error(errorData.detail || '이미지 업로드 실패');
-          }
-
-          const result = await response.json();
-          console.log('[IMAGE UPLOAD] Success:', result);
+          console.log('[IMAGE UPLOAD] Success');
           message.success('상품과 이미지가 저장되었습니다.');
         } catch (error: any) {
           console.error('[IMAGE UPLOAD] Exception:', error);

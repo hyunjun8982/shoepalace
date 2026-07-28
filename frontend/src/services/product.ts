@@ -80,4 +80,15 @@ export const productService = {
     const response = await api.get(`/products/${productId}/avg-price`);
     return response.data;
   },
+
+  // 상품 이미지 업로드 (기능 #4)
+  async uploadProductImage(file: File, brandName: string, productCode: string): Promise<any> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('brand_name', brandName);
+    formData.append('product_code', productCode);
+
+    const response = await api.post('/products/upload-image', formData);
+    return response.data;
+  },
 };

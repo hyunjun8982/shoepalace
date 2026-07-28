@@ -55,7 +55,8 @@ const PurchaseDetailPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [editingPrices, setEditingPrices] = useState<{ [key: string]: number }>({});
-  const [editingSizeQuantities, setEditingSizeQuantities] = useState<{ [size: string]: number }>({});
+  const [editingSizeQuantities, setEditingSizeQuantities] = useState<{ [itemId: string]: number }>({});
+  const [editingSizes, setEditingSizes] = useState<{ [itemId: string]: string }>({});
   const [editingSizePrices, setEditingSizePrices] = useState<{ [size: string]: number }>({});
   const [form] = Form.useForm();
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -356,15 +357,15 @@ const PurchaseDetailPage: React.FC = () => {
 
                       // 각 item의 편집된 정보 반영
                       const updatePromises = purchase.items?.map(async (item) => {
-                        const newSize = editingSizeQuantities[`${item.id}-size`];
-                        const newQty = editingSizeQuantities[`${item.id}-qty`];
+                        const newSize = editingSizes[item.id!];
+                        const newQty = editingSizeQuantities[item.id!];
                         const newPrice = editingPrices[item.id!];
 
                         // 변경된 항목에 대해 API 호출
                         if (newSize !== undefined || newQty !== undefined) {
                           await purchaseService.updatePurchaseItem(item.id!, {
                             quantity: newQty !== undefined ? newQty : item.quantity,
-                            size: newSize !== undefined ? newSize : item.size
+                            size: newSize !== undefined ? String(newSize) : item.size
                           });
                         }
 
@@ -571,12 +572,12 @@ const PurchaseDetailPage: React.FC = () => {
                     if (editMode) {
                       return (
                         <Input
-                          value={editingSizeQuantities[`${record.id}-size`] ?? size ?? ''}
+                          value={editingSizes[record.id!] ?? size ?? ''}
                           onChange={(e) => {
                             if (record.id) {
-                              setEditingSizeQuantities(prev => ({
+                              setEditingSizes(prev => ({
                                 ...prev,
-                                [`${record.id}-size`]: e.target.value
+                                [record.id!]: e.target.value
                               }));
                             }
                           }}
@@ -597,12 +598,12 @@ const PurchaseDetailPage: React.FC = () => {
                     if (editMode) {
                       return (
                         <InputNumber
-                          value={editingSizeQuantities[`${record.id}-qty`] ?? quantity}
+                          value={editingSizeQuantities[record.id!] ?? quantity}
                           onChange={(value) => {
                             if (value !== null && record.id) {
                               setEditingSizeQuantities(prev => ({
                                 ...prev,
-                                [`${record.id}-qty`]: value
+                                [record.id!]: value
                               }));
                             }
                           }}

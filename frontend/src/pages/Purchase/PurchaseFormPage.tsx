@@ -147,9 +147,11 @@ const PurchaseFormPage: React.FC = () => {
   };
 
   // 기능 #2: Form 값이 변경되면 localStorage에 저장
-  const handleFormValuesChange = (changedFields: any, allValues: any) => {
-    if (!id) {  // 신규 등록일 때만 임시 저장
+  const handleFormValuesChangeForDraft = (changedFields: any, allValues: any) => {
+    console.log('🔵 handleFormValuesChangeForDraft called, id:', id);
+    if (!id || id === 'new') {  // 신규 등록일 때만 임시 저장
       try {
+        console.log('💾 Saving draft with items:', items);
         const draftData = {
           formData: {
             ...allValues,
@@ -159,8 +161,9 @@ const PurchaseFormPage: React.FC = () => {
           timestamp: new Date().toISOString()
         };
         localStorage.setItem('purchaseFormDraft', JSON.stringify(draftData));
+        console.log('✅ Draft saved successfully');
       } catch (error) {
-        console.error('Failed to save draft:', error);
+        console.error('❌ Failed to save draft:', error);
       }
     }
   };
@@ -647,7 +650,7 @@ const PurchaseFormPage: React.FC = () => {
   };
 
   // 카드 선택 시 거래번호 재생성 및 모든 항목에 카드 적용
-  const handleFormValuesChange = (changedValues: any) => {
+  const handleCardChange = (changedValues: any) => {
     if (changedValues.payment_card_id) {
       const selectedCard = cards.find(c => c.id === changedValues.payment_card_id);
       if (selectedCard) {
@@ -1230,7 +1233,7 @@ const PurchaseFormPage: React.FC = () => {
         form={form}
         layout="vertical"
         onFinish={handleSubmit}
-        onValuesChange={handleFormValuesChange}
+        onValuesChange={handleFormValuesChangeForDraft}
         initialValues={{
           purchase_date: dayjs(),
         }}

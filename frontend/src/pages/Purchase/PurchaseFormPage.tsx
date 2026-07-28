@@ -113,8 +113,76 @@ const PurchaseFormPage: React.FC = () => {
       if (currentUser?.id) {
         form.setFieldsValue({ buyer_id: currentUser.id });
       }
+
+      // 기능 #2: localStorage에서 임시 저장된 구매 폼 데이터 복원
+      loadDraftPurchaseData();
+
+      // 기능 #3: 반품 데이터에서 재입고 항목 자동 추가
+      loadReturnedItemsIfExists();
     }
   }, [id, currentUser]);
+
+  // 기능 #2: localStorage에서 임시 저장된 구매 폼 데이터 복원
+  const loadDraftPurchaseData = () => {
+    try {
+      const draftData = localStorage.getItem('purchaseFormDraft');
+      if (draftData) {
+        const parsed = JSON.parse(draftData);
+        // Form 데이터 복원
+        if (parsed.formData) {
+          const formValues = {
+            ...parsed.formData,
+            purchase_date: dayjs(parsed.formData.purchase_date)
+          };
+          form.setFieldsValue(formValues);
+        }
+        // Items 복원
+        if (parsed.items && Array.isArray(parsed.items)) {
+          setItems(parsed.items);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load draft purchase data:', error);
+    }
+  };
+
+  // 기능 #2: Form 값이 변경되면 localStorage에 저장
+  const handleFormValuesChange = (changedFields: any, allValues: any) => {
+    if (!id) {  // 신규 등록일 때만 임시 저장
+      try {
+        const draftData = {
+          formData: {
+            ...allValues,
+            purchase_date: allValues.purchase_date ? allValues.purchase_date.format('YYYY-MM-DD') : null
+          },
+          items: items,
+          timestamp: new Date().toISOString()
+        };
+        localStorage.setItem('purchaseFormDraft', JSON.stringify(draftData));
+      } catch (error) {
+        console.error('Failed to save draft:', error);
+      }
+    }
+  };
+
+  // 기능 #3: localStorage에서 반품 데이터를 읽어 자동으로 항목 추가
+  const loadReturnedItemsIfExists = () => {
+    try {
+      const returnedData = localStorage.getItem('returnedItems');
+      if (returnedData) {
+        const parsed = JSON.parse(returnedData);
+        if (parsed.items && Array.isArray(parsed.items) && parsed.items.length > 0) {
+          // 반품 항목들을 현재 items에 추가
+          setItems(prev => [...prev, ...parsed.items]);
+          // 자동 저장된 데이터 사용 (한 번만 처리)
+          localStorage.removeItem('returnedItems');
+          message.info(`${parsed.items.length}건의 반품 항목이 자동으로 추가되었습니다.`);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load returned items:', error);
+    }
+  };
 
   // 전역 바코드 스캔 리스너 (어디서든 바코드 스캔 감지)
   useEffect(() => {
@@ -971,6 +1039,9 @@ const PurchaseFormPage: React.FC = () => {
       } else {
         await purchaseService.createPurchase(data);
         message.success('구매 등록 완료');
+        // 기능 #2: 성공 후 localStorage 임시 저장 데이터 삭제
+        localStorage.removeItem('purchaseFormDraft');
+        localStorage.removeItem('returnedItems');
       }
       navigate('/purchases');
     } catch (error: any) {

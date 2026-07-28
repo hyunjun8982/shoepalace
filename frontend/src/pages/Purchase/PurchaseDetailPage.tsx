@@ -355,12 +355,35 @@ const PurchaseDetailPage: React.FC = () => {
                       const values = await form.validateFields();
 
                       // 각 item의 편집된 정보 반영
+                      const updatePromises = purchase.items?.map(async (item) => {
+                        const newSize = editingSizeQuantities[`${item.id}-size`];
+                        const newQty = editingSizeQuantities[`${item.id}-qty`];
+                        const newPrice = editingPrices[item.id!];
+
+                        // 변경된 항목에 대해 API 호출
+                        if (newSize !== undefined || newQty !== undefined) {
+                          await purchaseService.updatePurchaseItem(item.id!, {
+                            quantity: newQty !== undefined ? newQty : item.quantity,
+                            size: newSize !== undefined ? newSize : item.size
+                          });
+                        }
+
+                        return {
+                          ...item,
+                          purchase_price: newPrice ?? item.purchase_price,
+                          quantity: newQty !== undefined ? newQty : item.quantity,
+                          size: newSize !== undefined ? newSize : item.size,
+                        };
+                      }) || [];
+
+                      await Promise.all(updatePromises);
+
+                      // 구매 정보의 가격 업데이트
                       const items = purchase.items?.map(item => ({
                         ...item,
                         purchase_price: editingPrices[item.id!] ?? item.purchase_price,
                       })) || [];
 
-                      // 구매 정보 업데이트
                       await purchaseService.updatePurchase(purchase.id!, {
                         ...values,
                         purchase_date: values.purchase_date.format('YYYY-MM-DD'),
@@ -371,6 +394,7 @@ const PurchaseDetailPage: React.FC = () => {
                       setEditMode(false);
                       fetchPurchaseDetail();
                     } catch (error) {
+                      console.error('Save error:', error);
                       message.error('저장에 실패했습니다.');
                     }
                   }}
@@ -543,13 +567,53 @@ const PurchaseDetailPage: React.FC = () => {
                   dataIndex: 'size',
                   key: 'size',
                   width: 80,
+                  render: (size, record: PurchaseItem) => {
+                    if (editMode) {
+                      return (
+                        <Input
+                          value={editingSizeQuantities[`${record.id}-size`] ?? size ?? ''}
+                          onChange={(e) => {
+                            if (record.id) {
+                              setEditingSizeQuantities(prev => ({
+                                ...prev,
+                                [`${record.id}-size`]: e.target.value
+                              }));
+                            }
+                          }}
+                          size="small"
+                          placeholder="사이즈 입력"
+                        />
+                      );
+                    }
+                    return size || '-';
+                  },
                 },
                 {
                   title: '수량',
                   dataIndex: 'quantity',
                   key: 'quantity',
                   width: 80,
-                  render: (quantity) => `${quantity}개`,
+                  render: (quantity, record: PurchaseItem) => {
+                    if (editMode) {
+                      return (
+                        <InputNumber
+                          value={editingSizeQuantities[`${record.id}-qty`] ?? quantity}
+                          onChange={(value) => {
+                            if (value !== null && record.id) {
+                              setEditingSizeQuantities(prev => ({
+                                ...prev,
+                                [`${record.id}-qty`]: value
+                              }));
+                            }
+                          }}
+                          min={1}
+                          size="small"
+                          style={{ width: '100%' }}
+                        />
+                      );
+                    }
+                    return `${quantity}개`;
+                  },
                 },
                 {
                   title: '구매가',

@@ -989,3 +989,119 @@ def delete_receipt_from_token(token: str, index: int):
         "removed_url": removed_url,
         "remaining_count": len(token_data['uploaded_urls'])
     }
+
+
+# ============ 구매 아이템 수정 API (기능 #1) ============
+
+@router.patch("/items/{item_id}")
+def update_purchase_item(
+    item_id: str,
+    quantity: Optional[int] = None,
+    size: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """구매 항목의 수량/사이즈 편집"""
+    # admin이나 buyer만 수정 가능
+    if current_user.role.value not in ["admin", "buyer"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    item = db.query(PurchaseItem).filter(PurchaseItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Purchase item not found")
+
+    # 권한 체크 (구매자는 자신의 구매 항목만 수정 가능)
+    if current_user.role.value == "buyer":
+        purchase = db.query(Purchase).filter(Purchase.id == item.purchase_id).first()
+        if str(purchase.buyer_id) != str(current_user.id):
+            raise HTTPException(status_code=403, detail="Not authorized")
+
+    # 업데이트
+    if quantity is not None:
+        item.quantity = quantity
+    if size is not None:
+        item.size = size
+
+    db.commit()
+    db.refresh(item)
+
+    # 구매 정보를 다시 로드하여 반환 (관계 데이터 포함)
+    item = db.query(PurchaseItem).options(
+        joinedload(PurchaseItem.product).joinedload(Product.brand)
+    ).filter(PurchaseItem.id == item_id).first()
+
+    return item
+
+
+# ============ 반품 → 재입고 처리 API (기능 #3) ============
+
+@router.post("/from-returns")
+def create_purchase_from_return(
+    return_data: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """반품 정보로부터 재입고 구매 생성
+
+    반품 처리된 상품들을 재입고 구매로 등록합니다.
+    """
+    # buyer나 admin만 생성 가능
+    if current_user.role.value not in ["buyer", "admin"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    # 입력 검증
+    if not return_data.get('items') or len(return_data['items']) == 0:
+        raise HTTPException(status_code=400, detail="반품 상품을 추가해주세요")
+
+    # 거래번호 자동 생성
+    today = datetime.now().strftime('%Y%m%d')
+    count = db.query(Purchase).filter(
+        Purchase.transaction_no.like(f"P%{today}-%")
+    ).count()
+    transaction_no = f"PC{today}-{count + 1:04d}"
+
+    # 구매 생성
+    purchase = Purchase(
+        id=uuid.uuid4(),
+        transaction_no=transaction_no,
+        purchase_date=datetime.now().date(),
+        buyer_id=current_user.id,
+        payment_type=PaymentType.PERSONAL_CARD,
+        supplier="반품 재입고",
+        notes=return_data.get('notes', ''),
+        status=PurchaseStatus.pending,
+        total_amount=0
+    )
+
+    db.add(purchase)
+
+    # 구매 아이템 생성
+    total_amount = 0.0
+    for item_data in return_data['items']:
+        product = db.query(Product).filter(Product.id == item_data['product_id']).first()
+        if not product:
+            raise HTTPException(status_code=400, detail=f"상품을 찾을 수 없습니다: {item_data['product_id']}")
+
+        # 반품 상품의 구매가는 이전 판매가를 사용 (또는 지정된 가격)
+        purchase_price = item_data.get('purchase_price', item_data.get('selling_price', 0))
+
+        item = PurchaseItem(
+            id=uuid.uuid4(),
+            purchase_id=purchase.id,
+            product_id=item_data['product_id'],
+            size=item_data.get('size'),
+            quantity=item_data.get('quantity', 1),
+            purchase_price=purchase_price,
+            notes=f"반품: {item_data.get('reason', '')}"
+        )
+
+        db.add(item)
+        total_amount += purchase_price * item.quantity
+
+    purchase.total_amount = total_amount
+    db.commit()
+    db.refresh(purchase)
+
+    # 응답 데이터 준비
+    from fastapi.encoders import jsonable_encoder
+    return jsonable_encoder(purchase)

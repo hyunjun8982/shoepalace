@@ -73,6 +73,20 @@ export const purchaseService = {
     return response.data;
   },
 
+  // 구매 항목 수정 (기능 #1)
+  async updatePurchaseItem(itemId: string, data: { quantity?: number; size?: string }): Promise<any> {
+    const response = await api.patch(`/purchases/items/${itemId}`, null, {
+      params: data
+    });
+    return response.data;
+  },
+
+  // 반품 → 재입고 구매 생성 (기능 #3)
+  async createPurchaseFromReturn(returnData: any): Promise<Purchase> {
+    const response = await api.post('/purchases/from-returns', returnData);
+    return response.data;
+  },
+
   // ============ 영수증 QR 코드 업로드 관련 ============
 
   // 영수증 업로드 토큰 생성

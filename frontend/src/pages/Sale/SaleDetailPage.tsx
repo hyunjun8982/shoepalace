@@ -171,6 +171,28 @@ const SaleDetailPage: React.FC = () => {
       setLoading(true);
       await saleService.processReturn(id!);
       message.success('반품 처리가 완료되었습니다. 재고가 원복되었습니다.');
+
+      // 기능 #3: 반품 정보를 localStorage에 저장하여 PurchaseFormPage에서 자동 로드
+      if (sale) {
+        const returnedItems = sale.items?.map((item: SaleItem) => ({
+          product_id: item.product_id,
+          product_name: item.product?.product_name,
+          brand_name: item.product?.brand_name,
+          product_code: item.product?.product_code,
+          size: item.size,
+          quantity: item.quantity,
+          selling_price: item.selling_price,
+          purchase_price: item.selling_price, // 판매가를 구매가로 사용
+          reason: `${sale.buyer_name}님 반품`,
+          notes: `반품 반입: 판매번호 ${sale.transaction_no}`
+        })) || [];
+
+        localStorage.setItem('returnedItems', JSON.stringify({
+          items: returnedItems,
+          timestamp: new Date().toISOString()
+        }));
+      }
+
       fetchSaleDetail();
     } catch (error: any) {
       message.error(error.response?.data?.detail || '반품 처리에 실패했습니다.');

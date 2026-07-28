@@ -74,4 +74,10 @@ export const productService = {
     const response = await api.get('/brands');
     return response.data.items || response.data || [];
   },
+
+  // 상품의 평균 구매가 조회 (기능 #6)
+  async getAvgPrice(productId: string): Promise<{ avg_price: number | null; min_price: number | null; max_price: number | null }> {
+    const response = await api.get(`/products/${productId}/avg-price`);
+    return response.data;
+  },
 };

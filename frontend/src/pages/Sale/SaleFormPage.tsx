@@ -268,6 +268,26 @@ const SaleFormPageNew: React.FC = () => {
     }
   };
 
+  // 기능 #6: 평균 구매가를 조회하는 함수
+  const loadAndSetAvgPrice = async (productId: string, itemIndex: number) => {
+    try {
+      const priceData = await productService.getAvgPrice(productId);
+      if (priceData.avg_price !== null) {
+        setSelectedProducts(prev => {
+          const newItems = [...prev];
+          if (newItems[itemIndex]) {
+            newItems[itemIndex].seller_sale_price_krw = Math.round(priceData.avg_price);
+            newItems[itemIndex].seller_sale_price_original = Math.round(priceData.avg_price);
+          }
+          return newItems;
+        });
+        console.log(`[SaleFormPage] Average price loaded for product ${productId}: ₩${Math.round(priceData.avg_price)}`);
+      }
+    } catch (error) {
+      console.error('Failed to load average price:', error);
+    }
+  };
+
   // 바코드 검색 성공 핸들러
   const handleBarcodeFound = useCallback((result: BarcodeSearchResult) => {
     console.log('[SaleFormPage] Barcode found:', result);
@@ -341,7 +361,8 @@ const SaleFormPageNew: React.FC = () => {
           product_id: result.product_id,
           size: result.size
         });
-        return [...prev, {
+
+        const newItem = {
           product_id: result.product_id,
           size: result.size,
           quantity: 1,
@@ -352,7 +373,16 @@ const SaleFormPageNew: React.FC = () => {
           product_code: product.product_code,
           brand_name: product.brand_name,
           product_image_url: product.product_image_url || '',
-        }];
+        };
+
+        const newItems = [...prev, newItem];
+
+        // 기능 #6: 새 항목 추가 후 평균 구매가를 비동기로 로드
+        setTimeout(() => {
+          loadAndSetAvgPrice(result.product_id, newItems.length - 1);
+        }, 100);
+
+        return newItems;
       }
     });
 
@@ -397,6 +427,9 @@ const SaleFormPageNew: React.FC = () => {
         newItems.push(newBarCodeItem);
         console.log('Added new barcode item:', newBarCodeItem);
         console.log('Total items now:', newItems);
+
+        // 기능 #6: 새 상품 추가 후 평균 구매가를 비동기로 로드
+        loadAndSetAvgPrice(newProduct.id, newItems.length - 1);
 
         return newItems;
       });

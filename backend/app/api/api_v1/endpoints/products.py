@@ -276,6 +276,62 @@ def update_product(
 
     return product
 
+
+@router.patch("/{product_id}/image", response_model=ProductSchema)
+async def update_product_image(
+    product_id: str,
+    file: UploadFile = File(...),
+    brand_name: str = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """상품 이미지 직접 업로드 (product_id로 업데이트) (기능 #4)
+
+    수정 모드에서 상품의 이미지를 업데이트할 때 사용합니다.
+    product_code가 변경되었을 때도 안전하게 업로드합니다.
+    """
+    # admin이나 buyer만 가능
+    if current_user.role.value not in ["admin", "buyer"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    # 파일 확장자 검증
+    allowed_extensions = [".png", ".jpg", ".jpeg", ".gif", ".webp"]
+    file_ext = os.path.splitext(file.filename)[1].lower() if file.filename else ".png"
+    if file_ext not in allowed_extensions:
+        raise HTTPException(status_code=400, detail="Only image files are allowed")
+
+    # 업로드 디렉토리 생성
+    upload_dir = UPLOAD_DIR / "products" / brand_name
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    # 파일명: {상품코드}.png
+    file_path = upload_dir / f"{product.product_code}.png"
+
+    # 파일 저장
+    try:
+        with file_path.open("wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+            print(f"[IMAGE UPLOAD SUCCESS] File saved: {file_path}, size: {len(content)} bytes")
+
+        # 상품의 image_url 업데이트
+        image_url = f"/uploads/products/{brand_name}/{product.product_code}.png"
+        product.image_url = image_url
+        db.commit()
+        db.refresh(product)
+        print(f"[IMAGE UPLOAD] Updated product image_url: {image_url}")
+
+        return product
+    except Exception as e:
+        print(f"[IMAGE UPLOAD ERROR] Exception: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to upload image: {str(e)}")
+
 @router.get("/{product_id}/related-items")
 def get_product_related_items(
     product_id: str,
@@ -500,3 +556,41 @@ def get_product_by_barcode(
         product.brand_icon_url = product.brand.icon_url
 
     return product
+
+
+@router.get("/{product_id}/avg-price")
+def get_product_avg_price(
+    product_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """상품의 평균 구매가 조회 (기능 #6)
+
+    이 상품이 기존에 구매된 기록이 있다면 평균 구매가를 반환합니다.
+    판매 등록 시 기본 가격으로 사용됩니다.
+    """
+    from app.models.purchase import PurchaseItem
+    from sqlalchemy import func
+
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    # 해당 상품의 구매 이력에서 평균 구매가 계산
+    avg_price_result = db.query(
+        func.avg(PurchaseItem.purchase_price).label('avg_price'),
+        func.min(PurchaseItem.purchase_price).label('min_price'),
+        func.max(PurchaseItem.purchase_price).label('max_price')
+    ).filter(PurchaseItem.product_id == product_id).first()
+
+    avg_price = avg_price_result.avg_price if avg_price_result and avg_price_result.avg_price else None
+    min_price = avg_price_result.min_price if avg_price_result and avg_price_result.min_price else None
+    max_price = avg_price_result.max_price if avg_price_result and avg_price_result.max_price else None
+
+    return {
+        "product_id": product_id,
+        "product_name": product.product_name,
+        "avg_price": float(avg_price) if avg_price else None,
+        "min_price": float(min_price) if min_price else None,
+        "max_price": float(max_price) if max_price else None
+    }

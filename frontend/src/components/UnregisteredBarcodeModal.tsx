@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Modal, Form, Input, Select, Button, message, Upload, Image, Tabs, Row, Col, Alert, Spin, Radio } from 'antd';
-import { UploadOutlined, LinkOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Modal, Form, Input, Select, Button, message, Upload, Image, Tabs, Row, Col, Alert, Spin, Radio, Space } from 'antd';
+import { UploadOutlined, LinkOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { productService } from '../services/product';
 import { barcodeService, PoizonProductInfo } from '../services/barcode';
+import { brandService } from '../services/brand';
 import { Product } from '../types/product';
 import { Brand } from '../types';
 
@@ -20,6 +21,7 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
   onCancel,
 }) => {
   const [form] = Form.useForm();
+  const [newBrandForm] = Form.useForm();
   const [brands, setBrands] = useState<Brand[]>([]);
   const [loading, setLoading] = useState(false);
   const [brands_loading, setBrandsLoading] = useState(false);
@@ -30,6 +32,11 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
   const [poizonInfo, setPoizonInfo] = useState<PoizonProductInfo | null>(null);
   const [poizonError, setPoizonError] = useState(false);
   const [sizeInputMode, setSizeInputMode] = useState(false);
+
+  // 기능 #5: 브랜드 추가 모달 상태
+  const [newBrandModalVisible, setNewBrandModalVisible] = useState(false);
+  const [brandIconFile, setBrandIconFile] = useState<File | null>(null);
+  const [brandIconUrl, setBrandIconUrl] = useState<string>('');
 
   // 알림 소리 재생 (2톤 알림음)
   const playNotificationSound = () => {
@@ -117,6 +124,47 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
     } finally {
       setBrandsLoading(false);
     }
+  };
+
+  // 기능 #5: 새 브랜드 추가 처리
+  const handleCreateNewBrand = async (values: any) => {
+    try {
+      const newBrand = await brandService.createBrand(
+        values.name,
+        values.description || null,
+        brandIconFile
+      );
+      message.success('브랜드가 등록되었습니다.');
+
+      // 브랜드 목록 새로고침
+      await loadBrands();
+
+      // 새로 등록된 브랜드를 선택
+      form.setFieldsValue({ brand_id: newBrand.id });
+
+      // 모달 닫기 및 초기화
+      setNewBrandModalVisible(false);
+      newBrandForm.resetFields();
+      setBrandIconFile(null);
+      setBrandIconUrl('');
+    } catch (error: any) {
+      message.error(error.message || '브랜드 등록에 실패했습니다.');
+    }
+  };
+
+  // 기능 #5: 브랜드 로고 업로드 처리
+  const handleBrandIconChange = (info: any) => {
+    const file = info.file.originFileObj || info.file;
+    if (!file) return;
+
+    setBrandIconFile(file);
+
+    // 미리보기
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setBrandIconUrl(e.target?.result as string);
+    };
+    reader.readAsDataURL(file);
   };
 
   // 포이즌 API에서 바코드 정보 로드
@@ -500,20 +548,31 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
           name="brand_id"
           rules={[{ required: true, message: '브랜드는 필수입니다' }]}
         >
-          <Select
-            placeholder="브랜드 선택"
-            loading={brands_loading}
-            options={[
-              ...brands.map(b => ({
-                value: b.id,
-                label: b.name,
-              })),
-              {
-                value: 'etc',
-                label: '기타',
-              }
-            ]}
-          />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Select
+              placeholder="브랜드 선택"
+              loading={brands_loading}
+              style={{ flex: 1 }}
+              options={[
+                ...brands.map(b => ({
+                  value: b.id,
+                  label: b.name,
+                })),
+                {
+                  value: 'etc',
+                  label: '기타',
+                }
+              ]}
+            />
+            {/* 기능 #5: 새 브랜드 추가 버튼 */}
+            <Button
+              icon={<PlusOutlined />}
+              onClick={() => setNewBrandModalVisible(true)}
+              title="새 브랜드 추가"
+            >
+              추가
+            </Button>
+          </div>
         </Form.Item>
 
         <Form.Item
@@ -563,6 +622,90 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
         </Form.Item>
         </Form>
       </Spin>
+
+      {/* 기능 #5: 새 브랜드 추가 모달 */}
+      <Modal
+        title="새 브랜드 추가"
+        open={newBrandModalVisible}
+        onCancel={() => {
+          setNewBrandModalVisible(false);
+          newBrandForm.resetFields();
+          setBrandIconFile(null);
+          setBrandIconUrl('');
+        }}
+        footer={null}
+        width={600}
+      >
+        <Form
+          form={newBrandForm}
+          layout="vertical"
+          onFinish={handleCreateNewBrand}
+        >
+          <Form.Item
+            name="name"
+            label="브랜드명"
+            rules={[{ required: true, message: '브랜드명은 필수입니다' }]}
+          >
+            <Input placeholder="브랜드명을 입력하세요" />
+          </Form.Item>
+
+          <Form.Item
+            name="description"
+            label="설명 (선택사항)"
+          >
+            <Input.TextArea rows={3} placeholder="브랜드 설명을 입력하세요" />
+          </Form.Item>
+
+          <Form.Item label="로고 (선택사항)">
+            {brandIconUrl ? (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <Image
+                  src={brandIconUrl}
+                  alt="Brand Logo Preview"
+                  style={{ maxWidth: 80, maxHeight: 80, borderRadius: 4 }}
+                  preview={{ mask: '보기' }}
+                />
+                <Button
+                  danger
+                  size="small"
+                  icon={<DeleteOutlined />}
+                  onClick={() => {
+                    setBrandIconFile(null);
+                    setBrandIconUrl('');
+                  }}
+                >
+                  삭제
+                </Button>
+              </div>
+            ) : (
+              <Upload
+                maxCount={1}
+                beforeUpload={() => false}
+                onChange={handleBrandIconChange}
+                accept="image/*"
+              >
+                <Button icon={<UploadOutlined />}>로고 업로드</Button>
+              </Upload>
+            )}
+          </Form.Item>
+
+          <Form.Item>
+            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+              <Button onClick={() => {
+                setNewBrandModalVisible(false);
+                newBrandForm.resetFields();
+                setBrandIconFile(null);
+                setBrandIconUrl('');
+              }}>
+                취소
+              </Button>
+              <Button type="primary" htmlType="submit">
+                브랜드 추가
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
     </Modal>
   );
 };

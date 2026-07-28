@@ -24,6 +24,7 @@ import { InventoryDetail } from '../../types/inventory';
 import { barcodeService, BarcodeSearchResult } from '../../services/barcode';
 import { BarcodeInput } from '../../components/BarcodeInput';
 import { UnregisteredBarcodeModal } from '../../components/UnregisteredBarcodeModal';
+import { productService } from '../../services/product';
 
 const { TextArea } = Input;
 

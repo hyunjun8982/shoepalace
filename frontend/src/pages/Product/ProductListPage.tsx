@@ -372,10 +372,13 @@ const ProductListPage: React.FC = () => {
       width: 90,
       render: (_, record) => {
         const imagePath = getImagePath(record.product_code, record.brand_name);
-        if (imagePath) {
+        // 캐시 무시를 위해 타임스탬프 추가
+        const imagePathWithTimestamp = imagePath ? `${imagePath}?t=${new Date().getTime()}` : null;
+
+        if (imagePathWithTimestamp) {
           return (
             <img
-              src={imagePath}
+              src={imagePathWithTimestamp}
               alt={record.product_name}
               style={{
                 width: 70,
@@ -403,7 +406,7 @@ const ProductListPage: React.FC = () => {
                 modal.onclick = () => modal.remove();
 
                 const img = document.createElement('img');
-                img.src = imagePath;
+                img.src = imagePathWithTimestamp;
                 img.style.cssText = `
                   max-width: 90%;
                   max-height: 90%;

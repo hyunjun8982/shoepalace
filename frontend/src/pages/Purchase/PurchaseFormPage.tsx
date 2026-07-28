@@ -104,7 +104,7 @@ const PurchaseFormPage: React.FC = () => {
     loadProducts();
     loadUsers();
     loadCards();
-    if (id) {
+    if (id && id !== 'new') {
       loadPurchase(id);
     } else {
       // 신규 등록일 때 거래번호 자동 생성
@@ -255,14 +255,17 @@ const PurchaseFormPage: React.FC = () => {
   const loadReturnedItemsIfExists = () => {
     try {
       const returnedData = localStorage.getItem('returnedItems');
+      console.log('🔍 Checking returnedItems:', returnedData);
       if (returnedData) {
         const parsed = JSON.parse(returnedData);
+        console.log('📦 Parsed returned items:', parsed.items);
         if (parsed.items && Array.isArray(parsed.items) && parsed.items.length > 0) {
           // 반품 항목들을 현재 items에 추가 (is_returned 플래그 추가)
           const returnedItemsWithFlag = parsed.items.map((item: any) => ({
             ...item,
             is_returned: true
           }));
+          console.log('✅ Items with flag:', returnedItemsWithFlag);
           setItems(prev => [...prev, ...returnedItemsWithFlag]);
           // 자동 저장된 데이터 사용 (한 번만 처리)
           localStorage.removeItem('returnedItems');

@@ -1,4 +1,5 @@
 # 운영 환경용 Docker Compose
+# Updated: 2026-07-28 - Trigger backend rebuild
 name: shoepalace-prod
 
 services:

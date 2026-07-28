@@ -122,6 +122,27 @@ const PurchaseFormPage: React.FC = () => {
     }
   }, [id, currentUser]);
 
+  // 기능 #2-1: items 변경 시 localStorage에 저장 (상품 추가/삭제 시)
+  useEffect(() => {
+    if (!id || id === 'new') {
+      try {
+        const formValues = form.getFieldsValue();
+        const draftData = {
+          formData: {
+            ...formValues,
+            purchase_date: formValues.purchase_date ? formValues.purchase_date.format('YYYY-MM-DD') : null
+          },
+          items: items,
+          timestamp: new Date().toISOString()
+        };
+        localStorage.setItem('purchaseFormDraft', JSON.stringify(draftData));
+        console.log('💾 Items saved to localStorage:', items.length, 'items');
+      } catch (error) {
+        console.error('❌ Failed to save items:', error);
+      }
+    }
+  }, [items, id, form]);
+
   // 기능 #2: localStorage에서 임시 저장된 구매 폼 데이터 복원
   const loadDraftPurchaseData = () => {
     try {

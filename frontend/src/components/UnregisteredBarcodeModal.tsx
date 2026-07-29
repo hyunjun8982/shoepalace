@@ -418,7 +418,7 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
       onCancel={onCancel}
       footer={null}
       width={650}
-      bodyStyle={{ padding: '16px' }}
+      styles={{ body: { padding: '16px' } }}
       destroyOnClose
     >
       <Spin spinning={poizonLoading}>
@@ -544,35 +544,42 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
         </Form.Item>
 
         <Form.Item
-          label="브랜드"
+          label={
+            <span>
+              브랜드{' '}
+              <Button
+                type="link"
+                size="small"
+                icon={<PlusOutlined />}
+                onClick={() => setNewBrandModalVisible(true)}
+                style={{ padding: 0 }}
+              >
+                추가
+              </Button>
+            </span>
+          }
           name="brand_id"
           rules={[{ required: true, message: '브랜드는 필수입니다' }]}
         >
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Select
-              placeholder="브랜드 선택"
-              loading={brands_loading}
-              style={{ flex: 1 }}
-              options={[
-                ...brands.map(b => ({
-                  value: b.id,
-                  label: b.name,
-                })),
-                {
-                  value: 'etc',
-                  label: '기타',
-                }
-              ]}
-            />
-            {/* 기능 #5: 새 브랜드 추가 버튼 */}
-            <Button
-              icon={<PlusOutlined />}
-              onClick={() => setNewBrandModalVisible(true)}
-              title="새 브랜드 추가"
-            >
-              추가
-            </Button>
-          </div>
+          <Select
+            placeholder="브랜드 선택"
+            loading={brands_loading}
+            allowClear
+            optionFilterProp="label"
+            filterOption={(input, option) =>
+              (option?.label?.toString() ?? '').toLowerCase().includes(input.toLowerCase())
+            }
+            options={[
+              ...brands.map(b => ({
+                value: String(b.id),
+                label: b.name,
+              })),
+              {
+                value: 'etc',
+                label: '기타',
+              }
+            ]}
+          />
         </Form.Item>
 
         <Form.Item

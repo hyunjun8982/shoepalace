@@ -75,14 +75,18 @@ const ProductFormPage: React.FC = () => {
       setLoading(true);
       const product = await productService.getProduct(productId!);
       form.setFieldsValue({
-        brand_id: product.brand_id,
+        brand_id: String(product.brand_id),
         product_code: product.product_code,
         product_name: product.product_name,
         description: product.description,
       });
 
       // 기존 이미지 표시
-      const imagePath = getFileUrl(`/uploads/products/${product.brand_name}/${product.product_code}.png`);
+      let imagePath = getFileUrl(`/uploads/products/${product.brand_name}/${product.product_code}.png`);
+      // 외부 URL인 경우 캐시 무효화를 위해 타임스탐프 추가
+      if (imagePath && imagePath.startsWith('http')) {
+        imagePath = `${imagePath}?t=${new Date().getTime()}`;
+      }
       setImageUrl(imagePath || '');
 
       // 기존 바코드 로드
@@ -121,9 +125,9 @@ const ProductFormPage: React.FC = () => {
       
       // 브랜드 목록 새로고침
       await fetchBrands();
-      
+
       // 새로 등록된 브랜드를 선택
-      form.setFieldsValue({ brand_id: newBrand.id });
+      form.setFieldsValue({ brand_id: String(newBrand.id) });
       
       // 모달 닫기 및 초기화
       setNewBrandModalVisible(false);
@@ -371,22 +375,35 @@ const ProductFormPage: React.FC = () => {
                     </span>
                   }
                   name="brand_id"
-                  rules={[{ required: true, message: '브랜드를 선택해주세요.' }]}
+                  rules={[
+                    {
+                      required: true,
+                      message: '브랜드를 선택해주세요.',
+                      validator: (_, value) => {
+                        if (value && String(value).trim()) {
+                          return Promise.resolve();
+                        }
+                        return Promise.reject(new Error('브랜드를 선택해주세요.'));
+                      }
+                    }
+                  ]}
+                  normalize={(value) => value ? String(value) : undefined}
                 >
                   <Select
                     placeholder="브랜드 선택"
                     showSearch
-                    optionFilterProp="children"
+                    allowClear
+                    optionFilterProp="label"
                     filterOption={(input, option) =>
                       (option?.label?.toString() ?? '').toLowerCase().includes(input.toLowerCase())
                     }
                   >
                     {brands.map((brand) => (
-                      <Option key={brand.id} value={brand.id}>
+                      <Option key={brand.id} value={String(brand.id)} label={brand.name}>
                         {brand.name}
                       </Option>
                     ))}
-                    <Option value="etc">기타</Option>
+                    <Option value="etc" label="기타">기타</Option>
                   </Select>
                 </Form.Item>
 

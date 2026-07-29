@@ -7,7 +7,6 @@ on:
     paths:
       - 'backend/**'
       - 'frontend/**'
-      - 'card-app/**'
       - 'nginx/**'
       - 'docker-compose*.yml'
       - '.github/workflows/**'
@@ -16,7 +15,6 @@ on:
 env:
   DOCKER_BACKEND_IMAGE: shoepalace-backend
   DOCKER_FRONTEND_IMAGE: shoepalace-frontend
-  DOCKER_CARD_APP_IMAGE: shoepalace-card-app
 
 jobs:
   build-and-deploy:
@@ -44,17 +42,15 @@ jobs:
 
           backend_changed=$(echo "$changed" | grep -q "^backend/" && echo "true" || echo "false")
           frontend_changed=$(echo "$changed" | grep -q "^frontend/" && echo "true" || echo "false")
-          card_app_changed=$(echo "$changed" | grep -q "^card-app/" && echo "true" || echo "false")
 
           echo "backend=$backend_changed" >> $GITHUB_OUTPUT
           echo "frontend=$frontend_changed" >> $GITHUB_OUTPUT
-          echo "card_app=$card_app_changed" >> $GITHUB_OUTPUT
+          echo "card_app=false" >> $GITHUB_OUTPUT
 
           # Dockerfile, docker-compose.yml, nginx 변경 시만 전체 빌드
           if echo "$changed" | grep -qE "(Dockerfile|docker-compose|nginx)"; then
             echo "backend=true" >> $GITHUB_OUTPUT
             echo "frontend=true" >> $GITHUB_OUTPUT
-            echo "card_app=true" >> $GITHUB_OUTPUT
             echo "infra=true" >> $GITHUB_OUTPUT
           else
             echo "infra=false" >> $GITHUB_OUTPUT
@@ -76,12 +72,6 @@ jobs:
           docker build -t ${{ env.DOCKER_FRONTEND_IMAGE }}:latest -f frontend/Dockerfile frontend/
           docker save ${{ env.DOCKER_FRONTEND_IMAGE }}:latest | gzip > frontend-image.tar.gz
 
-      - name: Build Card App Image
-        if: steps.changes.outputs.card_app == 'true'
-        run: |
-          docker build -t ${{ env.DOCKER_CARD_APP_IMAGE }}:latest -f card-app/Dockerfile card-app/
-          docker save ${{ env.DOCKER_CARD_APP_IMAGE }}:latest | gzip > card-app-image.tar.gz
-
       # 빌드된 이미지만 서버로 전송
       - name: Prepare transfer list
         id: transfer
@@ -90,9 +80,6 @@ jobs:
           if [ -f backend-image.tar.gz ]; then files="backend-image.tar.gz"; fi
           if [ -f frontend-image.tar.gz ]; then
             [ -n "$files" ] && files="$files,frontend-image.tar.gz" || files="frontend-image.tar.gz"
-          fi
-          if [ -f card-app-image.tar.gz ]; then
-            [ -n "$files" ] && files="$files,card-app-image.tar.gz" || files="card-app-image.tar.gz"
           fi
           echo "files=$files" >> $GITHUB_OUTPUT
           echo "Transfer files: $files"
@@ -144,11 +131,6 @@ jobs:
               gunzip -c /tmp/shoepalace-deploy/frontend-image.tar.gz | docker load
             fi
 
-            if [ -f /tmp/shoepalace-deploy/card-app-image.tar.gz ]; then
-              echo "[4] Card App 이미지 로드 중..."
-              gunzip -c /tmp/shoepalace-deploy/card-app-image.tar.gz | docker load
-            fi
-
             rm -rf /tmp/shoepalace-deploy
 
             # 변경된 서비스만 재시작 (인프라 변경 시 전체 재시작)
@@ -160,7 +142,6 @@ jobs:
               SERVICES=""
               if [ "${{ steps.changes.outputs.backend }}" == "true" ]; then SERVICES="$SERVICES backend"; fi
               if [ "${{ steps.changes.outputs.frontend }}" == "true" ]; then SERVICES="$SERVICES frontend"; fi
-              if [ "${{ steps.changes.outputs.card_app }}" == "true" ]; then SERVICES="$SERVICES card-app"; fi
 
               if [ -n "$SERVICES" ]; then
                 echo "[5] 변경된 서비스 재시작:$SERVICES"

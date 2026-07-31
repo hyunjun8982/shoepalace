@@ -9,6 +9,7 @@ class BarcodeSchema(BaseModel):
     product_id: str
     barcode_value: str
     barcode_type: str
+    size: Optional[str] = None
     is_active: bool
     notes: Optional[str] = None
     created_at: datetime
@@ -68,7 +69,8 @@ class Product(ProductBase):
     brand_name: Optional[str] = None
     brand_icon_url: Optional[str] = None
     inventory: Optional[List[InventorySchema]] = None
-    barcode: Optional[BarcodeSchema] = None
+    barcodes: Optional[List[BarcodeSchema]] = None
+    image_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

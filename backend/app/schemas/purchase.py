@@ -45,6 +45,7 @@ class ProductInfo(BaseModel):
     color: Optional[str] = None
     brand_name: Optional[str] = None
     brand_icon_url: Optional[str] = None
+    image_url: Optional[str] = None
 
     @field_validator('id', mode='before')
     @classmethod

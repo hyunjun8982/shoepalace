@@ -81,8 +81,9 @@ const ProductFormPage: React.FC = () => {
         description: product.description,
       });
 
-      // 기존 이미지 표시
-      let imagePath = getFileUrl(`/uploads/products/${product.brand_name}/${product.product_code}.png`);
+      // 기존 이미지 표시 (브랜드명 스페이스 → 하이픈으로 변환)
+      const brandNameForPath = product.brand_name.replace(/ /g, '-');
+      let imagePath = getFileUrl(`/uploads/products/${brandNameForPath}/${product.product_code}.png`);
       // 외부 URL인 경우 캐시 무효화를 위해 타임스탐프 추가
       if (imagePath && imagePath.startsWith('http')) {
         imagePath = `${imagePath}?t=${new Date().getTime()}`;
@@ -280,7 +281,13 @@ const ProductFormPage: React.FC = () => {
           console.log('[IMAGE UPLOAD] Brand name:', brandName);
           console.log('[IMAGE UPLOAD] Product code:', values.product_code);
 
-          await productService.uploadProductImage(fileToUpload, brandName, values.product_code);
+          const uploadResult = await productService.uploadProductImage(fileToUpload, brandName, values.product_code);
+
+          // 업로드된 이미지 URL로 업데이트 (캐시 무효화)
+          if (uploadResult?.image_url) {
+            const newImageUrl = getFileUrl(uploadResult.image_url) + `?t=${Date.now()}`;
+            setImageUrl(newImageUrl);
+          }
 
           console.log('[IMAGE UPLOAD] Success');
           message.success('상품과 이미지가 저장되었습니다.');

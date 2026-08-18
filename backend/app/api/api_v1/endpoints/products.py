@@ -334,11 +334,10 @@ async def update_product_image(
             buffer.write(content)
             print(f"[IMAGE UPLOAD SUCCESS] File saved: {file_path}, size: {len(content)} bytes")
 
-        # 상품의 image_url 업데이트 (URL 인코딩 포함)
-        from urllib.parse import quote
-        encoded_brand = quote(brand_name_for_path.encode('utf-8'), safe='')
-        encoded_filename = quote(f"{product_code_for_path}{file_ext}".encode('utf-8'), safe='')
-        image_url = f"/uploads/products/{encoded_brand}/{encoded_filename}"
+        # 상품의 image_url 업데이트 (파일 경로와 동일한 형식)
+        # brand_name_for_path는 이미 URL-safe한 형태 (스페이스 → 하이픈)
+        filename = f"{product_code_for_path}{file_ext}"
+        image_url = f"/uploads/products/{brand_name_for_path}/{filename}"
         product.image_url = image_url
         db.commit()
         db.refresh(product)
@@ -535,11 +534,10 @@ async def upload_product_image(
             buffer.write(content)
             print(f"[IMAGE UPLOAD SUCCESS] File saved: {file_path}, size: {len(content)} bytes")
 
-        # 상품의 image_url 업데이트 (URL 인코딩 포함)
-        from urllib.parse import quote
-        encoded_brand = quote(brand_name_for_path.encode('utf-8'), safe='')
-        encoded_filename = quote(f"{product_code_for_path}{file_ext}".encode('utf-8'), safe='')
-        image_url = f"/uploads/products/{encoded_brand}/{encoded_filename}"
+        # 상품의 image_url 업데이트 (파일 경로와 동일한 형식)
+        # brand_name_for_path는 이미 URL-safe한 형태 (스페이스 → 하이픈)
+        filename = f"{product_code_for_path}{file_ext}"
+        image_url = f"/uploads/products/{brand_name_for_path}/{filename}"
         product = db.query(Product).filter(Product.product_code == product_code).first()
         if product:
             product.image_url = image_url

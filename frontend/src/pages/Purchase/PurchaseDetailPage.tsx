@@ -661,9 +661,11 @@ const PurchaseDetailPage: React.FC = () => {
                     }
 
                     if (record.product?.brand_name && record.product?.product_code) {
+                      // 브랜드명 스페이스 → 하이픈 변환
+                      const brandNameForPath = record.product.brand_name.replace(/ /g, '-');
                       return (
                         <img
-                          src={getFileUrl(`/uploads/products/${record.product.brand_name}/${record.product.product_code}.png`) || ''}
+                          src={getFileUrl(`/uploads/products/${brandNameForPath}/${record.product.product_code}.png`) || ''}
                           alt={record.product.product_name}
                           style={{
                             width: 50,

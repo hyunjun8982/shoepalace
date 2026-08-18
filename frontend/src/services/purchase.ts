@@ -74,7 +74,7 @@ export const purchaseService = {
   },
 
   // 구매 항목 수정 (기능 #1)
-  async updatePurchaseItem(itemId: string, data: { quantity?: number; size?: string }): Promise<any> {
+  async updatePurchaseItem(itemId: string, data: { quantity?: number; size?: string; product_image_url?: string }): Promise<any> {
     const response = await api.patch(`/purchases/items/${itemId}`, null, {
       params: data
     });

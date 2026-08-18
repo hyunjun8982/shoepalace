@@ -448,13 +448,23 @@ def delete_purchase(
     if delete_inventory:
         # 재고도 함께 삭제
         items = db.query(PurchaseItem).filter(PurchaseItem.purchase_id == purchase_id).all()
+
+        # 같은 상품/사이즈가 여러 라인에 있을 수 있으니 수량을 합쳐서 처리
+        inventory_updates = {}  # (product_id, size) -> quantity
         for item in items:
+            key = (item.product_id, item.size)
+            if key not in inventory_updates:
+                inventory_updates[key] = 0
+            inventory_updates[key] += item.quantity
+
+        # 재고에서 수량 차감
+        for (product_id, size), quantity_to_remove in inventory_updates.items():
             inventory = db.query(Inventory).filter(
-                Inventory.product_id == item.product_id,
-                Inventory.size == item.size
+                Inventory.product_id == product_id,
+                Inventory.size == size
             ).first()
             if inventory:
-                inventory.quantity -= item.quantity
+                inventory.quantity -= quantity_to_remove
                 # 재고가 0 이하가 되면 삭제
                 if inventory.quantity <= 0:
                     db.delete(inventory)
@@ -648,32 +658,33 @@ def confirm_purchase(
     purchase.status = PurchaseStatus.completed  # 상태를 완료로 변경
 
     # 재고 추가 (입고 확인 시에만 재고에 반영)
+    # 같은 상품/사이즈가 여러 라인에 있을 수 있으니 수량을 합쳐서 처리
+    inventory_updates = {}  # (product_id, size) -> quantity
+
     for item in purchase.items:
+        key = (item.product_id, item.size)
+        if key not in inventory_updates:
+            inventory_updates[key] = 0
+        inventory_updates[key] += item.quantity
+
+    # 존재하는 재고 한 번에 조회
+    for (product_id, size), quantity_to_add in inventory_updates.items():
         inventory = db.query(Inventory).filter(
-            Inventory.product_id == item.product_id,
-            Inventory.size == item.size
+            Inventory.product_id == product_id,
+            Inventory.size == size
         ).first()
 
         if inventory:
-            inventory.quantity += item.quantity
+            inventory.quantity += quantity_to_add
         else:
-            # 동시성 처리: 다른 요청이 방금 생성했을 수 있으니 다시 조회
-            inventory = db.query(Inventory).filter(
-                Inventory.product_id == item.product_id,
-                Inventory.size == item.size
-            ).first()
-
-            if inventory:
-                inventory.quantity += item.quantity
-            else:
-                inventory = Inventory(
-                    id=uuid.uuid4(),
-                    product_id=item.product_id,
-                    size=item.size,
-                    quantity=item.quantity,
-                    reserved_quantity=0
-                )
-                db.add(inventory)
+            inventory = Inventory(
+                id=uuid.uuid4(),
+                product_id=product_id,
+                size=size,
+                quantity=quantity_to_add,
+                reserved_quantity=0
+            )
+            db.add(inventory)
 
     db.commit()
     db.refresh(purchase)
@@ -822,14 +833,24 @@ def unconfirm_purchase(
     purchase.status = PurchaseStatus.pending  # 상태를 대기로 변경
 
     # 재고 제거 (입고 확인 취소 시 재고에서 제거)
+    # 같은 상품/사이즈가 여러 라인에 있을 수 있으니 수량을 합쳐서 처리
+    inventory_updates = {}  # (product_id, size) -> quantity
+
     for item in purchase.items:
+        key = (item.product_id, item.size)
+        if key not in inventory_updates:
+            inventory_updates[key] = 0
+        inventory_updates[key] += item.quantity
+
+    # 재고에서 수량 차감
+    for (product_id, size), quantity_to_remove in inventory_updates.items():
         inventory = db.query(Inventory).filter(
-            Inventory.product_id == item.product_id,
-            Inventory.size == item.size
+            Inventory.product_id == product_id,
+            Inventory.size == size
         ).first()
 
         if inventory:
-            inventory.quantity -= item.quantity
+            inventory.quantity -= quantity_to_remove
             # 재고가 0 이하가 되면 삭제
             if inventory.quantity <= 0:
                 db.delete(inventory)

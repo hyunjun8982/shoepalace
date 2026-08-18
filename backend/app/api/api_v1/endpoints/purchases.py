@@ -657,14 +657,23 @@ def confirm_purchase(
         if inventory:
             inventory.quantity += item.quantity
         else:
-            inventory = Inventory(
-                id=uuid.uuid4(),
-                product_id=item.product_id,
-                size=item.size,
-                quantity=item.quantity,
-                reserved_quantity=0
-            )
-            db.add(inventory)
+            # 동시성 처리: 다른 요청이 방금 생성했을 수 있으니 다시 조회
+            inventory = db.query(Inventory).filter(
+                Inventory.product_id == item.product_id,
+                Inventory.size == item.size
+            ).first()
+
+            if inventory:
+                inventory.quantity += item.quantity
+            else:
+                inventory = Inventory(
+                    id=uuid.uuid4(),
+                    product_id=item.product_id,
+                    size=item.size,
+                    quantity=item.quantity,
+                    reserved_quantity=0
+                )
+                db.add(inventory)
 
     db.commit()
     db.refresh(purchase)

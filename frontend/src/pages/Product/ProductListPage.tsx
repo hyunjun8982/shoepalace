@@ -313,9 +313,9 @@ const ProductListPage: React.FC = () => {
   // 이미지 경로 생성 함수
   const getImagePath = (productCode: string, brandName?: string) => {
     if (!brandName || !productCode) return null;
-    // 개발 환경: 백엔드 API URL을 통해 접근
-    // API URL은 urlUtils의 getFileUrl 사용
-    return getFileUrl(`/uploads/products/${brandName}/${productCode}.png`);
+    // 브랜드명 스페이스 → 하이픈 변환 (backend 파일 경로와 일치)
+    const brandNameForPath = brandName.replace(/ /g, '-');
+    return getFileUrl(`/uploads/products/${brandNameForPath}/${productCode}.png`);
   };
 
   // 브랜드 한글명 매핑

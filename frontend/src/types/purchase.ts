@@ -21,6 +21,7 @@ export interface ProductInfo {
   color?: string;
   brand_name?: string;
   brand_icon_url?: string;
+  image_url?: string;
 }
 export interface WarehouseInfo {
   id: string;

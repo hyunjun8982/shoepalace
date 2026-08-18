@@ -479,12 +479,12 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
               rules={[
                 { required: true, message: '상품코드는 필수입니다' },
                 {
-                  pattern: /^[A-Za-z0-9\-/_]+$/,
-                  message: '영문, 숫자, -, /, _만 입력 가능합니다',
+                  pattern: /^[A-Za-z0-9\-/_\s가-힣]+$/,
+                  message: '영문, 숫자, 한글, -, /, _, 띄워쓰기 입력 가능합니다',
                 },
               ]}
             >
-              <Input placeholder="예: NK-AIR-001" />
+              <Input placeholder="예: NK-AIR-001 또는 나이키 에어조던" />
             </Form.Item>
           </Col>
         </Row>

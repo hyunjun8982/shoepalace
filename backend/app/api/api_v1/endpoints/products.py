@@ -304,20 +304,28 @@ async def update_product_image(
     if file_ext not in allowed_extensions:
         raise HTTPException(status_code=400, detail="Only image files are allowed")
 
+    # "/" 를 "-"로 치환해서 파일명 생성 (고유성 보장)
+    # "28412/6057/9829/10358/10403" → "28412-6057-9829-10358-10403"
+    product_code_for_path = product.product_code.replace('/', '-')
+
+    # 브랜드명에서 스페이스를 "-"로 치환 (URL 인코딩 문제 해결)
+    # "The North Face" → "The-North-Face"
+    brand_name_for_path = brand_name.replace(' ', '-')
+
     # 업로드 디렉토리 생성
-    upload_dir = UPLOAD_DIR / "products" / brand_name
+    upload_dir = UPLOAD_DIR / "products" / brand_name_for_path
     upload_dir.mkdir(parents=True, exist_ok=True)
 
     # 파일명: {상품코드}.{원본확장자} (원본 확장자 유지 - 이미지 형식 보존)
     # 기존 파일 삭제 (같은 상품의 이전 이미지)
-    for old_file in upload_dir.glob(f"{product.product_code}.*"):
+    for old_file in upload_dir.glob(f"{product_code_for_path}.*"):
         try:
             old_file.unlink()
             print(f"[IMAGE UPLOAD] Removed old file: {old_file}")
         except Exception as e:
             print(f"[IMAGE UPLOAD WARNING] Failed to remove old file: {e}")
 
-    file_path = upload_dir / f"{product.product_code}{file_ext}"
+    file_path = upload_dir / f"{product_code_for_path}{file_ext}"
 
     # 파일 저장
     try:
@@ -328,8 +336,8 @@ async def update_product_image(
 
         # 상품의 image_url 업데이트 (URL 인코딩 포함)
         from urllib.parse import quote
-        encoded_brand = quote(brand_name.encode('utf-8'), safe='')
-        encoded_filename = quote(f"{product.product_code}{file_ext}".encode('utf-8'), safe='')
+        encoded_brand = quote(brand_name_for_path.encode('utf-8'), safe='')
+        encoded_filename = quote(f"{product_code_for_path}{file_ext}".encode('utf-8'), safe='')
         image_url = f"/uploads/products/{encoded_brand}/{encoded_filename}"
         product.image_url = image_url
         db.commit()
@@ -495,21 +503,29 @@ async def upload_product_image(
         print(f"[IMAGE UPLOAD ERROR] Invalid file extension: {file_ext}")
         raise HTTPException(status_code=400, detail="Only image files are allowed")
 
+    # 브랜드명에서 스페이스를 "-"로 치환 (URL 인코딩 문제 해결)
+    # "The North Face" → "The-North-Face"
+    brand_name_for_path = brand_name.replace(' ', '-')
+
     # 업로드 디렉토리 생성
-    upload_dir = UPLOAD_DIR / "products" / brand_name
+    upload_dir = UPLOAD_DIR / "products" / brand_name_for_path
     print(f"[IMAGE UPLOAD] Upload directory: {upload_dir.absolute()}")
     upload_dir.mkdir(parents=True, exist_ok=True)
 
+    # "/" 를 "-"로 치환해서 파일명 생성 (고유성 보장)
+    # "28412/6057/9829/10358/10403" → "28412-6057-9829-10358-10403"
+    product_code_for_path = product_code.replace('/', '-')
+
     # 파일명: {상품코드}.{원본확장자} (원본 확장자 유지 - 이미지 형식 보존)
     # 기존 파일 삭제 (같은 상품의 이전 이미지)
-    for old_file in upload_dir.glob(f"{product_code}.*"):
+    for old_file in upload_dir.glob(f"{product_code_for_path}.*"):
         try:
             old_file.unlink()
             print(f"[IMAGE UPLOAD] Removed old file: {old_file}")
         except Exception as e:
             print(f"[IMAGE UPLOAD WARNING] Failed to remove old file: {e}")
 
-    file_path = upload_dir / f"{product_code}{file_ext}"
+    file_path = upload_dir / f"{product_code_for_path}{file_ext}"
     print(f"[IMAGE UPLOAD] File path: {file_path.absolute()}")
 
     # 파일 저장
@@ -521,8 +537,8 @@ async def upload_product_image(
 
         # 상품의 image_url 업데이트 (URL 인코딩 포함)
         from urllib.parse import quote
-        encoded_brand = quote(brand_name.encode('utf-8'), safe='')
-        encoded_filename = quote(f"{product_code}{file_ext}".encode('utf-8'), safe='')
+        encoded_brand = quote(brand_name_for_path.encode('utf-8'), safe='')
+        encoded_filename = quote(f"{product_code_for_path}{file_ext}".encode('utf-8'), safe='')
         image_url = f"/uploads/products/{encoded_brand}/{encoded_filename}"
         product = db.query(Product).filter(Product.product_code == product_code).first()
         if product:

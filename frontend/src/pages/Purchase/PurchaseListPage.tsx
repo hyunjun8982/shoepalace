@@ -694,9 +694,13 @@ const PurchaseListPage: React.FC = () => {
               maxTagCount={0}
               maxTagPlaceholder={(omittedValues) => `구매자 ${omittedValues.length}명`}
             >
-              {users.map(user => (
-                <Option key={user.id} value={user.id}>{user.full_name}</Option>
-              ))}
+              {users
+                .filter((user, index, self) =>
+                  self.findIndex(u => u.full_name === user.full_name) === index
+                )
+                .map(user => (
+                  <Option key={user.id} value={user.id}>{user.full_name}</Option>
+                ))}
             </Select>
           </Col>
           <Col span={4} style={{ textAlign: 'right' }}>

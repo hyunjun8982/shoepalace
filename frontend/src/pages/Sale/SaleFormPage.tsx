@@ -540,11 +540,16 @@ const SaleFormPageNew: React.FC = () => {
     try {
       setLoading(true);
 
+      let fullNotes = values.notes || '';
+      if (values.tracking_number) {
+        fullNotes = `운송장번호: ${values.tracking_number}` + (fullNotes ? `\n${fullNotes}` : '');
+      }
+
       const saleData: SaleCreate = {
         sale_date: values.sale_date.format('YYYY-MM-DD'),
         customer_name: values.customer_name,
         customer_contact: values.customer_contact,
-        notes: values.notes,
+        notes: fullNotes,
         items: selectedProducts,
       };
 

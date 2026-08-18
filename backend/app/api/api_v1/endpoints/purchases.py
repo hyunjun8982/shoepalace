@@ -1028,10 +1028,11 @@ def update_purchase_item(
     item_id: str,
     quantity: Optional[int] = None,
     size: Optional[str] = None,
+    product_image_url: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """구매 항목의 수량/사이즈 편집"""
+    """구매 항목의 수량/사이즈/이미지 편집"""
     # admin이나 buyer만 수정 가능
     if current_user.role.value not in ["admin", "buyer"]:
         raise HTTPException(status_code=403, detail="Not authorized")
@@ -1051,6 +1052,8 @@ def update_purchase_item(
         item.quantity = quantity
     if size is not None:
         item.size = size
+    if product_image_url is not None:
+        item.product_image_url = product_image_url
 
     db.commit()
     db.refresh(item)

@@ -277,84 +277,57 @@ const SaleDetailPage: React.FC = () => {
     return phone;
   };
 
+  // notes에서 운송장번호 추출
+  const parseTrackingNumber = (notes: string): { tracking_number: string; other_notes: string } => {
+    if (!notes) return { tracking_number: '', other_notes: '' };
+    const match = notes.match(/운송장번호:\s*(.+?)(?:\n|$)/);
+    if (match) {
+      const tracking_number = match[1].trim();
+      const other_notes = notes.replace(match[0], '').trim();
+      return { tracking_number, other_notes };
+    }
+    return { tracking_number: '', other_notes: notes };
+  };
+
   // 첫 번째 상품 정보 (모든 아이템이 같은 상품)
   const firstItem = sale?.items?.[0];
 
-  // 전체 사이즈 목록 (220-300만 표시)
-  const allSizes = [
-    '220', '225', '230', '235', '240', '245', '250', '255', '260', '265', '270', '275', '280', '285', '290', '295', '300'
-  ];
-
-  // 사이즈 매핑 (표시용)
-  const sizeMapping: { [key: string]: string } = {
-    '220': 'FREE',
-    '225': 'XXS',
-    '230': 'XS',
-    '235': 'S',
-    '240': 'M',
-    '245': 'L',
-    '250': 'XL',
-    '255': 'XXL',
-    '260': '170',
-    '265': '180',
-    '270': '190',
-    '275': '200',
-    '280': '210',
-    '285': '95',
-    '290': '100',
-    '295': '105',
-    '300': '110',
-  };
-
-  // 사이즈 표시 함수
-  const getSizeDisplay = (size: string): string => {
-    if (sizeMapping[size]) {
-      return `${size} (${sizeMapping[size]})`;
-    }
-    return size;
-  };
-
-  // 역매핑: 의류/신발 사이즈 -> mm 사이즈
-  const reverseSizeMapping: { [key: string]: string } = {
-    'FREE': '220',
-    'XXS': '225',
-    'XS': '230',
-    'S': '235',
-    'M': '240',
-    'L': '245',
-    'XL': '250',
-    'XXL': '255',
-    '170': '260',
-    '180': '265',
-    '190': '270',
-    '200': '275',
-    '210': '280',
-    '95': '285',
-    '100': '290',
-    '105': '295',
-    '110': '300',
-  };
-
-  // 사이즈별 정보 맵 생성 (입력된 사이즈를 mm 사이즈로 변환)
-  const sizeInfoMap = new Map<string, { quantity: number; sellerPrice: number; companyPrice: number }>();
-  sale?.items?.forEach(item => {
-    let size = item.size || 'FREE';
-    // 역매핑: FREE, XXS 등이 들어오면 220, 225 등으로 변환
-    size = reverseSizeMapping[size] || size;
-
-    const current = sizeInfoMap.get(size) || { quantity: 0, sellerPrice: 0, companyPrice: 0 };
-    sizeInfoMap.set(size, {
-      quantity: current.quantity + (item.quantity || 0),
-      sellerPrice: item.seller_sale_price_krw || 0,
-      companyPrice: current.companyPrice + ((item.company_sale_price || 0) * (item.quantity || 0)),
-    });
-  });
-
-  // 전체 사이즈 목록 사용 (수량 0인 사이즈 포함)
-  const sortedSizeEntries = allSizes.map(size => {
-    const info = sizeInfoMap.get(size) || { quantity: 0, sellerPrice: 0, companyPrice: 0 };
-    return [size, info] as [string, { quantity: number; sellerPrice: number; companyPrice: number }];
-  });
+  // 판매 등록된 상품의 사이즈별 정보 (판매 등록 그대로)
+  const sortedSizeEntries = sale?.items
+    ?.reduce((acc, item) => {
+      const size = item.size || 'FREE';
+      const existingIndex = acc.findIndex(([s]) => s === size);
+      if (existingIndex === -1) {
+        acc.push([
+          size,
+          {
+            quantity: item.quantity || 0,
+            sellerPrice: item.seller_sale_price_krw || 0,
+            companyPrice: (item.company_sale_price || 0) * (item.quantity || 0),
+          },
+        ]);
+      } else {
+        const [s, info] = acc[existingIndex];
+        acc[existingIndex] = [
+          s,
+          {
+            quantity: info.quantity + (item.quantity || 0),
+            sellerPrice: item.seller_sale_price_krw || 0,
+            companyPrice: info.companyPrice + ((item.company_sale_price || 0) * (item.quantity || 0)),
+          },
+        ];
+      }
+      return acc;
+    }, [] as [string, { quantity: number; sellerPrice: number; companyPrice: number }][])
+    ?.sort((a, b) => {
+      // 숫자 사이즈는 숫자로, 문자 사이즈는 문자로 정렬
+      const aNum = parseFloat(a[0]);
+      const bNum = parseFloat(b[0]);
+      if (!isNaN(aNum) && !isNaN(bNum)) {
+        return aNum - bNum;
+      }
+      return a[0].localeCompare(b[0]);
+    }) || [];
 
   // 판매가 (편집 모드에서는 첫 번째 사이즈의 가격 사용)
   const sellerSalePrice = editMode
@@ -429,10 +402,11 @@ const SaleDetailPage: React.FC = () => {
                       icon={<EditOutlined />}
                       onClick={() => {
                         setEditMode(true);
+                        const { tracking_number, other_notes } = parseTrackingNumber(sale?.notes || '');
                         form.setFieldsValue({
                           customer_name: sale?.customer_name,
                           customer_contact: sale?.customer_contact,
-                          notes: sale?.notes,
+                          notes: other_notes,
                         });
                         // 가격 정보 초기화
                         const prices: { [key: string]: number } = {};
@@ -514,6 +488,12 @@ const SaleDetailPage: React.FC = () => {
                   onClick={async () => {
                     try {
                       const values = await form.validateFields();
+                      const { tracking_number } = parseTrackingNumber(sale?.notes || '');
+
+                      // 운송장번호를 다시 추가해서 notes 생성
+                      const updatedNotes = tracking_number
+                        ? `운송장번호: ${tracking_number}\n${values.notes || ''}`
+                        : values.notes;
 
                       // 수정된 판매가로 총액 계산
                       const totalCompanyAmount = sale!.items?.reduce((sum, item) => {
@@ -524,6 +504,7 @@ const SaleDetailPage: React.FC = () => {
                       // 판매 정보 업데이트 (total_company_amount만 전송)
                       await saleService.updateSale(sale!.id!, {
                         ...values,
+                        notes: updatedNotes,
                         total_company_amount: totalCompanyAmount,
                       });
 
@@ -605,8 +586,11 @@ const SaleDetailPage: React.FC = () => {
             <Descriptions.Item label="총 판매자 마진">
               ₩{Math.floor(sale.total_seller_margin || 0).toLocaleString()}
             </Descriptions.Item>
-            <Descriptions.Item label="비고" span={3}>
-              {sale.notes || '-'}
+            <Descriptions.Item label="운송장번호">
+              {parseTrackingNumber(sale.notes || '').tracking_number || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="비고" span={2}>
+              {parseTrackingNumber(sale.notes || '').other_notes || '-'}
             </Descriptions.Item>
           </Descriptions>
         ) : (
@@ -666,7 +650,10 @@ const SaleDetailPage: React.FC = () => {
               <Descriptions.Item label="총 판매자 마진">
                 ₩{Math.floor(sale.total_seller_margin || 0).toLocaleString()}
               </Descriptions.Item>
-              <Descriptions.Item label="비고" span={3}>
+              <Descriptions.Item label="운송장번호">
+                {parseTrackingNumber(sale.notes || '').tracking_number || '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="비고" span={2}>
                 <Form.Item name="notes" style={{ margin: 0 }}>
                   <Input.TextArea rows={2} placeholder="비고 입력" />
                 </Form.Item>
@@ -784,7 +771,7 @@ const SaleDetailPage: React.FC = () => {
                         color: currentQty > 0 ? '#1890ff' : '#999',
                         marginBottom: '6px'
                       }}>
-                        {getSizeDisplay(size)}
+                        {size}
                       </div>
 
                       {/* 수량 */}

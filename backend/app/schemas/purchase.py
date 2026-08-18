@@ -34,6 +34,7 @@ class PurchaseItemUpdate(PurchaseItemBase):
     product_id: Optional[str] = None
     quantity: Optional[int] = None
     purchase_price: Optional[float] = None
+    product_image_url: Optional[str] = None
 
 class ProductInfo(BaseModel):
     """Product 정보를 위한 스키마"""

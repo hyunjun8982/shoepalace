@@ -1226,23 +1226,36 @@ const InventoryListPage: React.FC = () => {
                     사이즈별 재고
                   </h3>
                   {(() => {
-                    // 카테고리 확인
-                    // 고정 사이즈 정의 (신발 사이즈)
-                    const fixedSizes = ['220', '225', '230', '235', '240', '245', '250', '255', '260', '265', '270', '275', '280', '285', '290', '295', '300', '305', '310', '315'];
-
-                    // 사이즈별 데이터 맵 생성
+                    // 사이즈별 데이터 맵 생성 (실제 데이터만 사용)
                     const sizeMap = new Map();
                     selectedInventoryDetail.size_inventories?.forEach((item: any) => {
                       sizeMap.set(item.size, { quantity: item.quantity, location: item.location, id: item.id });
+                    });
+
+                    // 실제 있는 사이즈들 추출 및 정렬
+                    const existingSizes = Array.from(sizeMap.keys()).sort((a: string, b: string) => {
+                      const aNum = parseFloat(a);
+                      const bNum = parseFloat(b);
+                      if (!isNaN(aNum) && !isNaN(bNum)) {
+                        return aNum - bNum;
+                      }
+                      // 숫자가 아닌 사이즈(의류)는 정의된 순서대로 정렬
+                      const clothingSizes = ['FREE', 'XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL'];
+                      return clothingSizes.indexOf(a) - clothingSizes.indexOf(b);
                     });
 
                     // 창고 위치 중복 확인 및 병합 처리
                     const locations = selectedInventoryDetail.size_inventories?.map((item: any) => item.location || '-') || [];
                     const uniqueLocations = Array.from(new Set(locations));
 
-                    // 신발 사이즈는 10개씩 2행으로 표시
-                    const firstRow = fixedSizes.slice(0, 10);
-                    const secondRow = fixedSizes.slice(10);
+                    // 사이즈를 10개씩 묶어서 행 생성
+                    const rows = [];
+                    for (let i = 0; i < existingSizes.length; i += 10) {
+                      rows.push(existingSizes.slice(i, i + 10));
+                    }
+
+                    const firstRow = rows[0] || [];
+                    const secondRow = rows[1] || [];
 
                     const renderSizeRow = (sizes: string[], rowIndex: number) => {
                       const locationForRow = uniqueLocations[rowIndex] || '-';
@@ -1258,9 +1271,11 @@ const InventoryListPage: React.FC = () => {
                                     border: '1px solid #f0f0f0',
                                     padding: '4px 6px',
                                     textAlign: 'center',
-                                    fontSize: '11px',
+                                    fontSize: '10px',
                                     backgroundColor: '#fafafa',
-                                    fontWeight: 500
+                                    fontWeight: 500,
+                                    wordBreak: 'break-word',
+                                    maxWidth: '70px'
                                   }}>
                                     {size}
                                   </td>

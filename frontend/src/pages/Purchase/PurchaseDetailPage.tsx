@@ -40,7 +40,7 @@ import { purchaseService } from '../../services/purchase';
 import { cardService } from '../../services/card';
 import { getFileUrl } from '../../utils/urlUtils';
 import { warehouseService } from '../../services/warehouse';
-import { uploadService } from '../../services/upload';
+import { productService } from '../../services/product';
 import { Warehouse } from '../../types/warehouse';
 import type { ColumnsType } from 'antd/es/table';
 
@@ -58,6 +58,7 @@ const PurchaseDetailPage: React.FC = () => {
   const [editingSizeQuantities, setEditingSizeQuantities] = useState<{ [itemId: string]: number }>({});
   const [editingSizes, setEditingSizes] = useState<{ [itemId: string]: string }>({});
   const [editingSizePrices, setEditingSizePrices] = useState<{ [size: string]: number }>({});
+  const [editingImages, setEditingImages] = useState<{ [itemId: string]: string }>({});
   const [form] = Form.useForm();
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [cards, setCards] = useState<CardType[]>([]);
@@ -360,12 +361,14 @@ const PurchaseDetailPage: React.FC = () => {
                         const newSize = editingSizes[item.id!];
                         const newQty = editingSizeQuantities[item.id!];
                         const newPrice = editingPrices[item.id!];
+                        const newImage = editingImages[item.id!];
 
                         // 변경된 항목에 대해 API 호출
-                        if (newSize !== undefined || newQty !== undefined) {
+                        if (newSize !== undefined || newQty !== undefined || newImage !== undefined) {
                           await purchaseService.updatePurchaseItem(item.id!, {
                             quantity: newQty !== undefined ? newQty : item.quantity,
-                            size: newSize !== undefined ? String(newSize) : item.size
+                            size: newSize !== undefined ? String(newSize) : item.size,
+                            product_image_url: newImage !== undefined ? newImage : item.product_image_url
                           });
                         }
 
@@ -374,17 +377,19 @@ const PurchaseDetailPage: React.FC = () => {
                           purchase_price: newPrice ?? item.purchase_price,
                           quantity: newQty !== undefined ? newQty : item.quantity,
                           size: newSize !== undefined ? newSize : item.size,
+                          product_image_url: newImage !== undefined ? newImage : item.product_image_url,
                         };
                       }) || [];
 
                       await Promise.all(updatePromises);
 
-                      // 구매 정보의 가격 업데이트 (사이즈, 수량 포함)
+                      // 구매 정보의 가격 업데이트 (사이즈, 수량, 이미지 포함)
                       const items = purchase.items?.map(item => ({
                         ...item,
                         purchase_price: editingPrices[item.id!] ?? item.purchase_price,
                         size: editingSizes[item.id!] ?? item.size,
                         quantity: editingSizeQuantities[item.id!] ?? item.quantity,
+                        product_image_url: editingImages[item.id!] ?? item.product_image_url,
                       })) || [];
 
                       await purchaseService.updatePurchase(purchase.id!, {
@@ -526,15 +531,140 @@ const PurchaseDetailPage: React.FC = () => {
               columns={[
                 {
                   title: '이미지',
-                  dataIndex: ['product'],
+                  dataIndex: 'product_image_url',
                   key: 'image',
-                  width: 60,
-                  render: (product: any) => {
-                    if (product?.brand_name && product?.product_code) {
+                  width: 80,
+                  render: (imageUrl: string, record: PurchaseItem) => {
+                    if (editMode) {
+                      // 1순위: 편집된 이미지 2순위: PurchaseItem 이미지 3순위: 상품 기본 이미지
+                      const displayUrl = editingImages[record.id!] || imageUrl || record.product?.image_url;
+
+                      const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+                        const items = e.clipboardData?.items;
+                        if (!items) return;
+
+                        for (let i = 0; i < items.length; i++) {
+                          if (items[i].type.includes('image')) {
+                            const file = items[i].getAsFile();
+                            if (file && record.product?.brand_name && record.product?.product_code) {
+                              productService.uploadProductImage(file, record.product.brand_name, record.product.product_code)
+                                .then((res) => {
+                                  if (record.id) {
+                                    setEditingImages(prev => ({
+                                      ...prev,
+                                      [record.id!]: res.image_url
+                                    }));
+                                    message.success('이미지가 업로드되었습니다');
+                                  }
+                                })
+                                .catch((error) => {
+                                  message.error('이미지 업로드 실패');
+                                  console.error('Upload error:', error);
+                                });
+                            }
+                            break;
+                          }
+                        }
+                      };
+
+                      return (
+                        <div
+                          style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '4px',
+                            alignItems: 'center',
+                            cursor: 'pointer',
+                            padding: '4px',
+                            borderRadius: '4px',
+                            backgroundColor: '#fafafa',
+                            minHeight: '70px',
+                            justifyContent: 'center'
+                          }}
+                          onPaste={handlePaste}
+                          tabIndex={0}
+                          title="클릭 후 Ctrl+V로 이미지 붙여넣기 가능"
+                        >
+                          {displayUrl ? (
+                            <img
+                              key={displayUrl}
+                              src={`${getFileUrl(displayUrl) || ''}?t=${Date.now()}`}
+                              alt={record.product?.product_name}
+                              style={{
+                                width: 50,
+                                height: 50,
+                                objectFit: 'cover',
+                                borderRadius: 4,
+                                display: 'block'
+                              }}
+                              onError={(e) => {
+                                console.error(`이미지 로드 실패: ${displayUrl}`);
+                                console.error(`최종 URL: ${getFileUrl(displayUrl)}`);
+                                (e.target as HTMLImageElement).style.display = 'none';
+                              }}
+                            />
+                          ) : (
+                            <div style={{ fontSize: 24 }}>📦</div>
+                          )}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '11px', width: '100%' }}>
+                            <Upload
+                              name="file"
+                              maxCount={1}
+                              accept="image/*"
+                              beforeUpload={(file) => {
+                                if (record.product?.brand_name && record.product?.product_code) {
+                                  productService.uploadProductImage(file, record.product.brand_name, record.product.product_code)
+                                    .then((res) => {
+                                      if (record.id) {
+                                        setEditingImages(prev => ({
+                                          ...prev,
+                                          [record.id!]: res.image_url
+                                        }));
+                                        message.success('이미지가 업로드되었습니다');
+                                      }
+                                    })
+                                    .catch((error) => {
+                                      message.error('이미지 업로드 실패');
+                                      console.error('Upload error:', error);
+                                    });
+                                }
+                                return false;
+                              }}
+                            >
+                              <Button size="small" icon={<UploadOutlined />} style={{ fontSize: '11px', width: '100%' }}>파일</Button>
+                            </Upload>
+                            <Button size="small" style={{ fontSize: '11px', width: '100%' }} onClick={() => {
+                              message.info('Ctrl+V로 이미지를 붙여넣으세요');
+                            }}>붙여넣기</Button>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // 읽기 모드
+                    if (imageUrl) {
                       return (
                         <img
-                          src={getFileUrl(`/uploads/products/${product.brand_name}/${product.product_code}.png`) || ''}
-                          alt={product.product_name}
+                          src={getFileUrl(imageUrl) || ''}
+                          alt={record.product?.product_name}
+                          style={{
+                            width: 50,
+                            height: 50,
+                            objectFit: 'cover',
+                            borderRadius: 4,
+                          }}
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = 'none';
+                          }}
+                        />
+                      );
+                    }
+
+                    if (record.product?.brand_name && record.product?.product_code) {
+                      return (
+                        <img
+                          src={getFileUrl(`/uploads/products/${record.product.brand_name}/${record.product.product_code}.png`) || ''}
+                          alt={record.product.product_name}
                           style={{
                             width: 50,
                             height: 50,

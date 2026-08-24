@@ -276,27 +276,24 @@ const CardManagePage: React.FC = () => {
 
           <Form.Item
             name="card_issuer"
-            label="카드사 (목록 선택 또는 직접 입력)"
-            rules={[{ required: true, message: '카드사를 선택하거나 입력해주세요' }]}
+            label="카드사"
+            rules={[{ required: true, message: '카드사를 선택해주세요' }]}
           >
-            <AutoComplete
-              placeholder="신한, KB국민 등 카드사 선택 또는 입력"
-              options={[
-                { label: '신한', value: 'shinhan' },
-                { label: 'KB국민', value: 'kb' },
-                { label: '현대', value: 'hyundai' },
-                { label: '삼성', value: 'samsung' },
-                { label: '롯데', value: 'lotte' },
-                { label: '하나', value: 'hana' },
-                { label: 'NH농협', value: 'nh' },
-                { label: '우리', value: 'woori' },
-                { label: 'SC제일', value: 'sc' },
-                { label: '씨티', value: 'citi' },
-              ]}
-              filterOption={(inputValue, option) =>
-                (option?.label ?? '').toLowerCase().includes(inputValue.toLowerCase())
-              }
-            />
+            <Select
+              placeholder="카드사 선택"
+              optionLabelProp="label"
+            >
+              <Option value="shinhan" label="신한">신한</Option>
+              <Option value="kb" label="KB국민">KB국민</Option>
+              <Option value="hyundai" label="현대">현대</Option>
+              <Option value="samsung" label="삼성">삼성</Option>
+              <Option value="lotte" label="롯데">롯데</Option>
+              <Option value="hana" label="하나">하나</Option>
+              <Option value="nh" label="NH농협">NH농협</Option>
+              <Option value="woori" label="우리">우리</Option>
+              <Option value="sc" label="SC제일">SC제일</Option>
+              <Option value="citi" label="씨티">씨티</Option>
+            </Select>
           </Form.Item>
 
           <Form.Item

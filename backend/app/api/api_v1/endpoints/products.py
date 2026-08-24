@@ -262,6 +262,13 @@ def update_product(
     update_data = product_update.dict(exclude_unset=True)
     image_url = update_data.pop('image_url', None)  # image_url은 따로 처리
 
+    # "etc" 브랜드 처리
+    if 'brand_id' in update_data and update_data['brand_id'] == "etc":
+        brand = db.query(Brand).filter(Brand.name == "기타").first()
+        if not brand:
+            raise HTTPException(status_code=400, detail="'기타' 브랜드를 찾을 수 없습니다")
+        update_data['brand_id'] = str(brand.id)
+
     for field, value in update_data.items():
         setattr(product, field, value)
 

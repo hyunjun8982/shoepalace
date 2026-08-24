@@ -1075,16 +1075,15 @@ const InventoryListPage: React.FC = () => {
                 console.log('Form 제출 시작, values:', values);
                 console.log('selectedInventoryDetail:', selectedInventoryDetail);
 
-                const fixedSizes = ['220', '225', '230', '235', '240', '245', '250', '255', '260', '265', '270', '275', '280', '285', '290', '295', '300', '305', '310', '315'];
-
-                console.log('fixedSizes:', fixedSizes);
-
                 const sizeMap = new Map();
                 selectedInventoryDetail.size_inventories?.forEach((item: any) => {
                   console.log('사이즈 맵에 추가:', item);
                   sizeMap.set(item.size, { quantity: item.quantity, id: item.id });
                 });
 
+                // 실제 데이터에 존재하는 모든 사이즈를 사용 (신발: 220~315, 의류: OS/FREE 등)
+                const fixedSizes = Array.from(sizeMap.keys());
+                console.log('fixedSizes:', fixedSizes);
                 console.log('sizeMap:', Array.from(sizeMap.entries()));
 
                 for (const size of fixedSizes) {

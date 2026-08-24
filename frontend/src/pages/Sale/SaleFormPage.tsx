@@ -83,6 +83,9 @@ const SaleFormPageNew: React.FC = () => {
     fetchInventoryItems();
     if (isEditMode && saleId) {
       fetchSaleData();
+    } else {
+      // 신규 등록일 때만 임시 저장 데이터 확인
+      checkAndLoadDraft();
     }
     form.setFieldsValue({
       sale_date: dayjs(),
@@ -93,6 +96,32 @@ const SaleFormPageNew: React.FC = () => {
   useEffect(() => {
     groupedInventoryRef.current = groupedInventory;
   }, [groupedInventory]);
+
+  // 임시 저장: selectedProducts 변경 시 localStorage에 저장
+  useEffect(() => {
+    if (!saleId || saleId === 'new') {
+      try {
+        const formValues = form.getFieldsValue();
+        const hasProducts = selectedProducts && selectedProducts.length > 0;
+        const hasFormData = formValues.customer_name || formValues.customer_contact;
+
+        if (hasProducts || hasFormData) {
+          const draftData = {
+            formData: {
+              ...formValues,
+              sale_date: formValues.sale_date ? formValues.sale_date.format('YYYY-MM-DD') : null
+            },
+            selectedProducts: selectedProducts,
+            timestamp: new Date().toISOString()
+          };
+          localStorage.setItem('saleFormDraft', JSON.stringify(draftData));
+          console.log('💾 Sale draft saved to localStorage:', selectedProducts.length, 'items');
+        }
+      } catch (error) {
+        console.error('❌ Failed to save sale draft:', error);
+      }
+    }
+  }, [selectedProducts, saleId, form]);
 
   // 전역 바코드 스캔 리스너 (어디서든 바코드 스캔 감지)
   useEffect(() => {
@@ -439,6 +468,104 @@ const SaleFormPageNew: React.FC = () => {
     }, 500);
   };
 
+  // 임시 저장: 데이터 확인 후 모달로 선택
+  const checkAndLoadDraft = () => {
+    try {
+      const draftData = localStorage.getItem('saleFormDraft');
+      if (draftData) {
+        const parsed = JSON.parse(draftData);
+        if (parsed.formData || (parsed.selectedProducts && parsed.selectedProducts.length > 0)) {
+          const savedTime = parsed.timestamp ? dayjs(parsed.timestamp).format('YYYY-MM-DD HH:mm:ss') : '';
+          const itemCount = parsed.selectedProducts?.length || 0;
+
+          Modal.confirm({
+            title: '판매 등록 임시 저장됨',
+            content: (
+              <div style={{ padding: '8px 0' }}>
+                <p style={{ margin: '12px 0 0 0', fontSize: '14px', lineHeight: '1.6' }}>
+                  이전에 작성 중인 판매 등록 내용이 있습니다.
+                </p>
+                <div style={{
+                  marginTop: '16px',
+                  padding: '12px',
+                  backgroundColor: '#f5f5f5',
+                  borderRadius: '4px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+                }}>
+                  <span style={{ fontSize: '13px', color: '#666' }}>
+                    {itemCount > 0 ? `상품 ${itemCount}개` : '상품 정보 없음'}
+                  </span>
+                  <span style={{ fontSize: '13px', color: '#999' }}>
+                    {savedTime}
+                  </span>
+                </div>
+              </div>
+            ),
+            okText: '계속 작성하기',
+            cancelText: '새로 시작',
+            okButtonProps: { type: 'primary' },
+            onOk() {
+              loadDraftSaleData();
+            },
+            onCancel() {
+              localStorage.removeItem('saleFormDraft');
+              message.info('이전 입력값이 삭제되었습니다.');
+            },
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Failed to check draft:', error);
+    }
+  };
+
+  // 임시 저장: 데이터 복원
+  const loadDraftSaleData = () => {
+    try {
+      const draftData = localStorage.getItem('saleFormDraft');
+      if (draftData) {
+        const parsed = JSON.parse(draftData);
+        // Form 데이터 복원
+        if (parsed.formData) {
+          const formValues = {
+            ...parsed.formData,
+            sale_date: dayjs(parsed.formData.sale_date)
+          };
+          form.setFieldsValue(formValues);
+        }
+        // 상품 복원
+        if (parsed.selectedProducts && Array.isArray(parsed.selectedProducts)) {
+          setSelectedProducts(parsed.selectedProducts);
+        }
+        message.success('이전 입력값이 복원되었습니다.');
+      }
+    } catch (error) {
+      console.error('Failed to load draft sale data:', error);
+    }
+  };
+
+  // 임시 저장: Form 값 변경 시 저장
+  const handleFormValuesChangeForDraft = (changedFields: any, allValues: any) => {
+    if (!saleId || saleId === 'new') {
+      try {
+        const draftData = {
+          formData: {
+            ...allValues,
+            sale_date: allValues.sale_date ? allValues.sale_date.format('YYYY-MM-DD') : null
+          },
+          selectedProducts: selectedProducts,
+          timestamp: new Date().toISOString()
+        };
+        localStorage.setItem('saleFormDraft', JSON.stringify(draftData));
+        console.log('✅ Sale draft saved successfully');
+      } catch (error) {
+        console.error('❌ Failed to save draft:', error);
+      }
+    }
+  };
+
   const fetchSaleData = async () => {
     try {
       setLoading(true);
@@ -728,6 +855,7 @@ const SaleFormPageNew: React.FC = () => {
           form={form}
           layout="vertical"
           onFinish={onFinish}
+          onValuesChange={handleFormValuesChangeForDraft}
           initialValues={{
             sale_date: dayjs(),
           }}

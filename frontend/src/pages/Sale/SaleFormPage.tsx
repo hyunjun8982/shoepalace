@@ -11,6 +11,7 @@ import {
   App,
   InputNumber,
   Upload,
+  Modal,
 } from 'antd';
 import { DeleteOutlined, UploadOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';

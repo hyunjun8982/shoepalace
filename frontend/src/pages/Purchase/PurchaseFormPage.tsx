@@ -527,7 +527,7 @@ const PurchaseFormPage: React.FC = () => {
   };
 
   // 새로운 상품이 등록되었을 때 - 자동으로 items에 추가
-  const handleNewProductRegistered = (newProduct: Product, barcodeInfo: { barcode_value: string; size: string }) => {
+  const handleNewProductRegistered = (newProduct: Product, barcodeInfo: { barcode_value: string; size: string; image_url?: string }) => {
     // 상품 목록 새로고침
     loadProducts();
 
@@ -554,7 +554,7 @@ const PurchaseFormPage: React.FC = () => {
         }
 
         // 새 바코드 상품을 items에 추가
-        const newBarCodeItem = {
+        const newBarCodeItem: PurchaseItem = {
           product_id: newProduct.id,
           size: barcodeInfo.size,
           quantity: 1,
@@ -562,6 +562,7 @@ const PurchaseFormPage: React.FC = () => {
           product_name: newProduct.product_name,
           product_code: newProduct.product_code,
           brand_name: newProduct.brand_name,
+          product_image_url: barcodeInfo.image_url, // 업로드된 이미지 URL
         };
         newItems.push(newBarCodeItem);
         console.log('Added new barcode item:', newBarCodeItem);
@@ -1184,10 +1185,16 @@ const PurchaseFormPage: React.FC = () => {
       key: 'image',
       width: 120,
       render: (_, record: any) => {
-        if (record.brand_name && record.product_code) {
+        // 업로드된 이미지 URL 우선, 없으면 기본 경로 사용
+        const imageUrl = record.product_image_url ||
+          (record.brand_name && record.product_code
+            ? getFileUrl(`/uploads/products/${record.brand_name}/${record.product_code}.png`)
+            : null);
+
+        if (imageUrl) {
           return (
             <img
-              src={getFileUrl(`/uploads/products/${record.brand_name}/${record.product_code}.png`) || ''}
+              src={imageUrl}
               alt={record.product_name}
               style={{
                 width: 80,

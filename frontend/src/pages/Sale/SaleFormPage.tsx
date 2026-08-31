@@ -745,10 +745,16 @@ const SaleFormPageNew: React.FC = () => {
       key: 'image',
       width: 60,
       render: (_, record: any) => {
-        if (record.brand_name && record.product_code) {
+        // 업로드된 이미지 URL 우선, 없으면 기본 경로 사용
+        const imageUrl = record.product_image_url ||
+          (record.brand_name && record.product_code
+            ? getFileUrl(`/uploads/products/${record.brand_name}/${record.product_code}.png`)
+            : null);
+
+        if (imageUrl) {
           return (
             <img
-              src={getFileUrl(`/uploads/products/${record.brand_name}/${record.product_code}.png`) || ''}
+              src={imageUrl}
               alt={record.product_name}
               style={{
                 width: 50,

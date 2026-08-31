@@ -354,11 +354,17 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
         message.warning('바코드 등록 중 오류가 발생했지만 계속 진행합니다');
       }
 
-      // 3. 이미지 업로드
+      // 3. 이미지 업로드 및 브랜드명 추가
       let uploadedImageUrl: string | undefined;
+      const brandName = brands.find(b => b.id === values.brand_id)?.name || '';
+
+      // targetProduct에 brand_name 추가 (테이블에 브랜드 표시)
+      if (targetProduct && !targetProduct.brand_name) {
+        targetProduct.brand_name = brandName;
+      }
+
       if (imageFile) {
         try {
-          const brandName = brands.find(b => b.id === values.brand_id)?.name || '';
           if (!brandName) {
             console.warn('Brand name not found for image upload');
           } else {

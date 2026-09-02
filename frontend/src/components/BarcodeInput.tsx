@@ -64,6 +64,15 @@ export const BarcodeInput: React.FC<BarcodeInputProps> = ({
     }
   };
 
+  // Enter 키 다운 - Form submit 방지
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+      handleInputPressEnter();
+    }
+  };
+
   // 복사-붙여넣기 지원
   const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
     e.preventDefault();
@@ -81,7 +90,7 @@ export const BarcodeInput: React.FC<BarcodeInputProps> = ({
       placeholder={placeholder}
       value={barcode}
       onChange={(e) => handleInputChange(e.target.value)}
-      onPressEnter={handleInputPressEnter}
+      onKeyDown={handleKeyDown}
       onPaste={handlePaste}
       disabled={disabled || loading}
       suffix={loading && <Spin size="small" />}

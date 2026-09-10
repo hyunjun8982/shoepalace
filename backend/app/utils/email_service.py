@@ -1,6 +1,8 @@
 import smtplib
 import os
 import socket
+import base64
+import requests
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
@@ -14,6 +16,8 @@ socket.has_ipv6 = False
 
 logger = logging.getLogger(__name__)
 
+BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
+
 
 class EmailService:
     def __init__(self):
@@ -21,8 +25,12 @@ class EmailService:
         self.smtp_port = int(os.getenv("SMTP_PORT", "587"))
         self.sender_email = os.getenv("SENDER_EMAIL", "")
         self.sender_password = os.getenv("SENDER_PASSWORD", "")
+        self.sender_name = os.getenv("SENDER_NAME", "슈팰리스 입출고관리시스템")
+        # Brevo HTTP API 키 (설정 시 SMTP 대신 HTTPS API로 발송 - 클라우드 SMTP 차단 우회)
+        self.brevo_api_key = os.getenv("BREVO_API_KEY", "")
 
-        logger.info(f"EmailService initialized: server={self.smtp_server}, email={self.sender_email}, password_len={len(self.sender_password)}")
+        mode = "Brevo HTTP API" if self.brevo_api_key else "SMTP"
+        logger.info(f"EmailService initialized: mode={mode}, server={self.smtp_server}, email={self.sender_email}, password_len={len(self.sender_password)}")
 
     def send_purchase_confirmation(
         self,
@@ -33,6 +41,100 @@ class EmailService:
         pdf_content: BytesIO = None
     ) -> bool:
         """입고명세서를 이메일로 발송 (PDF 첨부)"""
+        subject = f"[입고확인] {purchase_data.get('transaction_no', '')} - 입고명세서"
+        html_body = self._create_email_body(recipient_name, purchase_data, items_data)
+        filename = f"입고명세서_{purchase_data.get('transaction_no', '')}.pdf"
+
+        pdf_bytes = None
+        if pdf_content:
+            pdf_content.seek(0)
+            pdf_bytes = pdf_content.read()
+
+        # Brevo API 키가 설정되어 있으면 HTTPS API로 발송 (DigitalOcean 등 SMTP 차단 환경 대응)
+        if self.brevo_api_key:
+            return self._send_via_brevo(recipient_email, recipient_name, subject, html_body, filename, pdf_bytes)
+
+        return self._send_via_smtp(recipient_email, subject, html_body, filename, pdf_bytes)
+
+    def send_document(
+        self,
+        recipient_email: str,
+        recipient_name: str,
+        subject: str,
+        html_body: str,
+        filename: str = None,
+        pdf_content: BytesIO = None
+    ) -> bool:
+        """범용 문서 메일 발송 (PDF 첨부 선택) - 거래명세서 등"""
+        pdf_bytes = None
+        if pdf_content:
+            pdf_content.seek(0)
+            pdf_bytes = pdf_content.read()
+
+        if self.brevo_api_key:
+            return self._send_via_brevo(recipient_email, recipient_name, subject, html_body, filename, pdf_bytes)
+
+        return self._send_via_smtp(recipient_email, subject, html_body, filename, pdf_bytes)
+
+    def _send_via_brevo(
+        self,
+        recipient_email: str,
+        recipient_name: str,
+        subject: str,
+        html_body: str,
+        filename: str,
+        pdf_bytes: bytes = None
+    ) -> bool:
+        """Brevo HTTP API로 발송 (443 포트, SMTP 차단 무관)"""
+        try:
+            if not self.sender_email:
+                logger.warning("SENDER_EMAIL not configured")
+                return False
+
+            payload = {
+                "sender": {"name": self.sender_name, "email": self.sender_email},
+                "to": [{"email": recipient_email, "name": recipient_name or recipient_email}],
+                "subject": subject,
+                "htmlContent": html_body,
+            }
+
+            if pdf_bytes:
+                payload["attachment"] = [{
+                    "name": filename,
+                    "content": base64.b64encode(pdf_bytes).decode("ascii"),
+                }]
+
+            response = requests.post(
+                BREVO_API_URL,
+                json=payload,
+                headers={
+                    "api-key": self.brevo_api_key,
+                    "accept": "application/json",
+                    "content-type": "application/json",
+                },
+                timeout=15,
+            )
+
+            if response.status_code in (200, 201, 202):
+                logger.info(f"[Brevo] Email sent successfully to {recipient_email} (messageId: {response.json().get('messageId', '-')})")
+                return True
+
+            logger.error(f"[Brevo] Failed to send email: status={response.status_code}, body={response.text[:500]}")
+            return False
+
+        except Exception as e:
+            logger.error(f"[Brevo] Error sending email: {str(e)}")
+            return False
+
+    def _send_via_smtp(
+        self,
+        recipient_email: str,
+        subject: str,
+        html_body: str,
+        filename: str,
+        pdf_bytes: bytes = None
+    ) -> bool:
+        """SMTP로 발송 (로컬/개발 환경용 폴백)"""
         try:
             if not self.sender_email or not self.sender_password:
                 logger.warning("Email credentials not configured")
@@ -42,19 +144,14 @@ class EmailService:
             message = MIMEMultipart()
             message["From"] = self.sender_email
             message["To"] = recipient_email
-            message["Subject"] = f"[입고확인] {purchase_data.get('transaction_no', '')} - 입고명세서"
-
-            # HTML 이메일 본문
-            html_body = self._create_email_body(recipient_name, purchase_data, items_data)
+            message["Subject"] = subject
             message.attach(MIMEText(html_body, "html", "utf-8"))
 
             # PDF 첨부
-            if pdf_content:
-                pdf_content.seek(0)
+            if pdf_bytes:
                 attachment = MIMEBase("application", "octet-stream")
-                attachment.set_payload(pdf_content.read())
+                attachment.set_payload(pdf_bytes)
                 encoders.encode_base64(attachment)
-                filename = f"입고명세서_{purchase_data.get('transaction_no', '')}.pdf"
                 attachment.add_header(
                     "Content-Disposition",
                     "attachment",

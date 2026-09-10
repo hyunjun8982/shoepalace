@@ -210,7 +210,7 @@ export const DeliveryNoteModal: React.FC<DeliveryNoteModalProps> = ({
                       padding: '12px',
                       textAlign: 'left',
                       borderBottom: '2px solid #ddd',
-                      width: '40%',
+                      width: '28%',
                     }}
                   >
                     상품명
@@ -220,7 +220,17 @@ export const DeliveryNoteModal: React.FC<DeliveryNoteModalProps> = ({
                       padding: '12px',
                       textAlign: 'center',
                       borderBottom: '2px solid #ddd',
-                      width: '15%',
+                      width: '17%',
+                    }}
+                  >
+                    품번
+                  </th>
+                  <th
+                    style={{
+                      padding: '12px',
+                      textAlign: 'center',
+                      borderBottom: '2px solid #ddd',
+                      width: '12%',
                     }}
                   >
                     사이즈
@@ -230,7 +240,7 @@ export const DeliveryNoteModal: React.FC<DeliveryNoteModalProps> = ({
                       padding: '12px',
                       textAlign: 'center',
                       borderBottom: '2px solid #ddd',
-                      width: '12%',
+                      width: '10%',
                     }}
                   >
                     수량
@@ -266,6 +276,9 @@ export const DeliveryNoteModal: React.FC<DeliveryNoteModalProps> = ({
                           {item.product?.product_name || '-'}
                         </td>
                         <td style={{ padding: '10px', textAlign: 'center' }}>
+                          {item.product?.product_code || '-'}
+                        </td>
+                        <td style={{ padding: '10px', textAlign: 'center' }}>
                           {item.size || '-'}
                         </td>
                         <td style={{ padding: '10px', textAlign: 'center' }}>
@@ -280,7 +293,7 @@ export const DeliveryNoteModal: React.FC<DeliveryNoteModalProps> = ({
                       </tr>
                     ))}
                     <tr style={{ backgroundColor: '#fafafa', fontWeight: 'bold' }}>
-                      <td colSpan={2} style={{ padding: '10px', textAlign: 'right' }}>
+                      <td colSpan={3} style={{ padding: '10px', textAlign: 'right' }}>
                         소계
                       </td>
                       <td style={{ padding: '10px', textAlign: 'center' }}>
@@ -296,7 +309,7 @@ export const DeliveryNoteModal: React.FC<DeliveryNoteModalProps> = ({
                   </>
                 ) : (
                   <tr>
-                    <td colSpan={5} style={{ padding: '20px', textAlign: 'center', color: '#999' }}>
+                    <td colSpan={6} style={{ padding: '20px', textAlign: 'center', color: '#999' }}>
                       상품 항목이 없습니다.
                     </td>
                   </tr>

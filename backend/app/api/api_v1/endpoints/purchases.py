@@ -76,6 +76,7 @@ def get_purchases(
     status: Optional[List[str]] = Query(None),
     brand_name: Optional[List[str]] = Query(None),
     buyer_id: Optional[List[str]] = Query(None),
+    is_confirmed: Optional[bool] = None,
     search: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -126,6 +127,9 @@ def get_purchases(
     if buyer_id:
         # 다중 선택 지원
         query = query.filter(Purchase.buyer_id.in_(buyer_id))
+    if is_confirmed is not None:
+        # 입고확인 필터 (True: 완료, False: 대기중)
+        query = query.filter(Purchase.is_confirmed == is_confirmed)
 
     # buyer 권한은 자신의 구매만 조회
     if current_user.role.value == "buyer":

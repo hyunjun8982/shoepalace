@@ -28,6 +28,7 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>('');
   const [productName, setProductName] = useState<string>('');
+  const [productCode, setProductCode] = useState<string>('');
   const [poizonLoading, setPoizonLoading] = useState(false);
   const [poizonInfo, setPoizonInfo] = useState<PoizonProductInfo | null>(null);
   const [poizonError, setPoizonError] = useState(false);
@@ -189,6 +190,7 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
         const articleNumber = (poizonData as any).article_number || (poizonData as any).articleNumber;
         if (articleNumber) {
           formValues.product_code = articleNumber;
+          setProductCode(articleNumber);
         }
 
         // 브랜드 설정 (brand_name이 있으면 매칭)
@@ -305,37 +307,33 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
     try {
       let targetProduct = null;
 
-      // 1. 상품 등록 시도
+      // 1. 같은 상품코드가 이미 등록되어 있으면 기존 상품에 바코드 연결 (중복 생성 방지)
       try {
+        targetProduct = await productService.getProductByCode(values.product_code);
+      } catch (error) {
+        targetProduct = null;
+      }
+
+      if (targetProduct) {
+        // 기존 상품을 최신 정보로 업데이트
+        await productService.updateProduct(targetProduct.id, {
+          product_name: values.product_name,
+          product_code: values.product_code,
+          brand_id: values.brand_id,
+          color: values.color,
+          description: values.description,
+        });
+        message.info('기존 상품을 최신 정보로 업데이트합니다');
+      } else {
+        // 새 상품 등록
         targetProduct = await productService.createProduct({
           brand_id: values.brand_id,
           product_code: values.product_code,
           product_name: values.product_name,
+          color: values.color,
           description: values.description,
         });
         message.info('새 상품이 등록되었습니다');
-      } catch (createError: any) {
-        // 상품 코드 중복 에러인 경우 → 기존 상품을 포이즌 정보로 업데이트
-        if (createError.response?.status === 409 ||
-            createError.response?.data?.detail?.includes('Product code already exists')) {
-          console.log('상품 코드 중복, 기존 상품을 최신 정보로 업데이트');
-          targetProduct = await productService.getProductByCode(values.product_code);
-          if (!targetProduct) {
-            throw new Error('상품 코드는 중복되지만 기존 상품을 찾을 수 없습니다.');
-          }
-
-          // 기존 상품을 포이즌 정보로 업데이트
-          await productService.updateProduct(targetProduct.id, {
-            product_name: values.product_name,
-            product_code: values.product_code,
-            brand_id: values.brand_id,
-            description: values.description,
-          });
-
-          message.info('기존 상품을 최신 정보로 업데이트합니다');
-        } else {
-          throw createError;
-        }
       }
 
       // 2. 바코드 매핑 (사이즈 포함)
@@ -401,6 +399,7 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
       setImageFile(null);
       setImagePreview('');
       setProductName('');
+      setProductCode('');
 
       onSuccess(targetProduct, {
         barcode_value: barcode,
@@ -490,21 +489,36 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
                 },
               ]}
             >
-              <Input placeholder="예: NK-AIR-001 또는 나이키 에어조던" />
+              <Input
+                placeholder="예: NK-AIR-001 또는 나이키 에어조던"
+                onChange={(e) => setProductCode(e.target.value)}
+              />
             </Form.Item>
           </Col>
         </Row>
 
-        {productName && (
-          <div style={{ fontSize: 13, marginBottom: 12 }}>
-            <a
-              href={`https://kream.co.kr/search?keyword=${encodeURIComponent(productName)}&tab=products`}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: '#1890ff' }}
-            >
-              🔗 KREAM에서 "{productName}" 검색하기
-            </a>
+        {(productName || productCode) && (
+          <div style={{ fontSize: 13, marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {productName && (
+              <a
+                href={`https://kream.co.kr/search?keyword=${encodeURIComponent(productName)}&tab=products`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: '#1890ff' }}
+              >
+                🔗 KREAM에서 상품명 "{productName}" 검색하기
+              </a>
+            )}
+            {productCode && (
+              <a
+                href={`https://kream.co.kr/search?keyword=${encodeURIComponent(productCode)}&tab=products`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: '#1890ff' }}
+              >
+                🔗 KREAM에서 상품코드 "{productCode}" 검색하기
+              </a>
+            )}
           </div>
         )}
 
@@ -586,6 +600,13 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
               }
             ]}
           />
+        </Form.Item>
+
+        <Form.Item
+          label="색상 (선택사항)"
+          name="color"
+        >
+          <Input placeholder="예: BLACK, WHITE/RED" />
         </Form.Item>
 
         <Form.Item

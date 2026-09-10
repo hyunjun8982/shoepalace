@@ -22,6 +22,7 @@ import {
   EditOutlined,
   DeleteOutlined,
   SearchOutlined,
+  ReloadOutlined,
   ShoppingCartOutlined,
   CalendarOutlined,
   RiseOutlined,
@@ -29,11 +30,8 @@ import {
   FileTextOutlined,
 } from '@ant-design/icons';
 import { Purchase, PaymentType, PurchaseStatus } from '../../types/purchase';
-import { Card as CardType, CARD_ISSUER_LABELS } from '../../types/card';
 import { purchaseService } from '../../services/purchase';
-import { cardService } from '../../services/card';
 import { getColumns } from './PurchaseListPageColumns';
-import { brandService, Brand } from '../../services/brand';
 import { userService } from '../../services/user';
 import { User } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
@@ -55,39 +53,27 @@ const PurchaseListPage: React.FC = () => {
   const [total, setTotal] = useState(0);
   const [pagination, setPagination] = useState(() => {
     const saved = localStorage.getItem('purchaseListPagination');
-    return saved ? JSON.parse(saved) : { current: 1, pageSize: 10 };
+    const pageSize = saved ? JSON.parse(saved).pageSize : 10;
+    return { current: 1, pageSize: pageSize || 10 };
   });
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
-  const [brands, setBrands] = useState<Brand[]>([]);
   const [users, setUsers] = useState<User[]>([]);
-  const [cards, setCards] = useState<CardType[]>([]);
   const [deliveryNoteModalVisible, setDeliveryNoteModalVisible] = useState(false);
 
-  // 필터 상태
-  const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(() => {
-    const saved = localStorage.getItem('purchaseListDateRange');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      return [dayjs(parsed[0]), dayjs(parsed[1])];
-    }
-    return null;
-  });
-  const [cardFilter, setCardFilter] = useState<string[]>(() => {
-    const saved = localStorage.getItem('purchaseListCardFilter');
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [brandFilter, setBrandFilter] = useState<string[]>(() => {
-    const saved = localStorage.getItem('purchaseListBrandFilter');
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [buyerFilter, setBuyerFilter] = useState<string[]>(() => {
-    const saved = localStorage.getItem('purchaseListBuyerFilter');
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [searchText, setSearchText] = useState<string>(() => {
-    const saved = localStorage.getItem('purchaseListSearchText');
-    return saved || '';
-  });
+  // 필터 상태 (새로고침 시 초기화)
+  const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
+  const [buyerFilter, setBuyerFilter] = useState<string[]>([]);
+  const [confirmFilter, setConfirmFilter] = useState<string>('all');
+  const [searchText, setSearchText] = useState<string>('');
+
+  // 필터 전체 초기화
+  const handleResetFilters = () => {
+    setDateRange(null);
+    setBuyerFilter([]);
+    setConfirmFilter('all');
+    setSearchText('');
+    setPagination((prev: any) => ({ ...prev, current: 1 }));
+  };
   const [statsYear, setStatsYear] = useState<number | null>(null); // null = 전체, 숫자 = 해당 연도
 
   // 전체 데이터 로드 (통계용)
@@ -103,16 +89,6 @@ const PurchaseListPage: React.FC = () => {
     }
   };
 
-  // 카드 목록 로드
-  const loadCards = async () => {
-    try {
-      const data = await cardService.getCards({ limit: 1000, is_active: true });
-      setCards(data.items);
-    } catch (error) {
-      console.error('카드 목록 로드 실패:', error);
-    }
-  };
-
   // 데이터 로드
   const fetchPurchases = async () => {
     setLoading(true);
@@ -124,8 +100,8 @@ const PurchaseListPage: React.FC = () => {
           start_date: dateRange[0].format('YYYY-MM-DD'),
           end_date: dateRange[1].format('YYYY-MM-DD'),
         }),
-        ...(brandFilter.length > 0 && { brand_name: brandFilter }),
         ...(buyerFilter.length > 0 && { buyer_id: buyerFilter }),
+        ...(confirmFilter !== 'all' && { is_confirmed: confirmFilter === 'confirmed' }),
         ...(searchText && { search: searchText }),
       };
 
@@ -139,16 +115,8 @@ const PurchaseListPage: React.FC = () => {
     }
   };
 
-  // 브랜드 및 사용자 목록 로드
+  // 사용자 목록 로드
   useEffect(() => {
-    const fetchBrands = async () => {
-      try {
-        const response = await brandService.getBrands();
-        setBrands(response.items);
-      } catch (error) {
-        console.error('브랜드 목록 조회 실패:', error);
-      }
-    };
     const fetchUsers = async () => {
       try {
         const response = await userService.getUsers({ is_active: true });
@@ -157,47 +125,18 @@ const PurchaseListPage: React.FC = () => {
         console.error('사용자 목록 조회 실패:', error);
       }
     };
-    fetchBrands();
     fetchUsers();
     fetchAllPurchases(); // 통계용 전체 데이터 로드
-    loadCards(); // 카드 목록 로드
   }, []);
 
   useEffect(() => {
     fetchPurchases();
-  }, [pagination.current, pagination.pageSize, dateRange, cardFilter, brandFilter, buyerFilter, searchText]);
+  }, [pagination.current, pagination.pageSize, dateRange, buyerFilter, confirmFilter, searchText]);
 
-  // 상태를 localStorage에 저장
+  // 페이지 크기만 localStorage에 저장 (필터는 새로고침 시 초기화)
   useEffect(() => {
     localStorage.setItem('purchaseListPagination', JSON.stringify(pagination));
   }, [pagination]);
-
-  useEffect(() => {
-    if (dateRange) {
-      localStorage.setItem('purchaseListDateRange', JSON.stringify([
-        dateRange[0].toISOString(),
-        dateRange[1].toISOString()
-      ]));
-    } else {
-      localStorage.removeItem('purchaseListDateRange');
-    }
-  }, [dateRange]);
-
-  useEffect(() => {
-    localStorage.setItem('purchaseListCardFilter', JSON.stringify(cardFilter));
-  }, [cardFilter]);
-
-  useEffect(() => {
-    localStorage.setItem('purchaseListBrandFilter', JSON.stringify(brandFilter));
-  }, [brandFilter]);
-
-  useEffect(() => {
-    localStorage.setItem('purchaseListBuyerFilter', JSON.stringify(buyerFilter));
-  }, [buyerFilter]);
-
-  useEffect(() => {
-    localStorage.setItem('purchaseListSearchText', searchText);
-  }, [searchText]);
 
   // 구매 삭제
   const handleDelete = async (id: string) => {
@@ -629,7 +568,7 @@ const PurchaseListPage: React.FC = () => {
               allowClear
             />
           </Col>
-          <Col span={6}>
+          <Col span={5}>
             <RangePicker
               value={dateRange}
               onChange={(dates) => setDateRange(dates as [dayjs.Dayjs, dayjs.Dayjs])}
@@ -639,78 +578,52 @@ const PurchaseListPage: React.FC = () => {
           </Col>
           <Col span={3}>
             <Select
-              mode="multiple"
               style={{ width: '100%' }}
-              placeholder="브랜드"
+              placeholder="구매자 검색"
               allowClear
-              value={brandFilter}
-              onChange={setBrandFilter}
+              value={buyerFilter[0]}
+              onChange={(value) => setBuyerFilter(value ? [value] : [])}
               showSearch
+              optionFilterProp="label"
               filterOption={(input, option) =>
-                String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
+                String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())
               }
-              maxTagCount={0}
-              maxTagPlaceholder={(omittedValues) => `브랜드 ${omittedValues.length}개`}
-            >
-              {brands.map(brand => (
-                <Option key={brand.id} value={brand.name}>{brand.name}</Option>
-              ))}
-            </Select>
-          </Col>
-          <Col span={4}>
-            <Select
-              mode="multiple"
-              style={{ width: '100%' }}
-              placeholder="결제카드"
-              allowClear
-              value={cardFilter}
-              onChange={setCardFilter}
-              showSearch
-              filterOption={(input, option) =>
-                String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
-              }
-              maxTagCount={0}
-              maxTagPlaceholder={(omittedValues) => `결제카드 ${omittedValues.length}개`}
-            >
-              {cards.map(card => (
-                <Option key={card.id} value={card.id}>
-                  {card.owner_name} - {CARD_ISSUER_LABELS[card.card_issuer] || card.card_issuer}
-                </Option>
-              ))}
-            </Select>
-          </Col>
-          <Col span={2}>
-            <Select
-              mode="multiple"
-              style={{ width: '100%' }}
-              placeholder="구매자"
-              allowClear
-              value={buyerFilter}
-              onChange={setBuyerFilter}
-              showSearch
-              filterOption={(input, option) =>
-                String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
-              }
-              maxTagCount={0}
-              maxTagPlaceholder={(omittedValues) => `구매자 ${omittedValues.length}명`}
-            >
-              {users
+              options={users
                 .filter((user, index, self) =>
                   self.findIndex(u => u.full_name === user.full_name) === index
                 )
-                .map(user => (
-                  <Option key={user.id} value={user.id}>{user.full_name}</Option>
-                ))}
-            </Select>
+                .map(user => ({ value: user.id, label: user.full_name }))}
+            />
           </Col>
-          <Col span={4} style={{ textAlign: 'right' }}>
-            <Space>
+          <Col span={3}>
+            <Select
+              style={{ width: '100%' }}
+              value={confirmFilter}
+              onChange={setConfirmFilter}
+              options={[
+                { value: 'all', label: '입고확인: 전체' },
+                { value: 'pending', label: '입고 대기중' },
+                { value: 'confirmed', label: '입고 완료' },
+              ]}
+            />
+          </Col>
+          <Col flex="none">
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={handleResetFilters}
+              disabled={!searchText && !dateRange && buyerFilter.length === 0 && confirmFilter === 'all'}
+            >
+              초기화
+            </Button>
+          </Col>
+          <Col span={6} style={{ textAlign: 'right' }}>
+            <Space wrap style={{ justifyContent: 'flex-end' }}>
               {selectedRowKeys.length > 0 && (
                 <>
                   <Button
                     icon={<FileTextOutlined />}
                     onClick={() => setDeliveryNoteModalVisible(true)}
-                    style={{ backgroundColor: '#52c41a', color: '#fff', borderColor: '#52c41a' }}
+                    style={{ backgroundColor: '#1d39c4', color: '#fff', borderColor: '#1d39c4' }}
                   >
                     입고장 추출 ({selectedRowKeys.length})
                   </Button>

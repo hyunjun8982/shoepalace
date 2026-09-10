@@ -215,18 +215,13 @@ def create_product(
     if not brand:
         raise HTTPException(status_code=400, detail="Brand not found")
 
-    # 중복 상품코드 체크
-    existing = db.query(Product).filter(
-        Product.product_code == product_data.product_code
-    ).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Product code already exists")
-
+    # 상품코드 중복 허용 (유니크값은 바코드, 같은 품번의 색상 변형 등록 가능)
     product = Product(
         id=uuid.uuid4(),
         brand_id=brand_id,
         product_code=product_data.product_code,
         product_name=product_data.product_name,
+        color=product_data.color,
         description=product_data.description
     )
 

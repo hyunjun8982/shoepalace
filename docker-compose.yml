@@ -54,7 +54,8 @@ services:
       - LOCAL_WEB_SERVER_URL=http://host.docker.internal:8002
       # DEVICE_UDID는 자동 감지됨. 수동 지정 필요시 아래 주석 해제
       # - DEVICE_UDID=ce081718b5285b27017e
-      # 이메일 설정 (Gmail 예시)
+      # 이메일 설정 (Brevo HTTP API 우선, 미설정 시 Gmail SMTP 폴백)
+      - BREVO_API_KEY=${BREVO_API_KEY:-}
       - SMTP_SERVER=smtp.gmail.com
       - SMTP_PORT=587
       - SENDER_EMAIL=hyunjunpyo@gmail.com

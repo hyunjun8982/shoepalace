@@ -22,9 +22,11 @@ import {
   PlusOutlined,
   DeleteOutlined,
   SearchOutlined,
+  ReloadOutlined,
   CalculatorOutlined,
   DollarOutlined,
   RollbackOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useNavigate } from 'react-router-dom';
@@ -37,6 +39,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import './SaleListPage.css';
 import { getFileUrl } from '../../utils/urlUtils';
 import { formatCurrencyWithKoreanSeparate, roundToWon } from '../../utils/currencyUtils';
+import { SaleStatementModal } from '../../components/SaleStatementModal';
 
 const { RangePicker } = DatePicker;
 const { Option } = Select;
@@ -61,20 +64,24 @@ const SaleListPage: React.FC = () => {
   const [total, setTotal] = useState(0);
   const [pagination, setPagination] = useState(() => {
     const saved = localStorage.getItem('saleListPagination');
-    return saved ? JSON.parse(saved) : { current: 1, pageSize: 10 };
+    const pageSize = saved ? JSON.parse(saved).pageSize : 10;
+    return { current: 1, pageSize: pageSize || 10 };
   });
-  const [filters, setFilters] = useState<SaleListParams>(() => {
-    const saved = localStorage.getItem('saleListFilters');
-    return saved ? JSON.parse(saved) : {};
-  });
-  const [searchText, setSearchText] = useState<string>(() => {
-    const saved = localStorage.getItem('saleListSearchText');
-    return saved || '';
-  });
+  // 필터 상태 (새로고침 시 초기화)
+  const [filters, setFilters] = useState<SaleListParams>({});
+  const [searchText, setSearchText] = useState<string>('');
+
+  // 필터 전체 초기화
+  const handleResetFilters = () => {
+    setFilters({});
+    setSearchText('');
+    setPagination((prev: any) => ({ ...prev, current: 1 }));
+  };
   const [brands, setBrands] = useState<Brand[]>([]);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [updating, setUpdating] = useState(false);
   const [bulkPriceModalVisible, setBulkPriceModalVisible] = useState(false);
+  const [saleStatementModalVisible, setSaleStatementModalVisible] = useState(false);
   const [pendingSales, setPendingSales] = useState<Sale[]>([]);
   const [bulkPrices, setBulkPrices] = useState<{[key: string]: number}>({});
   const [modalSearchText, setModalSearchText] = useState<string>('');
@@ -117,18 +124,10 @@ const SaleListPage: React.FC = () => {
     fetchSales();
   }, [pagination.current, pagination.pageSize, filters, searchText]);
 
-  // 상태를 localStorage에 저장
+  // 페이지 크기만 localStorage에 저장 (필터는 새로고침 시 초기화)
   useEffect(() => {
     localStorage.setItem('saleListPagination', JSON.stringify(pagination));
   }, [pagination]);
-
-  useEffect(() => {
-    localStorage.setItem('saleListFilters', JSON.stringify(filters));
-  }, [filters]);
-
-  useEffect(() => {
-    localStorage.setItem('saleListSearchText', searchText);
-  }, [searchText]);
 
   const fetchSales = async () => {
     try {
@@ -906,7 +905,7 @@ const SaleListPage: React.FC = () => {
       <Card>
         {/* 필터 영역 */}
         <Row gutter={16} style={{ marginBottom: 16 }}>
-          <Col span={5}>
+          <Col span={4}>
             <Input
               placeholder="거래처, 상품번호 등 검색"
               prefix={<SearchOutlined />}
@@ -916,14 +915,17 @@ const SaleListPage: React.FC = () => {
               allowClear
             />
           </Col>
-          <Col span={5}>
+          <Col span={4}>
             <RangePicker
               placeholder={['시작일', '종료일']}
+              value={filters.start_date && filters.end_date
+                ? [dayjs(filters.start_date), dayjs(filters.end_date)]
+                : null}
               onChange={handleDateRangeChange}
               style={{ width: '100%' }}
             />
           </Col>
-          <Col span={3}>
+          <Col span={2}>
             <Select
               mode="multiple"
               style={{ width: '100%' }}
@@ -943,7 +945,7 @@ const SaleListPage: React.FC = () => {
               ))}
             </Select>
           </Col>
-          <Col span={3}>
+          <Col span={2}>
             <Select
               mode="multiple"
               style={{ width: '100%' }}
@@ -960,8 +962,26 @@ const SaleListPage: React.FC = () => {
               <Option value="returned">반품</Option>
             </Select>
           </Col>
-          <Col span={8} style={{ textAlign: 'right' }}>
-            <Space>
+          <Col flex="none">
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={handleResetFilters}
+              disabled={!searchText && Object.values(filters).every(v => v === undefined || (Array.isArray(v) && v.length === 0))}
+            >
+              초기화
+            </Button>
+          </Col>
+          <Col flex="auto" style={{ textAlign: 'right' }}>
+            <Space wrap style={{ justifyContent: 'flex-end' }}>
+              {selectedRowKeys.length > 0 && (
+                <Button
+                  icon={<FileTextOutlined />}
+                  onClick={() => setSaleStatementModalVisible(true)}
+                  style={{ backgroundColor: '#1d39c4', color: '#fff', borderColor: '#1d39c4' }}
+                >
+                  거래명세서 추출 ({selectedRowKeys.length})
+                </Button>
+              )}
               {selectedRowKeys.length > 0 && user?.role === 'admin' && (
                 <Popconfirm
                   title={`선택한 ${selectedRowKeys.length}개 항목을 삭제하시겠습니까?`}
@@ -1280,6 +1300,13 @@ const SaleListPage: React.FC = () => {
           />
         </div>
       </Modal>
+
+      {/* 거래명세서 추출 모달 */}
+      <SaleStatementModal
+        visible={saleStatementModalVisible}
+        sales={sales.filter(s => selectedRowKeys.includes(s.id!))}
+        onClose={() => setSaleStatementModalVisible(false)}
+      />
     </div>
   );
 };

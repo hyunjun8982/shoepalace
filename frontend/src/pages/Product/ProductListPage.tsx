@@ -443,6 +443,16 @@ const ProductListPage: React.FC = () => {
       render: (text: string) => <span style={{ fontSize: '15px' }}>{text}</span>,
     },
     {
+      title: '색상',
+      dataIndex: 'color',
+      key: 'color',
+      width: 110,
+      ellipsis: true,
+      render: (color: string) => color
+        ? <span style={{ fontSize: '14px' }}>{color}</span>
+        : <span style={{ color: '#bbb' }}>-</span>,
+    },
+    {
       title: '작업',
       key: 'action',
       width: 130,

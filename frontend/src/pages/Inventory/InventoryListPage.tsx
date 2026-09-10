@@ -55,6 +55,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getBrandIconUrl } from '../../utils/imageUtils';
 import { brandService, Brand } from '../../services/brand';
 import { getFileUrl } from '../../utils/urlUtils';
+import * as XLSX from 'xlsx';
 
 
 // 그룹화된 재고 타입
@@ -89,6 +90,8 @@ const InventoryListPage: React.FC = () => {
   const { user } = useAuth();
   const [inventory, setInventory] = useState<InventoryDetail[]>([]);
   const [groupedInventory, setGroupedInventory] = useState<GroupedInventory[]>([]);
+  const [allGroupedInventory, setAllGroupedInventory] = useState<GroupedInventory[]>([]); // 엑셀 다운로드용 전체 그룹
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]); // 엑셀 다운로드용 선택
   const [allInventory, setAllInventory] = useState<InventoryDetail[]>([]); // 통계용 전체 재고
   const [brands, setBrands] = useState<Brand[]>([]);
   const [loading, setLoading] = useState(false);
@@ -156,6 +159,82 @@ const InventoryListPage: React.FC = () => {
     }
   };
 
+  // 엑셀 다운로드 (체크한 상품 또는 전체) - 실재고(출고 차감 후 현재 수량) 기준
+  const handleExcelDownload = () => {
+    const targets = selectedRowKeys.length > 0
+      ? allGroupedInventory.filter(g => selectedRowKeys.includes(g.product_id))
+      : allGroupedInventory;
+
+    if (targets.length === 0) {
+      message.warning('다운로드할 재고 데이터가 없습니다');
+      return;
+    }
+
+    // 사이즈 정렬 (숫자 우선 오름차순)
+    const sortSizes = (sizes: any[]) => [...sizes].sort((a, b) => {
+      const aNum = parseFloat(a.size);
+      const bNum = parseFloat(b.size);
+      const aIsNum = !isNaN(aNum);
+      const bIsNum = !isNaN(bNum);
+      if (aIsNum && bIsNum) return aNum - bNum;
+      if (aIsNum) return -1;
+      if (bIsNum) return 1;
+      return String(a.size).localeCompare(String(b.size));
+    });
+
+    const rows: any[] = [];
+    let no = 1;
+    let grandTotal = 0;
+    let grandDefect = 0;
+
+    targets.forEach(product => {
+      const sizes = sortSizes(product.sizes || []);
+      const productTotal = sizes.reduce((sum: number, s: any) => sum + (s.quantity || 0), 0);
+      const productDefect = sizes.reduce((sum: number, s: any) => sum + (s.defect_quantity || 0), 0);
+      grandTotal += productTotal;
+      grandDefect += productDefect;
+
+      sizes.forEach((s: any, idx: number) => {
+        rows.push({
+          'No.': idx === 0 ? no : '',
+          '브랜드': idx === 0 ? (product.brand || '') : '',
+          '상품명': idx === 0 ? product.product_name : '',
+          '상품코드': idx === 0 ? (product.sku_code || '') : '',
+          '사이즈': s.size,
+          '실재고': s.quantity || 0,
+          '불량': s.defect_quantity || 0,
+          '상품별 합계': idx === 0 ? productTotal : '',
+        });
+      });
+      no += 1;
+    });
+
+    // 총 합계 행
+    rows.push({
+      'No.': '',
+      '브랜드': '',
+      '상품명': '총 합계',
+      '상품코드': '',
+      '사이즈': '',
+      '실재고': grandTotal,
+      '불량': grandDefect,
+      '상품별 합계': grandTotal,
+    });
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [
+      { wch: 6 }, { wch: 14 }, { wch: 40 }, { wch: 18 },
+      { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 12 },
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '재고목록');
+
+    const today = new Date();
+    const dateStr = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`;
+    XLSX.writeFile(wb, `재고목록_${dateStr}.xlsx`);
+    message.success(`${targets.length}개 상품의 실재고를 엑셀로 다운로드했습니다`);
+  };
+
   const fetchInventory = async () => {
     try {
       setLoading(true);
@@ -214,6 +293,9 @@ const InventoryListPage: React.FC = () => {
         return acc;
       }, []);
       
+      // 엑셀 다운로드용 전체 그룹 저장
+      setAllGroupedInventory(grouped);
+
       // 페이지네이션 적용
       const start = (pagination.current - 1) * pagination.pageSize;
       const end = start + pagination.pageSize;
@@ -890,6 +972,17 @@ const InventoryListPage: React.FC = () => {
               <Option value="low">재고 부족</Option>
             </Select>
           </Col>
+          <Col flex="auto" style={{ textAlign: 'right' }}>
+            <Button
+              icon={<DownloadOutlined />}
+              onClick={handleExcelDownload}
+              style={{ backgroundColor: '#1d39c4', color: '#fff', borderColor: '#1d39c4' }}
+            >
+              {selectedRowKeys.length > 0
+                ? `엑셀 다운로드 (${selectedRowKeys.length})`
+                : '엑셀 다운로드 (전체)'}
+            </Button>
+          </Col>
         </Row>
 
         {/* 테이블 */}
@@ -898,6 +991,11 @@ const InventoryListPage: React.FC = () => {
           dataSource={groupedInventory}
           loading={loading}
           rowKey="product_id"
+          rowSelection={{
+            selectedRowKeys,
+            onChange: (keys) => setSelectedRowKeys(keys),
+            preserveSelectedRowKeys: true,
+          }}
           scroll={{ x: 1400 }}
           pagination={{
             current: pagination.current,

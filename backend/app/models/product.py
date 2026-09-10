@@ -7,8 +7,10 @@ class Product(BaseModel):
     __tablename__ = "products"
 
     brand_id = Column(UUID(as_uuid=True), ForeignKey("brands.id"))
-    product_code = Column(String(100), unique=True, nullable=False, index=True)
+    # 상품코드 중복 허용 (유니크값은 바코드) - 색상 변형 등 같은 품번 등록 가능
+    product_code = Column(String(100), nullable=False, index=True)
     product_name = Column(String(200), nullable=False)
+    color = Column(String(100), nullable=True)
     description = Column(Text)
     image_url = Column(String(500))
     barcode_id = Column(UUID(as_uuid=True), ForeignKey("barcodes.id"), nullable=True, index=True)

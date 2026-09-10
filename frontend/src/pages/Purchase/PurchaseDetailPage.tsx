@@ -703,6 +703,13 @@ const PurchaseDetailPage: React.FC = () => {
                   },
                 },
                 {
+                  title: '색상',
+                  dataIndex: ['product', 'color'],
+                  key: 'color',
+                  width: 100,
+                  render: (color) => color || '-',
+                },
+                {
                   title: '사이즈',
                   dataIndex: 'size',
                   key: 'size',

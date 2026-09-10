@@ -78,6 +78,7 @@ const ProductFormPage: React.FC = () => {
         brand_id: String(product.brand_id),
         product_code: product.product_code,
         product_name: product.product_name,
+        color: product.color,
         description: product.description,
       });
 
@@ -212,22 +213,6 @@ const ProductFormPage: React.FC = () => {
     }
   };
 
-  const validateProductCode = async (_: any, value: string) => {
-    if (!value) {
-      return Promise.resolve();
-    }
-
-    try {
-      const exists = await productService.checkProductCode(value, isEditMode ? productId : undefined);
-      if (exists) {
-        return Promise.reject(new Error('이미 사용중인 상품코드입니다.'));
-      }
-      return Promise.resolve();
-    } catch (error) {
-      return Promise.resolve(); // 네트워크 오류 시 통과
-    }
-  };
-
   const onFinish = async (values: any) => {
     try {
       setLoading(true);
@@ -239,6 +224,7 @@ const ProductFormPage: React.FC = () => {
           brand_id: values.brand_id,
           product_code: values.product_code,
           product_name: values.product_name,
+          color: values.color,
           description: values.description,
         };
         savedProduct = await productService.updateProduct(productId!, updateData);
@@ -247,6 +233,7 @@ const ProductFormPage: React.FC = () => {
           brand_id: values.brand_id,
           product_code: values.product_code,
           product_name: values.product_name,
+          color: values.color,
           description: values.description,
         };
         savedProduct = await productService.createProduct(createData);
@@ -420,10 +407,8 @@ const ProductFormPage: React.FC = () => {
                   rules={[
                     { required: true, message: '상품코드를 입력해주세요.' },
                     { max: 100, message: '100자 이내로 입력해주세요.' },
-                    { validator: validateProductCode }
                   ]}
-                  validateTrigger="onBlur"
-                  hasFeedback
+                  extra="상품코드는 중복 등록이 가능합니다 (색상 변형 등). 유니크값은 바코드입니다."
                 >
                   <Input placeholder="예: NIKE-001" />
                 </Form.Item>
@@ -437,6 +422,14 @@ const ProductFormPage: React.FC = () => {
                   ]}
                 >
                   <Input placeholder="상품명을 입력하세요" />
+                </Form.Item>
+
+                <Form.Item
+                  label="색상 (선택사항)"
+                  name="color"
+                  rules={[{ max: 100, message: '100자 이내로 입력해주세요.' }]}
+                >
+                  <Input placeholder="예: BLACK, WHITE/RED" />
                 </Form.Item>
               </div>
 

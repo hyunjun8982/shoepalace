@@ -12,6 +12,8 @@ import {
   InputNumber,
   Upload,
   Modal,
+  Select,
+  Tag,
 } from 'antd';
 import { DeleteOutlined, UploadOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
@@ -72,11 +74,18 @@ const SaleFormPageNew: React.FC = () => {
   const [unregisteredBarcodeModalVisible, setUnregisteredBarcodeModalVisible] = useState(false);
   const [scannedBarcode, setScannedBarcode] = useState<string>('');
 
+  // 상품 검색으로 추가 관련 상태 (바코드를 모르는 경우 대응)
+  const [searchProductId, setSearchProductId] = useState<string | undefined>(undefined);
+  const [searchBarcodes, setSearchBarcodes] = useState<any[]>([]);
+  const [searchBarcodeValue, setSearchBarcodeValue] = useState<string | undefined>(undefined);
+  const [searchBarcodesLoading, setSearchBarcodesLoading] = useState(false);
+
   // 바코드 스캔 관련 refs
   const barcodeBufferRef = useRef('');
   const barcodeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastProcessedBarcodeRef = useRef<string>(''); // 중복 처리 방지
   const groupedInventoryRef = useRef<GroupedInventory[]>([]); // 항상 최신 재고 참조
+  const draftSubmittedRef = useRef(false); // 등록 완료 후 임시 저장 재실행 방지
 
   const isEditMode = !!saleId;
 
@@ -100,6 +109,7 @@ const SaleFormPageNew: React.FC = () => {
 
   // 임시 저장: selectedProducts 변경 시 localStorage에 저장
   useEffect(() => {
+    if (draftSubmittedRef.current) return; // 등록 완료 후에는 저장 안 함
     if (!saleId || saleId === 'new') {
       try {
         const formValues = form.getFieldsValue();
@@ -426,6 +436,49 @@ const SaleFormPageNew: React.FC = () => {
     setUnregisteredBarcodeModalVisible(true);
   };
 
+  // 상품 검색: 상품 선택 시 해당 상품의 바코드 목록 로드
+  const handleSearchProductChange = async (productId: string | undefined) => {
+    setSearchProductId(productId);
+    setSearchBarcodeValue(undefined);
+    setSearchBarcodes([]);
+
+    if (!productId) return;
+
+    setSearchBarcodesLoading(true);
+    try {
+      const barcodes = await barcodeService.getAllBarcodesByProduct(productId);
+      setSearchBarcodes(barcodes || []);
+      if (!barcodes || barcodes.length === 0) {
+        message.info('이 상품에 등록된 바코드가 없습니다');
+      }
+    } catch (error) {
+      console.error('Failed to load barcodes:', error);
+      message.error('바코드 목록 조회에 실패했습니다');
+    } finally {
+      setSearchBarcodesLoading(false);
+    }
+  };
+
+  // 상품 검색으로 추가: 선택한 바코드를 스캔한 것과 동일하게 처리
+  const handleSearchAddProduct = async () => {
+    if (!searchProductId) {
+      message.warning('상품을 선택해주세요');
+      return;
+    }
+    if (!searchBarcodeValue) {
+      message.warning('바코드(사이즈)를 선택해주세요');
+      return;
+    }
+
+    try {
+      const result = await barcodeService.searchByBarcode(searchBarcodeValue);
+      handleBarcodeFound(result);
+      setSearchBarcodeValue(undefined);
+    } catch (error: any) {
+      message.error(error.message || '바코드 검색에 실패했습니다');
+    }
+  };
+
   // 새로운 상품이 등록되었을 때 - 바코드 상품을 바로 selectedProducts에 추가
   const handleNewProductRegistered = (newProduct: any, barcodeInfo: { barcode_value: string; size: string; image_url?: string }) => {
     // 상품 목록 새로고침
@@ -549,6 +602,7 @@ const SaleFormPageNew: React.FC = () => {
 
   // 임시 저장: Form 값 변경 시 저장
   const handleFormValuesChangeForDraft = (changedFields: any, allValues: any) => {
+    if (draftSubmittedRef.current) return; // 등록 완료 후에는 저장 안 함
     if (!saleId || saleId === 'new') {
       try {
         const draftData = {
@@ -688,6 +742,9 @@ const SaleFormPageNew: React.FC = () => {
       } else {
         createdOrUpdatedSale = await saleService.createSale(saleData);
         message.success('판매가 등록되었습니다.');
+        // 등록 완료 후 임시 저장 데이터 삭제 (재저장 방지 플래그 포함)
+        draftSubmittedRef.current = true;
+        localStorage.removeItem('saleFormDraft');
       }
 
       // 파일 업로드 처리
@@ -951,18 +1008,106 @@ const SaleFormPageNew: React.FC = () => {
             </Row>
           </AntCard>
 
-          {/* 바코드 검색 */}
-          <AntCard
-            title="바코드 스캔으로 상품 추가"
-            size="small"
-            style={{ marginBottom: 24 }}
-          >
-            <BarcodeInput
-              onBarcodeFound={handleBarcodeFound}
-              onBarcodeNotFound={handleBarcodeNotFound}
-              placeholder="바코드 리더기로 스캔하거나 수동으로 입력..."
-            />
-          </AntCard>
+          {/* 바코드 스캔 / 상품 검색으로 추가 */}
+          <Row gutter={16} style={{ marginBottom: 24 }}>
+            <Col xs={24} lg={12}>
+              <AntCard
+                title="바코드 스캔으로 상품 추가"
+                size="small"
+                style={{ height: '100%' }}
+              >
+                <BarcodeInput
+                  onBarcodeFound={handleBarcodeFound}
+                  onBarcodeNotFound={handleBarcodeNotFound}
+                  placeholder="바코드 리더기로 스캔하거나 수동으로 입력..."
+                />
+              </AntCard>
+            </Col>
+
+            <Col xs={24} lg={12}>
+              <AntCard
+                title="상품 검색으로 추가"
+                size="small"
+                style={{ height: '100%' }}
+              >
+                <Select
+                  showSearch
+                  allowClear
+                  placeholder="상품명 또는 상품코드로 검색..."
+                  value={searchProductId}
+                  onChange={handleSearchProductChange}
+                  style={{ width: '100%', marginBottom: 8 }}
+                  size="large"
+                  filterOption={(input, option) =>
+                    String((option as any)?.searchText ?? '').toLowerCase().includes(input.toLowerCase())
+                  }
+                  optionLabelProp="selectedLabel"
+                  options={groupedInventory.map(p => {
+                    const totalStock = p.sizes.reduce((sum, s) => sum + (s.available_quantity || 0), 0);
+                    return {
+                      value: p.product_id,
+                      searchText: `${p.brand_name || ''} ${p.product_name} ${p.product_code || ''}`,
+                      selectedLabel: `${p.product_name} (${p.product_code || '-'})`,
+                      label: (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <span style={{ fontWeight: 600 }}>{p.product_name}</span>
+                            <span style={{ color: '#999', fontSize: 12, marginLeft: 8 }}>
+                              [{p.brand_name || '-'}] {p.product_code || '-'}
+                            </span>
+                          </div>
+                          <Tag color={totalStock > 0 ? 'blue' : 'default'} style={{ margin: 0, flexShrink: 0 }}>
+                            재고 {totalStock}
+                          </Tag>
+                        </div>
+                      ),
+                    };
+                  })}
+                />
+                <Row gutter={8}>
+                  <Col flex="auto">
+                    <Select
+                      placeholder={searchProductId ? '바코드(사이즈) 선택' : '상품을 먼저 선택하세요'}
+                      value={searchBarcodeValue}
+                      onChange={(value) => setSearchBarcodeValue(value)}
+                      style={{ width: '100%' }}
+                      size="large"
+                      disabled={!searchProductId}
+                      loading={searchBarcodesLoading}
+                      notFoundContent={searchBarcodesLoading ? '조회 중...' : '등록된 바코드가 없습니다'}
+                      optionLabelProp="selectedLabel"
+                      options={searchBarcodes.map((b: any) => {
+                        const sizeStock = groupedInventory
+                          .find(p => p.product_id === searchProductId)
+                          ?.sizes.find(s => s.size === b.size)?.available_quantity ?? 0;
+                        return {
+                          value: b.barcode_value,
+                          selectedLabel: `${b.size} (재고 ${sizeStock}개)`,
+                          disabled: sizeStock < 1,
+                          label: (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <span style={{ fontWeight: 600, fontSize: 15 }}>{b.size}</span>
+                                <span style={{ color: '#999', fontSize: 12, marginLeft: 8 }}>{b.barcode_value}</span>
+                              </div>
+                              <Tag color={sizeStock > 0 ? 'green' : 'default'} style={{ margin: 0, flexShrink: 0 }}>
+                                재고 {sizeStock}
+                              </Tag>
+                            </div>
+                          ),
+                        };
+                      })}
+                    />
+                  </Col>
+                  <Col flex="80px">
+                    <Button type="primary" size="large" block onClick={handleSearchAddProduct}>
+                      추가
+                    </Button>
+                  </Col>
+                </Row>
+              </AntCard>
+            </Col>
+          </Row>
 
           {/* 추가된 상품 목록 */}
           <AntCard
@@ -1010,7 +1155,7 @@ const SaleFormPageNew: React.FC = () => {
                 color: '#999',
                 textAlign: 'center'
               }}>
-                바코드를 스캔하여 상품을 추가하세요
+                바코드를 스캔하거나 상품 검색으로 상품을 추가하세요
               </div>
             )}
           </AntCard>

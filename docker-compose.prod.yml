@@ -36,7 +36,9 @@ services:
       - ENVIRONMENT=production
       - APPIUM_URL=https://9c6ae1ba8c79.ngrok-free.app
       - CF_WORKER_URL=https://shoepalace-pxos.onrender.com/proxy
-      # 이메일 설정 (Gmail)
+      # 이메일 설정 (Brevo HTTP API 우선, 미설정 시 Gmail SMTP 폴백)
+      # DigitalOcean은 아웃바운드 SMTP(587)를 차단하므로 운영에서는 BREVO_API_KEY 필수
+      - BREVO_API_KEY=${BREVO_API_KEY:-}
       - SMTP_SERVER=smtp.gmail.com
       - SMTP_PORT=587
       - SENDER_EMAIL=hyunjunpyo@gmail.com

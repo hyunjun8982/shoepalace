@@ -8,6 +8,15 @@ export const saleService = {
     return response.data;
   },
 
+  // 거래명세서 메일 발송
+  async sendStatementEmail(saleIds: string[], recipientEmail: string): Promise<{ success: boolean; message: string }> {
+    const response = await api.post('/sales/send-statement', {
+      sale_ids: saleIds,
+      recipient_email: recipientEmail,
+    });
+    return response.data;
+  },
+
   // 판매 상세 조회
   async getSale(saleId: string): Promise<Sale> {
     const response = await api.get(`/sales/${saleId}`);

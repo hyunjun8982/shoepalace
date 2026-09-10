@@ -36,11 +36,13 @@ def get_sales(
     end_date: Optional[date] = None,
     status: Optional[List[str]] = Query(None),
     brand_name: Optional[List[str]] = Query(None),
+    search: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """판매 목록 조회"""
     from sqlalchemy.orm import selectinload
+    from sqlalchemy import or_
     from app.models.brand import Brand
 
     # Sale을 조회하면서 관련 데이터를 미리 로드
@@ -50,6 +52,21 @@ def get_sales(
             selectinload(Sale.items).selectinload(SaleItem.product).selectinload(Product.brand),
             selectinload(Sale.seller)
         )
+
+    # 검색 필터링 - 서브쿼리 사용 (고객명/상품명/품번)
+    if search:
+        search_subquery = db.query(Sale.id)\
+            .outerjoin(SaleItem, SaleItem.sale_id == Sale.id)\
+            .outerjoin(Product, SaleItem.product_id == Product.id)\
+            .filter(or_(
+                Sale.customer_name.ilike(f"%{search}%"),
+                Product.product_name.ilike(f"%{search}%"),
+                Product.product_code.ilike(f"%{search}%"),
+                SaleItem.product_name.ilike(f"%{search}%"),
+            ))\
+            .distinct()\
+            .subquery()
+        query = query.filter(Sale.id.in_(search_subquery))
 
     # 필터링
     if start_date:
@@ -105,6 +122,143 @@ def get_sales(
                     item.product_image_url = f"/uploads/products/{brand_name}/{product_code}.png"
 
     return SaleList(total=total, items=sales)
+
+
+@router.post("/send-statement")
+def send_sale_statement(
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """선택한 판매 건들의 거래명세서를 PDF로 생성하여 메일 발송"""
+    from sqlalchemy.orm import selectinload
+    from datetime import datetime
+    from app.utils.sale_statement_pdf import generate_sale_statement_pdf
+    from app.utils.email_service import email_service
+
+    sale_ids = payload.get("sale_ids", [])
+    recipient_email = (payload.get("recipient_email") or "").strip()
+
+    if not sale_ids:
+        raise HTTPException(status_code=400, detail="발송할 판매 건을 선택해주세요")
+    if not recipient_email or "@" not in recipient_email:
+        raise HTTPException(status_code=400, detail="올바른 수신자 이메일을 입력해주세요")
+
+    sales = db.query(Sale)\
+        .options(
+            selectinload(Sale.items).selectinload(SaleItem.product).selectinload(Product.brand),
+            selectinload(Sale.seller)
+        )\
+        .filter(Sale.id.in_(sale_ids))\
+        .order_by(Sale.sale_date.desc())\
+        .all()
+
+    if not sales:
+        raise HTTPException(status_code=404, detail="판매 건을 찾을 수 없습니다")
+
+    # 품목별 사이즈·수량 집계 + 판매 건별 데이터 구성
+    product_map = {}
+    sales_data = []
+    total_quantity = 0
+    total_amount = 0.0
+
+    for sale in sales:
+        sale_items = []
+        for item in sale.items:
+            product_name = item.product_name or (item.product.product_name if item.product else "-")
+            product_code = item.product.product_code if item.product else "-"
+            brand_name = item.product.brand.name if (item.product and item.product.brand) else ""
+            size = item.size or "-"
+            qty = item.quantity or 0
+            price = float(item.seller_sale_price_krw or 0)
+
+            total_quantity += qty
+            total_amount += price * qty
+
+            key = f"{product_code}__{product_name}"
+            if key not in product_map:
+                product_map[key] = {
+                    "product_name": product_name,
+                    "product_code": product_code,
+                    "brand_name": brand_name,
+                    "size_quantities": {},
+                    "total_quantity": 0,
+                    "total_amount": 0.0,
+                }
+            summary = product_map[key]
+            summary["size_quantities"][size] = summary["size_quantities"].get(size, 0) + qty
+            summary["total_quantity"] += qty
+            summary["total_amount"] += price * qty
+
+            sale_items.append({
+                "product_name": product_name,
+                "product_code": product_code,
+                "size": size,
+                "quantity": qty,
+                "price": price,
+            })
+
+        sales_data.append({
+            "sale_number": sale.sale_number or "",
+            "sale_date": sale.sale_date.strftime("%Y-%m-%d") if sale.sale_date else "-",
+            "customer_name": sale.customer_name or "",
+            "seller_name": sale.seller.full_name if sale.seller else "",
+            "items": sale_items,
+        })
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    summary_data = {
+        "sale_count": len(sales),
+        "total_quantity": total_quantity,
+        "total_amount": total_amount,
+        "created_date": today_str,
+    }
+
+    # PDF 생성
+    try:
+        pdf_buffer = generate_sale_statement_pdf(summary_data, list(product_map.values()), sales_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"거래명세서 PDF 생성 실패: {str(e)}")
+
+    # 메일 본문
+    html_body = f"""
+    <html><body style="font-family: Arial, sans-serif; color: #333;">
+        <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+            <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin-bottom: 20px;">
+                <h2 style="margin: 0; color: #1890ff;">거래명세서</h2>
+                <p style="margin: 8px 0 0 0;">거래명세서를 첨부파일로 보내드립니다.</p>
+            </div>
+            <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                <tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0; font-weight: bold;">판매 건수</td>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0; text-align: right;">{len(sales)}건</td></tr>
+                <tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0; font-weight: bold;">총 수량</td>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0; text-align: right;">{total_quantity}개</td></tr>
+                <tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0; font-weight: bold;">총 판매금액</td>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0; text-align: right;">₩{total_amount:,.0f}</td></tr>
+                <tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0; font-weight: bold;">작성일</td>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0; text-align: right;">{today_str}</td></tr>
+            </table>
+            <p style="margin-top: 20px; font-size: 12px; color: #666; text-align: center;">
+                자세한 내역은 첨부된 PDF 파일을 확인해주세요.
+            </p>
+        </div>
+    </body></html>
+    """
+
+    filename = f"거래명세서_{today_str}.pdf"
+    success = email_service.send_document(
+        recipient_email=recipient_email,
+        recipient_name=recipient_email,
+        subject=f"[거래명세서] {today_str} - 총 {len(sales)}건",
+        html_body=html_body,
+        filename=filename,
+        pdf_content=pdf_buffer,
+    )
+
+    if not success:
+        raise HTTPException(status_code=500, detail="메일 발송에 실패했습니다. 메일 설정을 확인해주세요.")
+
+    return {"success": True, "message": f"{recipient_email}로 거래명세서를 발송했습니다"}
 
 @router.get("/{sale_id}", response_model=SaleSchema)
 def get_sale(

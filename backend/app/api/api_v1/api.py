@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.api_v1.endpoints import auth, products, purchases, sales, inventory, settlements, uploads, users, files, test_upload, admin, brands, trending_products, warehouses, notifications, product_importer, chat, kream_scraper, adidas_accounts, feature_requests, poizon_products, naver_shopping, poizon, adidas_comparison, poizon_price_watch, card_transactions, bank_transactions, barcodes, cards
+from app.api.api_v1.endpoints import auth, products, purchases, sales, inventory, settlements, uploads, users, files, test_upload, admin, brands, trending_products, warehouses, notifications, product_importer, chat, kream_scraper, adidas_accounts, feature_requests, poizon_products, naver_shopping, poizon, adidas_comparison, poizon_price_watch, card_transactions, bank_transactions, barcodes, cards, returns
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["인증"])
@@ -11,6 +11,7 @@ api_router.include_router(barcodes.router, prefix="/barcodes", tags=["바코드"
 api_router.include_router(purchases.router, prefix="/purchases", tags=["구매"])
 api_router.include_router(sales.router, prefix="/sales", tags=["판매"])
 api_router.include_router(inventory.router, prefix="/inventory", tags=["재고"])
+api_router.include_router(returns.router, prefix="/returns", tags=["반품"])
 api_router.include_router(settlements.router, prefix="/settlements", tags=["정산"])
 api_router.include_router(trending_products.router, prefix="/trending-products", tags=["인기상품"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["알림"])

@@ -226,7 +226,10 @@ def get_adjustment_history(
     current_user: User = Depends(get_current_user)
 ):
     """재고 조정 이력 조회"""
-    query = db.query(InventoryAdjustment)
+    query = db.query(InventoryAdjustment).options(
+        joinedload(InventoryAdjustment.product).joinedload(Product.brand),
+        joinedload(InventoryAdjustment.user),
+    )
 
     if product_id:
         query = query.filter(InventoryAdjustment.product_id == product_id)
@@ -239,6 +242,16 @@ def get_adjustment_history(
 
     total = query.count()
     items = query.offset(skip).limit(limit).all()
+
+    # 상품명/브랜드/처리자 이름 추가
+    for adj in items:
+        if adj.product:
+            adj.product_name = adj.product.product_name
+            adj.sku_code = adj.product.product_code
+            if adj.product.brand:
+                adj.brand_name = adj.product.brand.name
+        if adj.user:
+            adj.adjusted_by_name = adj.user.full_name
 
     return InventoryAdjustmentList(total=total, items=items)
 
@@ -379,6 +392,24 @@ def get_inventory_detail_with_history(
             status=sale.status.value if sale.status else None
         ))
 
+    # 재고 조정(반품 등) 이력 조회
+    from app.schemas.inventory import AdjustmentHistoryItem
+    adjustments = db.query(InventoryAdjustment).options(
+        joinedload(InventoryAdjustment.user)
+    ).filter(
+        InventoryAdjustment.product_id == product_id
+    ).order_by(InventoryAdjustment.created_at.desc()).all()
+
+    adjustment_history = []
+    for adj in adjustments:
+        adjustment_history.append(AdjustmentHistoryItem(
+            created_at=adj.created_at,
+            adjustment_type=adj.adjustment_type.value if adj.adjustment_type else '',
+            quantity=adj.quantity,
+            notes=adj.notes,
+            adjusted_by_name=adj.user.full_name if adj.user else None,
+        ))
+
     # 재고 상세 정보 생성
     detail = InventoryDetailWithHistory(
         id=str(first_inventory.id),
@@ -399,7 +430,8 @@ def get_inventory_detail_with_history(
         sku_code=product.product_code,
         size_inventories=size_inventories,  # 사이즈별 재고 정보
         purchase_history=purchase_history,
-        sale_history=sale_history
+        sale_history=sale_history,
+        adjustment_history=adjustment_history
     )
 
     return detail

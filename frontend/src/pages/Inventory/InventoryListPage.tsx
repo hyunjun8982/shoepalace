@@ -695,6 +695,7 @@ const InventoryListPage: React.FC = () => {
       align: 'center' as 'center',
       render: (_, record) => {
         const totalQty = record.sizes?.reduce((sum: number, s: any) => sum + (s.quantity || 0), 0) || 0;
+        const totalDefect = record.sizes?.reduce((sum: number, s: any) => sum + (s.defect_quantity || 0), 0) || 0;
 
         // 사이즈별 수량 정렬
         const sortedSizes = [...(record.sizes || [])].sort((a: any, b: any) => {
@@ -712,7 +713,7 @@ const InventoryListPage: React.FC = () => {
               <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: idx < arr.length - 1 ? '1px solid rgba(255,255,255,0.2)' : 'none' }}>
                 <span>{s.size || 'FREE'}</span>
                 <span style={{ fontWeight: 600 }}>
-                  {s.defect_quantity > 0 && <span style={{ color: '#ff7875', marginRight: 4 }}>(불량 {s.defect_quantity}개)</span>}
+                  {s.defect_quantity > 0 && <span style={{ color: '#ff7875', marginRight: 4 }}>(반품 {s.defect_quantity}개)</span>}
                   {s.quantity}개
                 </span>
               </div>
@@ -723,7 +724,12 @@ const InventoryListPage: React.FC = () => {
         return (
           <Tooltip title={tooltipContent} placement="left">
             <span style={{ cursor: 'pointer', fontSize: 14, fontWeight: 600, color: '#0d1b2a' }}>
-              {totalQty.toLocaleString()}개
+              {(totalQty + totalDefect).toLocaleString()}개
+              {totalDefect > 0 && (
+                <span style={{ display: 'block', fontSize: 11, fontWeight: 400, color: '#ff7875' }}>
+                  (반품 {totalDefect} 포함)
+                </span>
+              )}
             </span>
           </Tooltip>
         );
@@ -798,7 +804,8 @@ const InventoryListPage: React.FC = () => {
 
 
   // 통계 계산 (전체 데이터 기준)
-  const totalQuantity = allInventory.reduce((sum, item) => sum + item.quantity, 0);
+  // 총 재고 = 정상 재고 + 반품(불량) 재고 (물리적 전체 수량)
+  const totalQuantity = allInventory.reduce((sum, item) => sum + item.quantity + (item.defect_quantity || 0), 0);
   const totalAvailable = allInventory.reduce((sum, item) => sum + (item.available_quantity || 0), 0);
   const lowStockCount = allInventory.filter(item => item.is_low_stock).length;
   const outOfStockCount = allInventory.filter(item => (item.available_quantity || 0) <= 0).length;
@@ -1326,7 +1333,7 @@ const InventoryListPage: React.FC = () => {
                     // 사이즈별 데이터 맵 생성 (실제 데이터만 사용)
                     const sizeMap = new Map();
                     selectedInventoryDetail.size_inventories?.forEach((item: any) => {
-                      sizeMap.set(item.size, { quantity: item.quantity, location: item.location, id: item.id });
+                      sizeMap.set(item.size, { quantity: item.quantity, defect_quantity: item.defect_quantity || 0, location: item.location, id: item.id });
                     });
 
                     // 실제 있는 사이즈들 추출 및 정렬
@@ -1383,6 +1390,7 @@ const InventoryListPage: React.FC = () => {
                                 {sizes.map((size: string, index: number) => {
                                   const data = sizeMap.get(size);
                                   const qty = data?.quantity || 0;
+                                  const defectQty = data?.defect_quantity || 0;
 
                                   if (detailEditMode) {
                                     return (
@@ -1417,9 +1425,14 @@ const InventoryListPage: React.FC = () => {
                                       textAlign: 'center',
                                       fontSize: '12px',
                                       fontWeight: 600,
-                                      color: qty > 0 ? '#1890ff' : '#d9d9d9'
+                                      color: (qty + defectQty) > 0 ? '#1890ff' : '#d9d9d9'
                                     }}>
-                                      {qty.toLocaleString()}개
+                                      {(qty + defectQty).toLocaleString()}개
+                                      {defectQty > 0 && (
+                                        <div style={{ fontSize: 10, fontWeight: 400, color: '#ff7875' }}>
+                                          (반품 {defectQty})
+                                        </div>
+                                      )}
                                     </td>
                                   );
                                 })}
@@ -1584,6 +1597,91 @@ const InventoryListPage: React.FC = () => {
                 </div>
               </Col>
             </Row>
+
+            {/* 반품/조정 이력 */}
+            {(selectedInventoryDetail.adjustment_history?.length || 0) > 0 && (
+              <Row gutter={24} style={{ marginTop: 24 }}>
+                <Col span={24}>
+                  <div>
+                    <h3 style={{
+                      margin: 0,
+                      marginBottom: 16,
+                      paddingBottom: 12,
+                      borderBottom: '2px solid #1890ff',
+                      fontSize: 16,
+                      fontWeight: 600,
+                      color: '#262626'
+                    }}>
+                      <SyncOutlined style={{ marginRight: 8, color: '#722ed1' }} />
+                      반품/조정 이력 ({selectedInventoryDetail.adjustment_history?.length || 0}건)
+                    </h3>
+                    <Table
+                      dataSource={selectedInventoryDetail.adjustment_history || []}
+                      pagination={false}
+                      size="small"
+                      scroll={{ y: 200 }}
+                      rowKey={(_, index) => index!}
+                      columns={[
+                        {
+                          title: '처리일시',
+                          dataIndex: 'created_at',
+                          key: 'created_at',
+                          width: 140,
+                          render: (v: string) => v ? new Date(v).toLocaleString('ko-KR', {
+                            year: '2-digit', month: '2-digit', day: '2-digit',
+                            hour: '2-digit', minute: '2-digit',
+                          }) : '-'
+                        },
+                        {
+                          title: '구분',
+                          key: 'type',
+                          width: 90,
+                          align: 'center' as 'center',
+                          render: (_: any, adj: any) => {
+                            if (adj.adjustment_type === 'return') {
+                              return adj.quantity > 0
+                                ? <Tag color="green">반품 입고</Tag>
+                                : <Tag color="geekblue">반품 출고</Tag>;
+                            }
+                            const typeLabels: Record<string, string> = {
+                              purchase: '구매 입고', sale: '판매 출고',
+                              damage: '파손', adjustment: '재고 조정', transfer: '이동',
+                            };
+                            return <Tag>{typeLabels[adj.adjustment_type] || adj.adjustment_type}</Tag>;
+                          }
+                        },
+                        {
+                          title: '수량',
+                          dataIndex: 'quantity',
+                          key: 'quantity',
+                          width: 60,
+                          align: 'center' as 'center',
+                          render: (qty: number) => (
+                            <span style={{ fontWeight: 600, color: qty > 0 ? '#52c41a' : '#1d39c4' }}>
+                              {qty > 0 ? `+${qty}` : qty}
+                            </span>
+                          )
+                        },
+                        {
+                          title: '상세 내역',
+                          dataIndex: 'notes',
+                          key: 'notes',
+                          render: (notes: string) => <span style={{ fontSize: 13, color: '#595959' }}>{notes || '-'}</span>
+                        },
+                        {
+                          title: '처리자',
+                          dataIndex: 'adjusted_by_name',
+                          key: 'adjusted_by_name',
+                          width: 80,
+                          align: 'center' as 'center',
+                          render: (name: string) => name || '-'
+                        },
+                      ]}
+                    />
+                  </div>
+                </Col>
+              </Row>
+            )}
             </div>
           </Form>
         )}

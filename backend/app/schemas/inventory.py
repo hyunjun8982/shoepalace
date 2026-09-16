@@ -68,6 +68,10 @@ class InventoryAdjustmentCreate(InventoryAdjustmentBase):
 class InventoryAdjustment(InventoryAdjustmentBase):
     id: str
     adjusted_by: str
+    adjusted_by_name: Optional[str] = None  # 처리자 이름
+    product_name: Optional[str] = None  # 상품명
+    brand_name: Optional[str] = None  # 브랜드명
+    sku_code: Optional[str] = None  # 상품코드
     created_at: datetime
     updated_at: datetime
 
@@ -123,6 +127,14 @@ class SaleHistoryItem(BaseModel):
     seller_name: Optional[str] = None
     status: Optional[str] = None  # pending, completed, cancelled, returned
 
+# 재고 조정(반품 등) 이력
+class AdjustmentHistoryItem(BaseModel):
+    created_at: datetime
+    adjustment_type: str
+    quantity: int  # 양수: 입고, 음수: 출고
+    notes: Optional[str] = None
+    adjusted_by_name: Optional[str] = None
+
 # 사이즈별 재고 정보
 class SizeInventory(BaseModel):
     id: str
@@ -159,6 +171,7 @@ class InventoryDetailWithHistory(InventoryDetail):
     size_inventories: List[SizeInventory] = []  # 사이즈별 재고 정보
     purchase_history: List[PurchaseHistoryItem] = []
     sale_history: List[SaleHistoryItem] = []
+    adjustment_history: List[AdjustmentHistoryItem] = []  # 재고 조정(반품 등) 이력
 
 # 창고 변경 스키마
 class InventoryWarehouseUpdate(BaseModel):

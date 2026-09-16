@@ -660,7 +660,20 @@ const PurchaseListPage: React.FC = () => {
             const isReturned = record.supplier === '반품 재입고';
             console.log('🔍 Purchase row:', record.transaction_no, 'supplier:', record.supplier, 'isReturned:', isReturned);
             return {
-              onClick: () => navigate(`/purchases/${record.id}`),
+              onClick: (e: React.MouseEvent) => {
+                const target = e.target as HTMLElement;
+                // 체크박스 열 클릭 시: 상세 이동 대신 선택 토글 (클릭 인식 범위 확대)
+                if (target.closest('.ant-table-selection-column')) {
+                  if (!target.closest('.ant-checkbox-wrapper')) {
+                    const id = record.id!;
+                    setSelectedRowKeys(prev =>
+                      prev.includes(id) ? prev.filter(k => k !== id) : [...prev, id]
+                    );
+                  }
+                  return;
+                }
+                navigate(`/purchases/${record.id}`);
+              },
               style: {
                 cursor: 'pointer',
                 backgroundColor: isReturned ? '#fff7e6' : 'transparent',

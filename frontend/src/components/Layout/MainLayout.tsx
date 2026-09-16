@@ -72,7 +72,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     '/sales': '판매 관리',
     '/sales/new': '판매 등록',
     '/inventory': '재고 관리',
-    '/inventory/defective': '불량 물품 관리',
+    '/inventory/defective': '반품 관리',
     '/warehouses': '창고 관리',
     '/settlements': '정산 관리',
     '/users': '사용자 관리',
@@ -355,7 +355,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         {
           key: '/inventory/defective',
           icon: <ExclamationCircleOutlined />,
-          label: '불량 물품',
+          label: '반품 관리',
         },
       ],
     },

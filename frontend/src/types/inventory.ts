@@ -33,6 +33,7 @@ export interface InventoryDetail extends Inventory {
   warehouse_location?: string;
   warehouse_image_url?: string;
   is_defective?: boolean;
+  defect_quantity?: number;
   defect_reason?: string;
   defect_image_url?: string;
 }
@@ -68,6 +69,10 @@ export interface InventoryAdjustment {
   reference_id?: string;
   notes?: string;
   adjusted_by?: string;
+  adjusted_by_name?: string;
+  product_name?: string;
+  brand_name?: string;
+  sku_code?: string;
   created_at?: string;
   updated_at?: string;
 }

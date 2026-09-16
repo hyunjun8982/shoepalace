@@ -1064,7 +1064,20 @@ const SaleListPage: React.FC = () => {
           rowSelection={rowSelection}
           scroll={{ x: 1200 }}
           onRow={(record) => ({
-            onClick: () => navigate(`/sales/${record.id}`),
+            onClick: (e) => {
+              const target = e.target as HTMLElement;
+              // 체크박스 열 클릭 시: 상세 이동 대신 선택 토글 (클릭 인식 범위 확대)
+              if (target.closest('.ant-table-selection-column')) {
+                if (!target.closest('.ant-checkbox-wrapper')) {
+                  const id = record.id!;
+                  setSelectedRowKeys(prev =>
+                    prev.includes(id) ? prev.filter(k => k !== id) : [...prev, id]
+                  );
+                }
+                return;
+              }
+              navigate(`/sales/${record.id}`);
+            },
             style: { cursor: 'pointer' },
             className: record.status === SaleStatus.RETURNED
               ? 'sale-row-returned'

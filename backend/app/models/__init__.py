@@ -16,3 +16,4 @@ from .codef_account import CodefAccount
 from .card_transaction import CardTransaction
 from .codef_api_log import CodefApiLog
 from .bank_transaction import BankTransaction
+from .return_item import ReturnItem

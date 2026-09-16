@@ -71,7 +71,9 @@ services:
       dockerfile: Dockerfile.dev
     container_name: shoepalace_dev_frontend
     ports:
-      - "3000:3000"
+      # Windows 예약 포트 범위(Hyper-V)와 충돌 방지를 위해 호스트 포트 3200 사용
+      # (주 접속 경로는 nginx: http://localhost)
+      - "3200:3000"
     volumes:
       - ./frontend:/app
       - /app/node_modules

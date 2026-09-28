@@ -26,6 +26,7 @@ from app.schemas.return_item import (
     ReturnBatchResult,
     ReturnBatchCreatedLine,
     ReturnRegistrationUpdate,
+    ReturnBulkDeleteRequest,
     ReturnShipRequest,
     ReturnItemResponse,
     ReturnItemList,
@@ -343,11 +344,52 @@ def delete_return_item(
     if item.status == ReturnItemStatus.shipped:
         raise HTTPException(status_code=400, detail="출고 처리된 건은 삭제할 수 없습니다")
 
-    # 재고 수량 동기화 (반품 재고 -1)
-    inventory = db.query(Inventory).filter(
-        Inventory.product_id == item.product_id,
-        Inventory.size == item.size
-    ).first()
+    _cancel_one(db, current_user, item, {})
+    db.commit()
+
+    return {"message": "반품 입고가 취소되었습니다"}
+
+
+@router.post("/bulk-delete")
+def bulk_delete_return_items(
+    data: ReturnBulkDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """반품 입고 일괄 취소 (보유 중 상태만 가능, 한 건이라도 불가하면 전체 취소하지 않음)"""
+    ids = list(dict.fromkeys(data.ids))  # 중복 제거 (순서 유지)
+    items = db.query(ReturnItem).filter(ReturnItem.id.in_(ids)).all()
+
+    if len(items) != len(ids):
+        raise HTTPException(
+            status_code=404,
+            detail=f"반품 건을 찾을 수 없습니다 ({len(ids) - len(items)}건). 새로고침 후 다시 시도해주세요",
+        )
+    shipped_count = sum(1 for i in items if i.status == ReturnItemStatus.shipped)
+    if shipped_count:
+        raise HTTPException(
+            status_code=400,
+            detail=f"출고 처리된 건은 삭제할 수 없습니다 ({shipped_count}건 포함)",
+        )
+
+    inventory_cache: dict = {}
+    for item in items:
+        _cancel_one(db, current_user, item, inventory_cache)
+    db.commit()
+
+    return {"message": f"반품 입고 {len(items)}건이 취소되었습니다", "deleted": len(items)}
+
+
+def _cancel_one(db: Session, current_user: User, item: ReturnItem, inventory_cache: dict) -> None:
+    """반품 1건 입고 취소 (반품 재고 -1, 조정 이력 기록, 삭제). commit 은 호출자가 수행."""
+    # 재고 수량 동기화 (반품 재고 -1) - 같은 요청 내 동일 재고 행은 캐시로 재사용
+    key = (str(item.product_id), item.size)
+    if key not in inventory_cache:
+        inventory_cache[key] = db.query(Inventory).filter(
+            Inventory.product_id == item.product_id,
+            Inventory.size == item.size
+        ).first()
+    inventory = inventory_cache[key]
     if inventory:
         inventory.defect_quantity = max(0, (inventory.defect_quantity or 0) - 1)
 
@@ -364,6 +406,3 @@ def delete_return_item(
     db.add(adjustment)
 
     db.delete(item)
-    db.commit()
-
-    return {"message": "반품 입고가 취소되었습니다"}

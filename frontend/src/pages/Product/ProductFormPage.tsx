@@ -241,7 +241,10 @@ const ProductFormPage: React.FC = () => {
 
       // 이미지 업로드 처리
       if (imageFile) {
-        const brandName = brands.find(b => b.id === values.brand_id)?.name || '';
+        // '기타'는 브랜드 목록에 없는 가상 선택지(value: 'etc')이므로 이름을 직접 지정
+        const brandName = values.brand_id === 'etc'
+          ? '기타'
+          : brands.find(b => String(b.id) === String(values.brand_id))?.name || '';
         if (!brandName) {
           message.error('브랜드 정보를 찾을 수 없습니다.');
           return;

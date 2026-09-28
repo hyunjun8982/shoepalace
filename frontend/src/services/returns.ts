@@ -124,6 +124,12 @@ export const returnService = {
     return response.data;
   },
 
+  // 반품 입고 일괄 취소 (보유 중 상태만, 한 건이라도 불가하면 전체 취소 안 됨)
+  async bulkDeleteReturnItems(ids: string[]): Promise<{ message: string; deleted: number }> {
+    const response = await api.post('/returns/bulk-delete', { ids });
+    return response.data;
+  },
+
   // 반품 입고 취소 (보유 중 상태만)
   async deleteReturnItem(returnId: string): Promise<{ message: string }> {
     const response = await api.delete(`/returns/${returnId}`);

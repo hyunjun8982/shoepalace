@@ -62,6 +62,11 @@ class ReturnRegistrationUpdate(BaseModel):
         return _clean_platforms(v)
 
 
+class ReturnBulkDeleteRequest(BaseModel):
+    """반품 입고 일괄 취소"""
+    ids: List[str] = Field(..., min_length=1, max_length=1000)
+
+
 class ReturnShipRequest(BaseModel):
     """반품 출고 처리 (판매 등록과 유사한 입력)"""
     sale_date: date  # 판매일

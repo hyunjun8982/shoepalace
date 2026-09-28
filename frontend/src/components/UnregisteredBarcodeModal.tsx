@@ -354,10 +354,14 @@ export const UnregisteredBarcodeModal: React.FC<UnregisteredBarcodeModalProps> =
 
       // 3. 이미지 업로드 및 브랜드명 추가
       let uploadedImageUrl: string | undefined;
-      const brandName = brands.find(b => b.id === values.brand_id)?.name || '';
+      // '기타'는 브랜드 목록에 없는 가상 선택지(value: 'etc')이므로 이름을 직접 지정
+      // (서버는 'etc' 를 '기타' 브랜드로 변환해 저장함)
+      const brandName = values.brand_id === 'etc'
+        ? '기타'
+        : brands.find(b => String(b.id) === String(values.brand_id))?.name || '';
 
-      // targetProduct에 brand_name 추가 (테이블에 브랜드 표시)
-      if (targetProduct && !targetProduct.brand_name) {
+      // targetProduct에 선택한 브랜드명 반영 (테이블에 브랜드 표시, 기존 상품의 브랜드 변경 포함)
+      if (targetProduct && brandName) {
         targetProduct.brand_name = brandName;
       }
 

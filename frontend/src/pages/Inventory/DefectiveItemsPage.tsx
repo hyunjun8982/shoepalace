@@ -66,9 +66,19 @@ interface PendingReturn {
   product_name: string;
   product_code: string;
   brand_name?: string;
+  image_url?: string;
 }
 
 const PLATFORM_OPTIONS = REGISTRATION_PLATFORM_PRESETS.map(p => ({ value: p, label: p }));
+
+// 상품 이미지 경로: 저장된 image_url 우선, 없으면 업로드 규칙(브랜드 공백→'-', 품번 '/'→'-')으로 추정
+const getProductImageSrc = (imageUrl?: string, brandName?: string, productCode?: string) => {
+  if (imageUrl) return getFileUrl(imageUrl);
+  if (brandName && productCode) {
+    return getFileUrl(`/uploads/products/${brandName.replace(/ /g, '-')}/${productCode.replace(/\//g, '-')}.png`);
+  }
+  return null;
+};
 
 const DefectiveItemsPage: React.FC = () => {
   const { message } = App.useApp();
@@ -82,6 +92,10 @@ const DefectiveItemsPage: React.FC = () => {
   // 기본값 '전체': 출고 처리 후에도 목록에 남아 출고 정보를 확인할 수 있도록
   const [statusFilter, setStatusFilter] = useState<'in_stock' | 'shipped' | 'all'>('all');
   const [registrationFilter, setRegistrationFilter] = useState<RegistrationStatus | undefined>(undefined);
+
+  // 반품 재고 선택 (일괄 삭제용, 보유 중 건만 선택 가능)
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   // 반품 입고 대기 목록 (여러 건 입력 후 한 번에 등록)
   const [pendingItems, setPendingItems] = useState<PendingReturn[]>([]);
@@ -160,6 +174,7 @@ const DefectiveItemsPage: React.FC = () => {
       });
       setReturnItems(response.items);
       setTotal(response.total);
+      setSelectedRowKeys([]); // 목록이 바뀌면 선택 해제 (보이지 않는 건이 삭제되는 것 방지)
     } catch (error: any) {
       console.error('Failed to fetch return items:', error);
       message.error('반품 목록 조회 실패: ' + (error.response?.data?.detail || error.message));
@@ -201,6 +216,7 @@ const DefectiveItemsPage: React.FC = () => {
     product_name: string;
     product_code: string;
     brand_name?: string;
+    image_url?: string;
   }) => {
     setPendingItems(prev => {
       const idx = prev.findIndex(p => p.product_id === info.product_id && p.size === info.size);
@@ -240,6 +256,7 @@ const DefectiveItemsPage: React.FC = () => {
       product_name: result.product_name,
       product_code: result.product_code,
       brand_name: result.brand_name,
+      image_url: result.image_url,
     });
   };
 
@@ -261,6 +278,7 @@ const DefectiveItemsPage: React.FC = () => {
       product_name: newProduct.product_name,
       product_code: newProduct.product_code,
       brand_name: newProduct.brand_name,
+      image_url: barcodeInfo.image_url || newProduct.image_url,
     });
   };
 
@@ -476,6 +494,21 @@ const DefectiveItemsPage: React.FC = () => {
       fetchReturnItems();
     } catch (error: any) {
       message.error(error.response?.data?.detail || '입고 취소에 실패했습니다.');
+    }
+  };
+
+  // ===== 반품 입고 일괄 취소 =====
+  const handleBulkDelete = async () => {
+    if (selectedRowKeys.length === 0) return;
+    try {
+      setBulkDeleting(true);
+      const result = await returnService.bulkDeleteReturnItems(selectedRowKeys as string[]);
+      message.success(result.message);
+      fetchReturnItems();
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '일괄 삭제에 실패했습니다.');
+    } finally {
+      setBulkDeleting(false);
     }
   };
 
@@ -696,6 +729,26 @@ const DefectiveItemsPage: React.FC = () => {
 
   // 반품 입고 대기 목록 컬럼
   const pendingColumns: ColumnsType<PendingReturn> = [
+    {
+      title: '이미지',
+      key: 'product_image',
+      width: 70,
+      align: 'center',
+      render: (_, record) => {
+        const src = getProductImageSrc(record.image_url, record.brand_name, record.product_code);
+        if (!src) return <span style={{ color: '#ccc' }}>-</span>;
+        return (
+          <Image
+            src={src}
+            width={48}
+            height={48}
+            style={{ objectFit: 'cover', borderRadius: 4, border: '1px solid #f0f0f0' }}
+            preview={{ mask: '보기' }}
+            fallback="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48'><rect width='48' height='48' fill='%23f5f5f5'/><text x='24' y='29' font-size='11' text-anchor='middle' fill='%23bbb'>없음</text></svg>"
+          />
+        );
+      },
+    },
     {
       title: '상품',
       key: 'product',
@@ -1130,6 +1183,26 @@ const DefectiveItemsPage: React.FC = () => {
                         options={REGISTRATION_STATUS_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
                       />
                     </Col>
+                    <Col flex="auto" style={{ textAlign: 'right' }}>
+                      <Popconfirm
+                        title="선택 삭제 (입고 취소)"
+                        description={`선택한 ${selectedRowKeys.length}건을 삭제하시겠습니까? (반품 재고 -${selectedRowKeys.length})`}
+                        onConfirm={handleBulkDelete}
+                        okText="삭제"
+                        cancelText="취소"
+                        okButtonProps={{ danger: true }}
+                        disabled={selectedRowKeys.length === 0}
+                      >
+                        <Button
+                          danger
+                          icon={<DeleteOutlined />}
+                          disabled={selectedRowKeys.length === 0}
+                          loading={bulkDeleting}
+                        >
+                          선택 삭제{selectedRowKeys.length > 0 ? ` (${selectedRowKeys.length}건)` : ''}
+                        </Button>
+                      </Popconfirm>
+                    </Col>
                   </Row>
 
                   {/* 테이블 (건별 개별 행) */}
@@ -1138,6 +1211,12 @@ const DefectiveItemsPage: React.FC = () => {
                     dataSource={returnItems}
                     loading={loading}
                     rowKey="id"
+                    rowSelection={{
+                      selectedRowKeys,
+                      onChange: setSelectedRowKeys,
+                      // 출고 완료 건은 삭제 불가 → 선택 비활성화
+                      getCheckboxProps: (record) => ({ disabled: record.status === 'shipped' }),
+                    }}
                     pagination={{
                       current: pagination.current,
                       pageSize: pagination.pageSize,

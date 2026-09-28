@@ -1,5 +1,5 @@
 from sqlalchemy import Column, String, Text, Integer, ForeignKey, Enum, DateTime, Date, Numeric
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 import enum
 from .base import BaseModel
@@ -8,6 +8,10 @@ from .base import BaseModel
 class ReturnItemStatus(str, enum.Enum):
     in_stock = "in_stock"  # 반품 입고 (보유 중)
     shipped = "shipped"    # 출고 완료
+
+
+# 판매처(크림/포이즌 등) 등록 여부: 등록완료 / 미등록 / 보류
+REGISTRATION_STATUSES = ("registered", "unregistered", "hold")
 
 
 class ReturnItem(BaseModel):
@@ -21,6 +25,10 @@ class ReturnItem(BaseModel):
     image_url = Column(String(500), nullable=True)  # 불량 사진
     status = Column(Enum(ReturnItemStatus), default=ReturnItemStatus.in_stock, nullable=False, index=True)
     received_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)  # 입고 처리자
+
+    # 판매처 등록 여부 + 등록처 목록 (예: ["크림", "포이즌", "번개장터"])
+    registration_status = Column(String(20), default="unregistered", nullable=False, index=True)
+    registration_platforms = Column(JSONB, nullable=True)
 
     # 출고(판매) 정보
     sale_date = Column(Date, nullable=True)  # 판매일

@@ -19,6 +19,7 @@ import {
   Form,
   Tabs,
   Upload,
+  Radio,
 } from 'antd';
 import {
   CheckCircleOutlined,
@@ -26,12 +27,20 @@ import {
   ExportOutlined,
   DeleteOutlined,
   UploadOutlined,
+  EditOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { InventoryAdjustment } from '../../types/inventory';
 import { inventoryService } from '../../services/inventory';
-import { returnService, ReturnItem } from '../../services/returns';
+import {
+  returnService,
+  ReturnItem,
+  RegistrationStatus,
+  REGISTRATION_STATUS_OPTIONS,
+  REGISTRATION_PLATFORM_PRESETS,
+} from '../../services/returns';
+import { UnregisteredBarcodeModal } from '../../components/UnregisteredBarcodeModal';
 import { useAuth } from '../../contexts/AuthContext';
 import { brandService, Brand } from '../../services/brand';
 import { getBrandIconUrl } from '../../utils/imageUtils';
@@ -42,6 +51,24 @@ import { productService } from '../../services/product';
 import { Product } from '../../types/product';
 
 const { Search } = Input;
+
+// 반품 입고 대기 목록 1줄 (같은 상품+사이즈는 수량으로 합산)
+interface PendingReturn {
+  key: string;
+  product_id: string;
+  size: string;
+  quantity: number;
+  reason: string;
+  registration_status: RegistrationStatus;
+  registration_platforms: string[];
+  imageFile?: File;
+  imagePreview?: string;
+  product_name: string;
+  product_code: string;
+  brand_name?: string;
+}
+
+const PLATFORM_OPTIONS = REGISTRATION_PLATFORM_PRESETS.map(p => ({ value: p, label: p }));
 
 const DefectiveItemsPage: React.FC = () => {
   const { message } = App.useApp();
@@ -54,14 +81,21 @@ const DefectiveItemsPage: React.FC = () => {
   const [searchText, setSearchText] = useState('');
   // 기본값 '전체': 출고 처리 후에도 목록에 남아 출고 정보를 확인할 수 있도록
   const [statusFilter, setStatusFilter] = useState<'in_stock' | 'shipped' | 'all'>('all');
+  const [registrationFilter, setRegistrationFilter] = useState<RegistrationStatus | undefined>(undefined);
 
-  // 반품 입고 (바코드 스캔) 관련 상태
-  const [returnInModalVisible, setReturnInModalVisible] = useState(false);
-  const [scannedResult, setScannedResult] = useState<BarcodeSearchResult | null>(null);
-  const [returnInReason, setReturnInReason] = useState('');
-  const [returnInLoading, setReturnInLoading] = useState(false);
-  const [returnImageFile, setReturnImageFile] = useState<File | null>(null);
-  const [returnImagePreview, setReturnImagePreview] = useState<string>('');
+  // 반품 입고 대기 목록 (여러 건 입력 후 한 번에 등록)
+  const [pendingItems, setPendingItems] = useState<PendingReturn[]>([]);
+  const [batchSubmitting, setBatchSubmitting] = useState(false);
+
+  // 미등록 바코드 → 상품 등록 팝업
+  const [unregisteredBarcodeModalVisible, setUnregisteredBarcodeModalVisible] = useState(false);
+  const [scannedBarcode, setScannedBarcode] = useState('');
+
+  // 등록여부 수정 모달
+  const [regEditRecord, setRegEditRecord] = useState<ReturnItem | null>(null);
+  const [regEditStatus, setRegEditStatus] = useState<RegistrationStatus>('unregistered');
+  const [regEditPlatforms, setRegEditPlatforms] = useState<string[]>([]);
+  const [regEditSaving, setRegEditSaving] = useState(false);
 
   // 반품 출고 처리 관련 상태
   const [returnOutRecord, setReturnOutRecord] = useState<ReturnItem | null>(null);
@@ -112,7 +146,7 @@ const DefectiveItemsPage: React.FC = () => {
 
   useEffect(() => {
     fetchReturnItems();
-  }, [pagination.current, pagination.pageSize, searchText, statusFilter]);
+  }, [pagination.current, pagination.pageSize, searchText, statusFilter, registrationFilter]);
 
   const fetchReturnItems = async () => {
     try {
@@ -121,6 +155,7 @@ const DefectiveItemsPage: React.FC = () => {
         skip: (pagination.current - 1) * pagination.pageSize,
         limit: pagination.pageSize,
         status: statusFilter,
+        registration_status: registrationFilter,
         search: searchText || undefined,
       });
       setReturnItems(response.items);
@@ -158,21 +193,75 @@ const DefectiveItemsPage: React.FC = () => {
     }
   }, [activeTab, historyPagination.current, historyPagination.pageSize]);
 
-  // ===== 반품 입고 =====
-  const handleBarcodeFound = (result: BarcodeSearchResult) => {
-    if (!result.product_id || result.product_id === '') {
-      message.error('등록되지 않은 바코드입니다. 상품 등록 후 반품 입고가 가능합니다.');
-      return;
-    }
-    setScannedResult(result);
-    setReturnInReason('');
-    setReturnImageFile(null);
-    setReturnImagePreview('');
-    setReturnInModalVisible(true);
+  // ===== 반품 입고 (대기 목록) =====
+  // 같은 상품+사이즈는 수량 증가, 없으면 새 줄 추가
+  const addPendingItem = (info: {
+    product_id: string;
+    size: string;
+    product_name: string;
+    product_code: string;
+    brand_name?: string;
+  }) => {
+    setPendingItems(prev => {
+      const idx = prev.findIndex(p => p.product_id === info.product_id && p.size === info.size);
+      if (idx >= 0) {
+        return prev.map((p, i) => (i === idx ? { ...p, quantity: p.quantity + 1 } : p));
+      }
+      return [...prev, {
+        ...info,
+        key: `${info.product_id}_${info.size}_${Date.now()}`,
+        quantity: 1,
+        reason: '',
+        registration_status: 'unregistered',
+        registration_platforms: [],
+      }];
+    });
+    message.success(`${info.product_name} (${info.size}) +1 추가됨`);
   };
 
+  const updatePendingItem = (key: string, patch: Partial<PendingReturn>) => {
+    setPendingItems(prev => prev.map(p => (p.key === key ? { ...p, ...patch } : p)));
+  };
+
+  const removePendingItem = (key: string) => {
+    setPendingItems(prev => prev.filter(p => p.key !== key));
+  };
+
+  const handleBarcodeFound = (result: BarcodeSearchResult) => {
+    // 포이즌 정보만 있는 경우 (product_id 없음) → 상품 등록 팝업
+    if (!result.product_id || result.product_id === '') {
+      setScannedBarcode(result.barcode_value);
+      setUnregisteredBarcodeModalVisible(true);
+      return;
+    }
+    addPendingItem({
+      product_id: result.product_id,
+      size: result.size,
+      product_name: result.product_name,
+      product_code: result.product_code,
+      brand_name: result.brand_name,
+    });
+  };
+
+  // 미등록 바코드 → 상품 등록 팝업
   const handleBarcodeNotFound = (barcode: string) => {
-    message.error(`등록되지 않은 바코드입니다: ${barcode}`);
+    setScannedBarcode(barcode);
+    setUnregisteredBarcodeModalVisible(true);
+  };
+
+  // 상품 등록 팝업에서 등록 완료 → 대기 목록에 바로 추가
+  const handleNewProductRegistered = (
+    newProduct: Product,
+    barcodeInfo: { barcode_value: string; size: string; image_url?: string },
+  ) => {
+    loadProducts();
+    addPendingItem({
+      product_id: newProduct.id,
+      size: barcodeInfo.size,
+      product_name: newProduct.product_name,
+      product_code: newProduct.product_code,
+      brand_name: newProduct.brand_name,
+    });
   };
 
   // 상품 검색: 상품 선택 시 해당 상품의 바코드 목록 로드
@@ -198,7 +287,7 @@ const DefectiveItemsPage: React.FC = () => {
     }
   };
 
-  // 상품 검색으로 추가: 선택한 바코드를 스캔한 것과 동일하게 처리 (입고 확인 모달)
+  // 상품 검색으로 추가: 선택한 바코드를 스캔한 것과 동일하게 처리 (대기 목록에 추가)
   const handleSearchAddProduct = async () => {
     if (!searchProductId) {
       message.warning('상품을 선택해주세요');
@@ -218,8 +307,8 @@ const DefectiveItemsPage: React.FC = () => {
     }
   };
 
-  // 이미지 파일 검증 및 미리보기 설정
-  const validateAndSetImage = (file: File) => {
+  // 대기 목록 줄에 불량 사진 지정 (검증 + 미리보기)
+  const setPendingImage = (key: string, file: File) => {
     if (!file.type.startsWith('image/')) {
       message.error('이미지 파일만 업로드 가능합니다');
       return false;
@@ -228,22 +317,24 @@ const DefectiveItemsPage: React.FC = () => {
       message.error('이미지는 10MB 이하여야 합니다');
       return false;
     }
-    setReturnImageFile(file);
     const reader = new FileReader();
-    reader.onload = (e) => setReturnImagePreview(e.target?.result as string);
+    reader.onload = (e) => updatePendingItem(key, {
+      imageFile: file,
+      imagePreview: e.target?.result as string,
+    });
     reader.readAsDataURL(file);
     return false; // 자동 업로드 방지
   };
 
-  // 클립보드 붙여넣기 지원
-  const handleImagePaste = (e: React.ClipboardEvent) => {
+  // 반품 사유 입력칸에서 이미지 붙여넣기(Ctrl+V) 시 해당 줄의 불량 사진으로 지정
+  const handlePendingPaste = (key: string, e: React.ClipboardEvent) => {
     const items = e.clipboardData.items;
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       if (item.kind === 'file' && item.type.startsWith('image/')) {
         const file = item.getAsFile();
         if (file) {
-          validateAndSetImage(file);
+          setPendingImage(key, file);
           e.preventDefault();
         }
         break;
@@ -251,38 +342,93 @@ const DefectiveItemsPage: React.FC = () => {
     }
   };
 
-  // 반품 입고 확정 (건별 개별 등록, 구매금액 0원)
-  const handleReturnInConfirm = async () => {
-    if (!scannedResult) return;
+  // 일괄 반품 입고 (수량만큼 건별 개별 등록, 구매금액 0원)
+  const handleBatchSubmit = async () => {
+    if (pendingItems.length === 0) return;
     try {
-      setReturnInLoading(true);
-      const created = await returnService.createReturnItem(
-        scannedResult.product_id,
-        scannedResult.size,
-        returnInReason || undefined,
-      );
+      setBatchSubmitting(true);
+      const result = await returnService.createReturnItemsBatch(pendingItems.map(p => ({
+        product_id: p.product_id,
+        size: p.size,
+        quantity: p.quantity,
+        reason: p.reason.trim() || undefined,
+        registration_status: p.registration_status,
+        registration_platforms: p.registration_status === 'registered' ? p.registration_platforms : undefined,
+      })));
 
-      // 불량 사진 업로드 (선택)
-      if (returnImageFile) {
-        try {
-          await returnService.uploadReturnImage(created.id, returnImageFile);
-        } catch (error) {
-          console.error('Failed to upload return image:', error);
-          message.warning('사진 업로드에 실패했지만 반품 입고는 완료되었습니다.');
+      // 불량 사진 업로드 (선택) - 해당 줄로 생성된 모든 건에 동일 사진 적용
+      let imageFailed = 0;
+      for (let i = 0; i < pendingItems.length; i++) {
+        const file = pendingItems[i].imageFile;
+        if (!file) continue;
+        for (const id of result.lines[i]?.ids || []) {
+          try {
+            await returnService.uploadReturnImage(id, file);
+          } catch (error) {
+            console.error('Failed to upload return image:', error);
+            imageFailed++;
+          }
         }
       }
 
-      message.success(`${scannedResult.product_name} (${scannedResult.size}) 반품 입고 완료 - 구매금액 0원`);
-      setReturnInModalVisible(false);
-      setScannedResult(null);
-      setReturnImageFile(null);
-      setReturnImagePreview('');
+      message.success(`반품 입고 완료: 총 ${result.total_created}건 (구매금액 0원)`);
+      if (imageFailed > 0) {
+        message.warning(`사진 업로드 ${imageFailed}건이 실패했지만 반품 입고는 완료되었습니다.`);
+      }
+      setPendingItems([]);
       fetchReturnItems();
     } catch (error: any) {
       message.error(error.response?.data?.detail || '반품 입고에 실패했습니다.');
     } finally {
-      setReturnInLoading(false);
+      setBatchSubmitting(false);
     }
+  };
+
+  // ===== 등록여부 수정 =====
+  const handleOpenRegEdit = (record: ReturnItem) => {
+    setRegEditRecord(record);
+    setRegEditStatus(record.registration_status || 'unregistered');
+    setRegEditPlatforms(record.registration_platforms || []);
+  };
+
+  const handleRegEditSave = async () => {
+    if (!regEditRecord) return;
+    try {
+      setRegEditSaving(true);
+      await returnService.updateRegistration(
+        regEditRecord.id,
+        regEditStatus,
+        regEditStatus === 'registered' ? regEditPlatforms : undefined,
+      );
+      message.success('등록여부가 수정되었습니다.');
+      setRegEditRecord(null);
+      fetchReturnItems();
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '등록여부 수정에 실패했습니다.');
+    } finally {
+      setRegEditSaving(false);
+    }
+  };
+
+  // 등록여부 + 등록처 표시 (반품 재고 테이블)
+  const renderRegistration = (record: ReturnItem) => {
+    const opt = REGISTRATION_STATUS_OPTIONS.find(o => o.value === record.registration_status)
+      || REGISTRATION_STATUS_OPTIONS[1];
+    const platforms = record.registration_platforms || [];
+    return (
+      <Tooltip title="클릭하여 등록여부 수정">
+        <div style={{ cursor: 'pointer' }} onClick={() => handleOpenRegEdit(record)}>
+          <Tag color={opt.color} style={{ marginRight: 0 }}>
+            {opt.label} <EditOutlined style={{ fontSize: 10 }} />
+          </Tag>
+          {platforms.length > 0 && (
+            <div style={{ marginTop: 4, fontSize: 11, color: '#595959' }}>
+              {platforms.join(', ')}
+            </div>
+          )}
+        </div>
+      </Tooltip>
+    );
   };
 
   // ===== 반품 출고 처리 =====
@@ -458,6 +604,13 @@ const DefectiveItemsPage: React.FC = () => {
       },
     },
     {
+      title: '등록여부',
+      key: 'registration',
+      width: 110,
+      align: 'center',
+      render: (_, record) => renderRegistration(record),
+    },
+    {
       title: '입고일',
       dataIndex: 'created_at',
       key: 'created_at',
@@ -541,6 +694,149 @@ const DefectiveItemsPage: React.FC = () => {
     },
   ];
 
+  // 반품 입고 대기 목록 컬럼
+  const pendingColumns: ColumnsType<PendingReturn> = [
+    {
+      title: '상품',
+      key: 'product',
+      width: 220,
+      render: (_, record) => (
+        <div>
+          <div style={{ fontWeight: 500 }}>{record.product_name}</div>
+          <div style={{ fontSize: 12, color: '#999' }}>
+            [{record.brand_name || '-'}] {record.product_code}
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: '사이즈',
+      dataIndex: 'size',
+      key: 'size',
+      width: 70,
+      align: 'center',
+      render: (size: string) => <Tag>{size || 'FREE'}</Tag>,
+    },
+    {
+      title: '수량',
+      dataIndex: 'quantity',
+      key: 'quantity',
+      width: 80,
+      render: (quantity: number, record) => (
+        <InputNumber
+          min={1}
+          max={100}
+          value={quantity}
+          onChange={(value) => updatePendingItem(record.key, { quantity: value || 1 })}
+          size="small"
+          style={{ width: '100%' }}
+        />
+      ),
+    },
+    {
+      title: '반품 사유',
+      dataIndex: 'reason',
+      key: 'reason',
+      render: (reason: string, record) => (
+        <Input
+          size="small"
+          placeholder="예: 크림 검수 탈락 - 박음질 불량"
+          value={reason}
+          onChange={(e) => updatePendingItem(record.key, { reason: e.target.value })}
+          onPaste={(e) => handlePendingPaste(record.key, e)}
+        />
+      ),
+    },
+    {
+      title: '등록여부',
+      dataIndex: 'registration_status',
+      key: 'registration_status',
+      width: 110,
+      render: (status: RegistrationStatus, record) => (
+        <Select
+          size="small"
+          value={status}
+          onChange={(value) => updatePendingItem(record.key, {
+            registration_status: value,
+            registration_platforms: value === 'registered' ? record.registration_platforms : [],
+          })}
+          options={REGISTRATION_STATUS_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+          style={{ width: '100%' }}
+        />
+      ),
+    },
+    {
+      title: '등록처',
+      dataIndex: 'registration_platforms',
+      key: 'registration_platforms',
+      width: 200,
+      render: (platforms: string[], record) => (
+        <Select
+          size="small"
+          mode="tags"
+          placeholder={record.registration_status === 'registered' ? '크림/포이즌 또는 직접 입력' : '등록완료 시 입력'}
+          value={platforms}
+          onChange={(value) => updatePendingItem(record.key, { registration_platforms: value })}
+          options={PLATFORM_OPTIONS}
+          tokenSeparators={[',']}
+          disabled={record.registration_status !== 'registered'}
+          style={{ width: '100%' }}
+        />
+      ),
+    },
+    {
+      title: '불량 사진',
+      key: 'image',
+      width: 110,
+      align: 'center',
+      render: (_, record) => record.imagePreview ? (
+        <Space size={4}>
+          <Image
+            src={record.imagePreview}
+            width={36}
+            height={36}
+            style={{ objectFit: 'cover', borderRadius: 4, border: '1px solid #d9d9d9' }}
+            preview={{ mask: '보기' }}
+          />
+          <Button
+            size="small"
+            type="text"
+            danger
+            icon={<DeleteOutlined />}
+            onClick={() => updatePendingItem(record.key, { imageFile: undefined, imagePreview: undefined })}
+          />
+        </Space>
+      ) : (
+        <Tooltip title="반품 사유 칸에서 Ctrl+V 로 붙여넣기도 가능">
+          <Upload
+            maxCount={1}
+            beforeUpload={(file) => setPendingImage(record.key, file)}
+            showUploadList={false}
+            accept="image/*"
+          >
+            <Button size="small" icon={<UploadOutlined />}>사진</Button>
+          </Upload>
+        </Tooltip>
+      ),
+    },
+    {
+      title: '',
+      key: 'remove',
+      width: 50,
+      align: 'center',
+      render: (_, record) => (
+        <Button
+          size="small"
+          danger
+          icon={<DeleteOutlined />}
+          onClick={() => removePendingItem(record.key)}
+        />
+      ),
+    },
+  ];
+
+  const pendingTotalQty = pendingItems.reduce((sum, p) => sum + p.quantity, 0);
+
   // 처리 이력 컬럼
   const historyColumns: ColumnsType<InventoryAdjustment> = [
     {
@@ -621,8 +917,8 @@ const DefectiveItemsPage: React.FC = () => {
             }}
           >
             <div style={{ marginBottom: 8, fontSize: 12, color: '#999' }}>
-              검수 탈락 등으로 반품된 상품의 바코드를 스캔하면 <strong>구매금액 0원</strong>으로 반품 재고에 입고됩니다.
-              건별로 개별 등록되어 사유·사진을 각각 관리할 수 있습니다.
+              스캔한 상품은 아래 <strong>반품 입고 대기 목록</strong>에 추가되며, 수량·사유·등록여부를 입력한 뒤
+              한 번에 <strong>구매금액 0원</strong>으로 입고합니다. 미등록 바코드는 상품 등록 팝업이 열립니다.
             </div>
             <BarcodeInput
               onBarcodeFound={handleBarcodeFound}
@@ -708,6 +1004,62 @@ const DefectiveItemsPage: React.FC = () => {
         </Col>
       </Row>
 
+      {/* 반품 입고 대기 목록 (여러 건 입력 후 한 번에 등록) */}
+      <Card
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>반품 입고 대기 목록</span>
+            {pendingItems.length > 0 && (
+              <Tag color="blue">{pendingItems.length}개 품목 · 총 {pendingTotalQty}개</Tag>
+            )}
+          </div>
+        }
+        size="small"
+        extra={
+          <Space>
+            <Popconfirm
+              title="대기 목록 비우기"
+              description="입력한 대기 목록을 모두 지우시겠습니까?"
+              onConfirm={() => setPendingItems([])}
+              okText="비우기"
+              cancelText="취소"
+              disabled={pendingItems.length === 0}
+            >
+              <Button disabled={pendingItems.length === 0 || batchSubmitting}>비우기</Button>
+            </Popconfirm>
+            <Button
+              type="primary"
+              icon={<CheckCircleOutlined />}
+              onClick={handleBatchSubmit}
+              loading={batchSubmitting}
+              disabled={pendingItems.length === 0}
+              style={pendingItems.length > 0 ? { backgroundColor: '#1d39c4', borderColor: '#1d39c4' } : undefined}
+            >
+              일괄 반품 입고{pendingTotalQty > 0 ? ` (${pendingTotalQty}건, 0원)` : ''}
+            </Button>
+          </Space>
+        }
+        style={{
+          marginBottom: 16,
+          borderRadius: '12px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
+        }}
+      >
+        <Table
+          columns={pendingColumns}
+          dataSource={pendingItems}
+          rowKey="key"
+          size="small"
+          pagination={false}
+          locale={{ emptyText: '바코드를 스캔하거나 상품 검색으로 반품 상품을 추가하세요' }}
+        />
+        {pendingItems.some(p => p.quantity > 1 && p.imageFile) && (
+          <div style={{ marginTop: 8, fontSize: 12, color: '#999' }}>
+            * 수량이 2개 이상인 줄의 불량 사진은 해당 줄로 생성되는 모든 건에 동일하게 적용됩니다.
+          </div>
+        )}
+      </Card>
+
       <Card
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -765,6 +1117,19 @@ const DefectiveItemsPage: React.FC = () => {
                         ]}
                       />
                     </Col>
+                    <Col span={4}>
+                      <Select
+                        style={{ width: '100%' }}
+                        allowClear
+                        placeholder="등록여부 전체"
+                        value={registrationFilter}
+                        onChange={(value) => {
+                          setRegistrationFilter(value);
+                          setPagination({ ...pagination, current: 1 });
+                        }}
+                        options={REGISTRATION_STATUS_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+                      />
+                    </Col>
                   </Row>
 
                   {/* 테이블 (건별 개별 행) */}
@@ -814,24 +1179,27 @@ const DefectiveItemsPage: React.FC = () => {
         />
       </Card>
 
-      {/* 반품 입고 확인 모달 */}
+      {/* 미등록 바코드 → 상품 등록 팝업 (구매 등록과 동일) */}
+      <UnregisteredBarcodeModal
+        barcode={scannedBarcode}
+        visible={unregisteredBarcodeModalVisible}
+        onSuccess={handleNewProductRegistered}
+        onCancel={() => setUnregisteredBarcodeModalVisible(false)}
+      />
+
+      {/* 등록여부 수정 모달 */}
       <Modal
-        title="반품 입고 확인"
-        open={returnInModalVisible}
-        onOk={handleReturnInConfirm}
-        onCancel={() => {
-          setReturnInModalVisible(false);
-          setScannedResult(null);
-          setReturnImageFile(null);
-          setReturnImagePreview('');
-        }}
-        okText="반품 입고 (0원)"
+        title="등록여부 수정"
+        open={!!regEditRecord}
+        onOk={handleRegEditSave}
+        onCancel={() => setRegEditRecord(null)}
+        okText="저장"
         cancelText="취소"
-        confirmLoading={returnInLoading}
+        confirmLoading={regEditSaving}
         okButtonProps={{ style: { backgroundColor: '#1d39c4', borderColor: '#1d39c4' } }}
       >
-        {scannedResult && (
-          <div onPaste={handleImagePaste}>
+        {regEditRecord && (
+          <div>
             <div style={{
               padding: '12px',
               backgroundColor: '#f5f5f5',
@@ -839,62 +1207,35 @@ const DefectiveItemsPage: React.FC = () => {
               marginBottom: 16,
             }}>
               <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>
-                {scannedResult.product_name}
+                {regEditRecord.product_name}
               </div>
               <div style={{ fontSize: 13, color: '#666' }}>
-                [{scannedResult.brand_name || '-'}] {scannedResult.product_code} · 사이즈 {scannedResult.size}
+                [{regEditRecord.brand_name || '-'}] {regEditRecord.sku_code || '-'} · 사이즈 {regEditRecord.size}
               </div>
             </div>
-            <div style={{ marginBottom: 12, fontSize: 13 }}>
-              이 상품을 <strong>구매금액 0원</strong>으로 반품 재고에 입고합니다. (건별 개별 등록)
-            </div>
-            <Input.TextArea
-              rows={2}
-              placeholder="반품 사유 (선택, 예: 크림 검수 탈락 - 박음질 불량)"
-              value={returnInReason}
-              onChange={(e) => setReturnInReason(e.target.value)}
-              style={{ marginBottom: 12 }}
+            <div style={{ marginBottom: 6, fontWeight: 500 }}>등록여부</div>
+            <Radio.Group
+              value={regEditStatus}
+              onChange={(e) => {
+                setRegEditStatus(e.target.value);
+                if (e.target.value !== 'registered') setRegEditPlatforms([]);
+              }}
+              optionType="button"
+              buttonStyle="solid"
+              options={REGISTRATION_STATUS_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+              style={{ marginBottom: 16 }}
             />
-            {/* 불량 사진 업로드 */}
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              {returnImagePreview ? (
-                <>
-                  <Image
-                    src={returnImagePreview}
-                    alt="불량 사진 미리보기"
-                    width={80}
-                    height={80}
-                    style={{ objectFit: 'cover', borderRadius: 4, border: '1px solid #d9d9d9' }}
-                    preview={{ mask: '보기' }}
-                  />
-                  <Button
-                    danger
-                    size="small"
-                    icon={<DeleteOutlined />}
-                    onClick={() => {
-                      setReturnImageFile(null);
-                      setReturnImagePreview('');
-                    }}
-                  >
-                    사진 삭제
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Upload
-                    maxCount={1}
-                    beforeUpload={validateAndSetImage}
-                    showUploadList={false}
-                    accept="image/*"
-                  >
-                    <Button icon={<UploadOutlined />}>불량 사진 업로드</Button>
-                  </Upload>
-                  <span style={{ fontSize: 12, color: '#999' }}>
-                    또는 이미지 복사 후 <strong style={{ color: '#1890ff' }}>Ctrl+V</strong>
-                  </span>
-                </>
-              )}
-            </div>
+            <div style={{ marginBottom: 6, fontWeight: 500 }}>등록처</div>
+            <Select
+              mode="tags"
+              placeholder={regEditStatus === 'registered' ? '크림/포이즌 선택 또는 직접 입력 후 Enter' : '등록완료 선택 시 입력할 수 있습니다'}
+              value={regEditPlatforms}
+              onChange={setRegEditPlatforms}
+              options={PLATFORM_OPTIONS}
+              tokenSeparators={[',']}
+              disabled={regEditStatus !== 'registered'}
+              style={{ width: '100%' }}
+            />
           </div>
         )}
       </Modal>

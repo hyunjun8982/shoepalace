@@ -1,5 +1,17 @@
 import api from './api';
 
+// 판매처 등록 여부: 등록완료 / 미등록 / 보류
+export type RegistrationStatus = 'registered' | 'unregistered' | 'hold';
+
+export const REGISTRATION_STATUS_OPTIONS: { value: RegistrationStatus; label: string; color: string }[] = [
+  { value: 'registered', label: '등록완료', color: 'green' },
+  { value: 'unregistered', label: '미등록', color: 'default' },
+  { value: 'hold', label: '보류', color: 'orange' },
+];
+
+// 등록처 기본 선택지 (그 외는 직접 입력)
+export const REGISTRATION_PLATFORM_PRESETS = ['크림', '포이즌'];
+
 export interface ReturnItem {
   id: string;
   product_id: string;
@@ -8,6 +20,8 @@ export interface ReturnItem {
   reason?: string;
   image_url?: string;
   status: 'in_stock' | 'shipped';
+  registration_status: RegistrationStatus;
+  registration_platforms?: string[] | null;
   created_at: string;
   product_name?: string;
   brand_name?: string;
@@ -38,12 +52,27 @@ export interface ReturnShipData {
   notes?: string;
 }
 
+export interface ReturnBatchLine {
+  product_id: string;
+  size: string;
+  quantity: number;
+  reason?: string;
+  registration_status: RegistrationStatus;
+  registration_platforms?: string[];
+}
+
+export interface ReturnBatchResult {
+  total_created: number;
+  lines: { ids: string[] }[]; // 입력 줄 순서대로 생성된 반품 건 ID
+}
+
 export const returnService = {
   // 반품 건 목록 조회 (건별 개별)
   async getReturnItems(params?: {
     skip?: number;
     limit?: number;
     status?: 'in_stock' | 'shipped' | 'all';
+    registration_status?: RegistrationStatus;
     search?: string;
   }): Promise<ReturnItemList> {
     const response = await api.get('/returns/', { params });
@@ -56,6 +85,25 @@ export const returnService = {
       product_id: productId,
       size,
       reason,
+    });
+    return response.data;
+  },
+
+  // 일괄 반품 입고 (수량만큼 개별 건 생성)
+  async createReturnItemsBatch(items: ReturnBatchLine[]): Promise<ReturnBatchResult> {
+    const response = await api.post('/returns/batch', { items });
+    return response.data;
+  },
+
+  // 판매처 등록 여부 수정
+  async updateRegistration(
+    returnId: string,
+    registrationStatus: RegistrationStatus,
+    registrationPlatforms?: string[],
+  ): Promise<ReturnItem> {
+    const response = await api.patch(`/returns/${returnId}/registration`, {
+      registration_status: registrationStatus,
+      registration_platforms: registrationPlatforms,
     });
     return response.data;
   },

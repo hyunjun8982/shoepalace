@@ -254,6 +254,17 @@ def run_migrations() -> None:
             conn.rollback()
             print(f"Migration skipped or failed: {e}")
 
+        # return_items 테이블에 판매처 등록 여부 컬럼 추가 (등록완료/미등록/보류 + 등록처)
+        try:
+            conn.execute(text("ALTER TABLE return_items ADD COLUMN IF NOT EXISTS registration_status VARCHAR(20) NOT NULL DEFAULT 'unregistered'"))
+            conn.execute(text("ALTER TABLE return_items ADD COLUMN IF NOT EXISTS registration_platforms JSONB"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_return_items_registration_status ON return_items(registration_status)"))
+            conn.commit()
+            print("Migration: return_items.registration_status/registration_platforms columns added")
+        except Exception as e:
+            conn.rollback()
+            print(f"Migration skipped or failed: {e}")
+
         # products 테이블에서 category 컬럼 제거
         try:
             conn.execute(text("ALTER TABLE products DROP COLUMN IF EXISTS category"))

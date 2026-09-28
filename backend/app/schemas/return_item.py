@@ -1,7 +1,21 @@
-from typing import Optional, List
+from typing import Optional, List, Literal
 from datetime import datetime, date
 from uuid import UUID
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
+
+RegistrationStatus = Literal["registered", "unregistered", "hold"]
+
+
+def _clean_platforms(v):
+    """등록처 목록 정리 (공백 제거, 빈 값/중복 제거)"""
+    if not v:
+        return None
+    cleaned = []
+    for p in v:
+        p = (p or "").strip()
+        if p and p not in cleaned:
+            cleaned.append(p)
+    return cleaned or None
 
 
 class ReturnItemCreate(BaseModel):
@@ -9,6 +23,43 @@ class ReturnItemCreate(BaseModel):
     product_id: str
     size: str
     reason: Optional[str] = None
+    registration_status: RegistrationStatus = "unregistered"
+    registration_platforms: Optional[List[str]] = None
+
+    @field_validator('registration_platforms', mode='before')
+    @classmethod
+    def clean_platforms(cls, v):
+        return _clean_platforms(v)
+
+
+class ReturnBatchItem(ReturnItemCreate):
+    """일괄 반품 입고 1줄 (수량만큼 개별 건으로 생성)"""
+    quantity: int = Field(1, ge=1, le=100)
+
+
+class ReturnBatchCreate(BaseModel):
+    items: List[ReturnBatchItem] = Field(..., min_length=1)
+
+
+class ReturnBatchCreatedLine(BaseModel):
+    """입력 줄별로 생성된 반품 건 ID 목록 (사진 업로드용)"""
+    ids: List[str]
+
+
+class ReturnBatchResult(BaseModel):
+    total_created: int
+    lines: List[ReturnBatchCreatedLine]
+
+
+class ReturnRegistrationUpdate(BaseModel):
+    """판매처 등록 여부 수정"""
+    registration_status: RegistrationStatus
+    registration_platforms: Optional[List[str]] = None
+
+    @field_validator('registration_platforms', mode='before')
+    @classmethod
+    def clean_platforms(cls, v):
+        return _clean_platforms(v)
 
 
 class ReturnShipRequest(BaseModel):
@@ -29,6 +80,8 @@ class ReturnItemResponse(BaseModel):
     reason: Optional[str] = None
     image_url: Optional[str] = None
     status: str
+    registration_status: str = "unregistered"
+    registration_platforms: Optional[List[str]] = None
     created_at: datetime
 
     # 상품 정보

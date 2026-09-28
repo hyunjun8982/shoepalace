@@ -22,12 +22,86 @@ from app.models.inventory_adjustment import InventoryAdjustment, AdjustmentType
 from app.models.return_item import ReturnItem, ReturnItemStatus
 from app.schemas.return_item import (
     ReturnItemCreate,
+    ReturnBatchCreate,
+    ReturnBatchResult,
+    ReturnBatchCreatedLine,
+    ReturnRegistrationUpdate,
     ReturnShipRequest,
     ReturnItemResponse,
     ReturnItemList,
 )
 
 router = APIRouter()
+
+
+def _normalize_registration(status: str, platforms):
+    """등록처는 '등록완료'일 때만 의미가 있으므로 그 외 상태에서는 비운다"""
+    return status, (platforms if status == "registered" else None)
+
+
+def _receive_one(
+    db: Session,
+    current_user: User,
+    product_id: str,
+    size: str,
+    reason: Optional[str],
+    registration_status: str,
+    registration_platforms,
+    inventory_cache: dict,
+) -> ReturnItem:
+    """반품 1건 입고 처리 (반품 재고 +1, 조정 이력 기록). commit 은 호출자가 수행."""
+    registration_status, registration_platforms = _normalize_registration(
+        registration_status, registration_platforms
+    )
+
+    item = ReturnItem(
+        id=uuid.uuid4(),
+        product_id=product_id,
+        size=size,
+        quantity=1,
+        reason=reason,
+        status=ReturnItemStatus.in_stock,
+        registration_status=registration_status,
+        registration_platforms=registration_platforms,
+        received_by=current_user.id,
+    )
+    db.add(item)
+
+    # 재고 수량 동기화 (반품 재고 +1)
+    # autoflush=False 이므로 같은 요청 내에서 새로 만든 재고 행은 캐시로 재사용
+    key = (str(product_id), size)
+    inventory = inventory_cache.get(key)
+    if inventory is None:
+        inventory = db.query(Inventory).filter(
+            Inventory.product_id == product_id,
+            Inventory.size == size
+        ).first()
+        if not inventory:
+            inventory = Inventory(
+                id=uuid.uuid4(),
+                product_id=product_id,
+                size=size,
+                quantity=0,
+                reserved_quantity=0,
+                defect_quantity=0,
+            )
+            db.add(inventory)
+        inventory_cache[key] = inventory
+    inventory.defect_quantity = (inventory.defect_quantity or 0) + 1
+
+    # 조정 이력 기록
+    adjustment = InventoryAdjustment(
+        id=uuid.uuid4(),
+        product_id=product_id,
+        adjustment_type=AdjustmentType.return_,
+        quantity=1,
+        reference_id=str(item.id),
+        notes=f"반품 입고 (구매금액 0원) - 사이즈: {size}" + (f", 사유: {reason}" if reason else ""),
+        adjusted_by=current_user.id,
+    )
+    db.add(adjustment)
+
+    return item
 
 
 def _build_response(item: ReturnItem) -> ReturnItemResponse:
@@ -49,6 +123,7 @@ def get_return_items(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=10000),
     status: Optional[str] = Query("in_stock"),  # in_stock | shipped | all
+    registration_status: Optional[str] = None,  # registered | unregistered | hold
     search: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -62,6 +137,9 @@ def get_return_items(
 
     if status and status != "all":
         query = query.filter(ReturnItem.status == ReturnItemStatus(status))
+
+    if registration_status:
+        query = query.filter(ReturnItem.registration_status == registration_status)
 
     if search:
         query = query.join(Product, ReturnItem.product_id == Product.id).filter(or_(
@@ -90,46 +168,71 @@ def create_return_item(
     if not product:
         raise HTTPException(status_code=404, detail="상품을 찾을 수 없습니다")
 
-    item = ReturnItem(
-        id=uuid.uuid4(),
-        product_id=data.product_id,
-        size=data.size,
-        quantity=1,
-        reason=data.reason,
-        status=ReturnItemStatus.in_stock,
-        received_by=current_user.id,
+    item = _receive_one(
+        db, current_user, data.product_id, data.size, data.reason,
+        data.registration_status, data.registration_platforms, {},
     )
-    db.add(item)
 
-    # 재고 수량 동기화 (반품 재고 +1)
-    inventory = db.query(Inventory).filter(
-        Inventory.product_id == data.product_id,
-        Inventory.size == data.size
-    ).first()
-    if not inventory:
-        inventory = Inventory(
-            id=uuid.uuid4(),
-            product_id=data.product_id,
-            size=data.size,
-            quantity=0,
-            reserved_quantity=0,
-            defect_quantity=0,
-        )
-        db.add(inventory)
-    inventory.defect_quantity = (inventory.defect_quantity or 0) + 1
+    db.commit()
+    db.refresh(item)
 
-    # 조정 이력 기록
-    adjustment = InventoryAdjustment(
-        id=uuid.uuid4(),
-        product_id=data.product_id,
-        adjustment_type=AdjustmentType.return_,
-        quantity=1,
-        reference_id=str(item.id),
-        notes=f"반품 입고 (구매금액 0원) - 사이즈: {data.size}" + (f", 사유: {data.reason}" if data.reason else ""),
-        adjusted_by=current_user.id,
+    return _build_response(item)
+
+
+@router.post("/batch", response_model=ReturnBatchResult)
+def create_return_items_batch(
+    data: ReturnBatchCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """일괄 반품 입고 - 여러 상품을 한 번에 등록 (수량만큼 개별 건 생성, 한 트랜잭션)"""
+    product_ids = {line.product_id for line in data.items}
+    found_ids = {
+        str(pid) for (pid,) in db.query(Product.id).filter(Product.id.in_(product_ids)).all()
+    }
+    missing = product_ids - found_ids
+    if missing:
+        raise HTTPException(status_code=404, detail=f"상품을 찾을 수 없습니다 ({len(missing)}건)")
+
+    inventory_cache: dict = {}
+    lines = []
+    for line in data.items:
+        created = [
+            _receive_one(
+                db, current_user, line.product_id, line.size, line.reason,
+                line.registration_status, line.registration_platforms, inventory_cache,
+            )
+            for _ in range(line.quantity)
+        ]
+        lines.append(ReturnBatchCreatedLine(ids=[str(i.id) for i in created]))
+
+    db.commit()
+
+    return ReturnBatchResult(
+        total_created=sum(len(l.ids) for l in lines),
+        lines=lines,
     )
-    db.add(adjustment)
 
+
+@router.patch("/{return_id}/registration", response_model=ReturnItemResponse)
+def update_return_registration(
+    return_id: str,
+    data: ReturnRegistrationUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """판매처 등록 여부 수정 (등록완료/미등록/보류 + 등록처)"""
+    item = db.query(ReturnItem).options(
+        joinedload(ReturnItem.product).joinedload(Product.brand),
+        joinedload(ReturnItem.receiver),
+        joinedload(ReturnItem.shipper),
+    ).filter(ReturnItem.id == return_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="반품 건을 찾을 수 없습니다")
+
+    item.registration_status, item.registration_platforms = _normalize_registration(
+        data.registration_status, data.registration_platforms
+    )
     db.commit()
     db.refresh(item)
 
